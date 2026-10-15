@@ -800,6 +800,8 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
         j["totp"] = j["totp_rw"];
         j["totp_remaining_sec"] = control_server_.totp_manager().remaining_seconds();
         j["admin_ticket"] = control_server_.create_host_admin_ticket();
+        j["ai_enabled"] = control_server_.ai_enabled();
+        j["ttl_seconds"] = control_server_.cert_ttl();
         send_resp(200, "OK", "application/json", j.dump(2));
         return;
     }

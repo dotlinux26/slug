@@ -214,6 +214,8 @@ BENCHMARK & UTILS:
 )" << std::endl;
 }
 
+static int cmd_serve(int argc, char* argv[]);
+
 int cmd_add(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: slug add <path> [-p <port>] [-s <suite>] [--ttl <duration>] [-ai] [--daemon]" << std::endl;
@@ -412,8 +414,17 @@ static nlohmann::json query_workspace_api(uint16_t port, const std::string& path
 
 int cmd_status(int argc, char* argv[]) {
     bool show_flagged = false;
+    uint16_t target_port = 0;
     for (int i = 2; i < argc; ++i) {
-        if (std::string(argv[i]) == "--flagged") show_flagged = true;
+        std::string arg = argv[i];
+        if (arg == "--flagged") show_flagged = true;
+        else if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
+            target_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        }
+    }
+
+    if (target_port > 0) {
+        return cmd_serve(argc, argv);
     }
 
     auto list = core::WorkspaceManager::load_registry();
@@ -445,20 +456,14 @@ int cmd_status(int argc, char* argv[]) {
         }
 
         std::string totp_display = "-";
-        std::string live_rw = "";
-        std::string live_r  = "";
-        std::string live_w  = "";
-        int rem = 0;
         auto st = query_workspace_api(w.port);
         if (st.is_object() && st.contains("totp_rw")) {
-            live_rw = st.value("totp_rw", st.value("totp", ""));
-            live_r  = st.value("totp_r", "");
-            live_w  = st.value("totp_w", "");
-            rem = st.value("totp_remaining_sec", 0);
+            std::string live_rw = st.value("totp_rw", st.value("totp", ""));
+            int rem = st.value("totp_remaining_sec", 0);
             totp_display = live_rw + " (" + std::to_string(rem) + "s)";
         } else if (st.is_object() && st.contains("totp")) {
-            live_rw = st["totp"].get<std::string>();
-            rem = st.value("totp_remaining_sec", 0);
+            std::string live_rw = st["totp"].get<std::string>();
+            int rem = st.value("totp_remaining_sec", 0);
             totp_display = live_rw + " (" + std::to_string(rem) + "s)";
         }
 
@@ -471,22 +476,7 @@ int cmd_status(int argc, char* argv[]) {
                   << std::setw(10) << w.pid
                   << std::endl;
 
-        std::cout << "  Path:    " << norm_path.string() << std::endl;
-        std::string lan_ip = get_host_lan_ip();
-        if (!live_rw.empty()) {
-            std::cout << "  Role OTPs (Rotates in " << rem << "s):" << std::endl;
-            std::cout << "    [rw] Read-Write OTP: " << live_rw << " (Full Sync & Web Dropbox)" << std::endl;
-            if (!live_r.empty()) {
-                std::cout << "    [r]  Read-Only OTP:  " << live_r  << " (Read/Pull/View files only)" << std::endl;
-            }
-            if (!live_w.empty()) {
-                std::cout << "    [w]  Write-Only OTP: " << live_w  << " (Blind Drop/Upload only)" << std::endl;
-            }
-            std::cout << "  Connect (Local):   slug connect -i 127.0.0.1 -p " << w.port << " -o " << live_rw << std::endl;
-            std::cout << "  Connect (Network): slug connect -i " << lan_ip << " -p " << w.port << " -o " << live_rw << std::endl;
-            std::cout << "                     (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << std::endl;
-        }
-        std::cout << std::endl;
+        std::cout << "  Path:    " << norm_path.string() << "\n" << std::endl;
 
         if (show_flagged) {
             std::filesystem::path idx_path = norm_path / ".slug" / "index.db";
@@ -651,13 +641,22 @@ int cmd_serve(int argc, char* argv[]) {
     std::string lan_ip = get_host_lan_ip();
     std::string ws_path = st.value("workspace", "");
     std::string suite = st.value("suite", "");
+    bool ai_enabled = st.value("ai_enabled", false);
+    uint64_t ttl_sec = st.value("ttl_seconds", 86400ULL);
+    std::string ttl_str = (ttl_sec % 86400 == 0) ? std::to_string(ttl_sec / 86400) + "d"
+                        : (ttl_sec % 3600 == 0) ? std::to_string(ttl_sec / 3600) + "h"
+                        : core::Utils::format_duration(ttl_sec);
 
     std::cout << "\n+----------------------------------------------------------------------------+" << std::endl;
-    std::cout << "| SLUG WORKSPACE SERVER DETAILS (Port / Server ID: " << port << ")" << std::endl;
+    std::cout << "| SLUG SECURE WORKSPACE HOSTED SUCCESSFULLY                                  |" << std::endl;
     std::cout << "+----------------------------------------------------------------------------+" << std::endl;
-    std::cout << "  Port (ID):       " << port << std::endl;
-    std::cout << "  Workspace:       " << ws_path << std::endl;
+    std::cout << "  Port:            " << port << std::endl;
+    if (!ws_path.empty()) {
+        std::cout << "  Workspace:       " << ws_path << std::endl;
+    }
     std::cout << "  Crypto Suite:    " << suite << std::endl;
+    std::cout << "  AI Secret Guard: " << (ai_enabled ? "ON" : "OFF") << std::endl;
+    std::cout << "  Session TTL:     " << ttl_str << std::endl;
     std::cout << "  Role OTPs (Rotates in " << rem << "s):" << std::endl;
     std::cout << "    [rw] Read-Write OTP: " << totp_rw << " (Full Sync & Web Dropbox)" << std::endl;
     std::cout << "    [r]  Read-Only OTP:  " << totp_r  << " (Read/Pull/View files only)" << std::endl;

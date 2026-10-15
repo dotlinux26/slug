@@ -51,6 +51,7 @@ public:
     core::AuditLogger& audit_logger() { return audit_logger_; }
     bool is_running() const { return running_; }
     bool ai_enabled() const { return enable_ai_; }
+    uint64_t cert_ttl() const { return cert_ttl_; }
 
     std::optional<SessionState> get_session(uint32_t session_id) const;
     std::optional<SessionState> find_session_by_ticket(const std::string& ticket) const;
