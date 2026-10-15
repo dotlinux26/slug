@@ -24,10 +24,9 @@ If you discover a security vulnerability, security flaw, or cryptographic weakne
 - Impact assessment: affected components (KEM, AEAD, AI Scanner, Path Traversal, RBAC, etc.).
 - Target environment details (OS, architecture, compiler, commit hash/version).
 
-### Response SLA:
-- **Initial Response**: Within 24 hours acknowledging receipt.
-- **Triage & Assessment**: Within 72 hours with preliminary severity classification.
-- **Remediation & Patching**: Critical vulnerabilities will be patched within 7 business days, followed by a coordinated security advisory publication.
+### Response & Review Policy:
+- **Best-Effort Review**: This is an open-source project. Vulnerability reports are reviewed and handled on a best-effort basis without rigid or contractual SLA time guarantees.
+- **Gentle Reminder / Ping**: If you have submitted a private advisory or email report and haven't received a response after some time, you are welcome to open a GitHub Issue with the **`security`** label simply noting: *"Ping: Sent security report via private advisory/email"* (please **do not** include PoC code, sensitive payloads, or exploit details in the public issue).
 
 ---
 
