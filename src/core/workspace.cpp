@@ -91,7 +91,11 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
                                     uint64_t ttl_seconds,
                                     bool enable_ai) {
 
-    fs::path canonical_path = fs::absolute(folder_path);
+    std::error_code ec;
+    fs::path canonical_path = fs::canonical(folder_path, ec);
+    if (ec) {
+        canonical_path = fs::absolute(folder_path).lexically_normal();
+    }
     if (!fs::exists(canonical_path) || !fs::is_directory(canonical_path)) {
         std::cerr << "Error: Target folder does not exist or is not a directory: " << folder_path << std::endl;
         return false;

@@ -64,7 +64,9 @@ COMMANDS:
   status                   List all active workspaces, suites, TOTP codes, and ports
                            Flags: --flagged (Show AI-flagged / skipped files)
 
-  stop -p <port>           Stop sharing workspace at the specified port
+  totp [-p <port>]         Display active One-Time TOTP token for quick copy-paste
+
+  stop [-p <port>]         Stop sharing workspace (defaults to active workspace)
 
   connect -i <ip> -p <port> Test connection to a remote Slug workspace
                            Flags: -o <totp_8_digit_code> (One-Time-Bind TOTP)
@@ -119,7 +121,12 @@ int cmd_add(int argc, char* argv[]) {
         return 1;
     }
 
-    std::string folder_path = argv[2];
+    std::error_code ec;
+    std::filesystem::path resolved_path = std::filesystem::canonical(argv[2], ec);
+    if (ec) {
+        resolved_path = std::filesystem::absolute(argv[2]).lexically_normal();
+    }
+    std::string folder_path = resolved_path.string();
     uint16_t port = core::kDefaultPort;
     core::SuiteID suite = core::SuiteID::SUITE_3_PURE_PQC;
     uint64_t ttl_sec = 86400;
@@ -244,6 +251,31 @@ int cmd_add(int argc, char* argv[]) {
     return 0;
 }
 
+static nlohmann::json query_workspace_api(uint16_t port, const std::string& path = "/api/status", int timeout_ms = 800) {
+    platform::TcpSocket sock;
+    if (!sock.connect("127.0.0.1", port, timeout_ms)) {
+        return nullptr;
+    }
+    std::string req = "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    if (!sock.send_all(req)) {
+        return nullptr;
+    }
+    std::vector<uint8_t> buf(4096);
+    std::string resp;
+    while (true) {
+        int n = sock.receive(buf, 1000);
+        if (n <= 0) break;
+        resp.append(reinterpret_cast<char*>(buf.data()), n);
+    }
+    size_t body_pos = resp.find("\r\n\r\n");
+    if (body_pos == std::string::npos) return nullptr;
+    try {
+        return nlohmann::json::parse(resp.substr(body_pos + 4));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 int cmd_status(int argc, char* argv[]) {
     bool show_flagged = false;
     for (int i = 2; i < argc; ++i) {
@@ -262,27 +294,48 @@ int cmd_status(int argc, char* argv[]) {
 
     std::cout << std::left
               << std::setw(8)  << "[PORT]"
-              << std::setw(28) << "[WORKSPACE]"
-              << std::setw(28) << "[CRYPTO SUITE]"
+              << std::setw(20) << "[WORKSPACE]"
+              << std::setw(20) << "[ONE-TIME TOTP]"
+              << std::setw(24) << "[CRYPTO SUITE]"
               << std::setw(10) << "[AI-EXT]"
-              << std::setw(12) << "[PID]"
+              << std::setw(10) << "[PID]"
               << std::endl;
-    std::cout << std::string(86, '-') << std::endl;
+    std::cout << std::string(92, '-') << std::endl;
 
     for (const auto& w : list) {
-        std::string path_str = w.path.filename().string();
-        if (path_str.empty()) path_str = w.path.string();
+        std::filesystem::path norm_path = w.path.lexically_normal();
+        std::string path_str = norm_path.filename().string();
+        if (path_str.empty() || path_str == ".") {
+            path_str = norm_path.parent_path().filename().string();
+            if (path_str.empty() || path_str == ".") path_str = norm_path.string();
+        }
+
+        std::string totp_display = "-";
+        std::string live_totp_code = "";
+        auto st = query_workspace_api(w.port);
+        if (st.is_object() && st.contains("totp")) {
+            live_totp_code = st["totp"].get<std::string>();
+            int rem = st.value("totp_remaining_sec", 0);
+            totp_display = live_totp_code + " (" + std::to_string(rem) + "s)";
+        }
 
         std::cout << std::left
                   << std::setw(8)  << w.port
-                  << std::setw(28) << (path_str.size() > 26 ? path_str.substr(0, 23) + "..." : path_str)
-                  << std::setw(28) << core::suite_to_short_name(w.suite)
+                  << std::setw(20) << (path_str.size() > 18 ? path_str.substr(0, 15) + "..." : path_str)
+                  << std::setw(20) << totp_display
+                  << std::setw(24) << core::suite_to_short_name(w.suite)
                   << std::setw(10) << (w.ai_enabled ? "ON" : "OFF")
-                  << std::setw(12) << w.pid
+                  << std::setw(10) << w.pid
                   << std::endl;
 
+        std::cout << "  Path:    " << norm_path.string() << std::endl;
+        if (!live_totp_code.empty()) {
+            std::cout << "  Connect: slug connect -i 127.0.0.1 -p " << w.port << " -o " << live_totp_code << std::endl;
+        }
+        std::cout << std::endl;
+
         if (show_flagged) {
-            std::filesystem::path idx_path = w.path / ".slug" / "index.db";
+            std::filesystem::path idx_path = norm_path / ".slug" / "index.db";
             ai::StatefulAuditIndex audit_idx(idx_path);
             auto flagged = audit_idx.list_flagged_or_all(true);
             if (!flagged.empty()) {
@@ -290,10 +343,42 @@ int cmd_status(int argc, char* argv[]) {
                 for (const auto& f : flagged) {
                     std::cout << "       [FLAGGED] " << f.file_path << " (L" << f.line_number << ": " << f.reason << ")" << std::endl;
                 }
+                std::cout << std::endl;
             }
         }
     }
-    std::cout << std::endl;
+    return 0;
+}
+
+int cmd_totp(int argc, char* argv[]) {
+    uint16_t port = 0;
+    for (int i = 2; i < argc; ++i) {
+        if (std::string(argv[i]) == "-p" && i + 1 < argc) {
+            port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        }
+    }
+    if (port == 0) {
+        auto list = core::WorkspaceManager::load_registry();
+        if (list.size() == 1) {
+            port = list[0].port;
+        } else {
+            port = core::kDefaultPort;
+        }
+    }
+
+    auto st = query_workspace_api(port);
+    if (!st.is_object() || !st.contains("totp")) {
+        std::cerr << "[-] Cannot connect to workspace server on port " << port << " (server might not be running)" << std::endl;
+        return 1;
+    }
+
+    std::string code = st["totp"].get<std::string>();
+    int rem = st.value("totp_remaining_sec", 0);
+
+    std::cout << "[*] Active One-Time TOTP Token (Port " << port << "):" << std::endl;
+    std::cout << "    TOTP Code:  " << code << " (Rotates in " << rem << "s)" << std::endl;
+    std::cout << "    Connect:    slug connect -i 127.0.0.1 -p " << port << " -o " << code << std::endl;
+    std::cout << "    Sync:       slug pull ./clone -i 127.0.0.1 -p " << port << " -o " << code << std::endl;
     return 0;
 }
 
@@ -860,6 +945,7 @@ int main(int argc, char* argv[]) {
 
     if (cmd == "add") return cmd_add(argc, argv);
     if (cmd == "status") return cmd_status(argc, argv);
+    if (cmd == "totp") return cmd_totp(argc, argv);
     if (cmd == "stop") return cmd_stop(argc, argv);
     if (cmd == "connect") return cmd_connect(argc, argv);
     if (cmd == "pull") return cmd_pull(argc, argv);

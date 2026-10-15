@@ -299,6 +299,7 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const std::string& re
         j["suite"] = core::suite_to_string(control_server_.suite_id());
         j["workspace"] = control_server_.workspace_root().string();
         j["totp"] = control_server_.totp_manager().generate_code();
+        j["totp_remaining_sec"] = control_server_.totp_manager().remaining_seconds();
         std::string body = j.dump(2);
         std::string res = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
                           std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
