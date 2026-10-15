@@ -26,6 +26,7 @@
 #if defined(SLUG_PLATFORM_POSIX)
 #include <unistd.h>
 #include <fcntl.h>
+#include <termios.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -34,6 +35,37 @@
 static std::atomic<bool> g_stop_signal_received{false};
 static void signal_handler(int) {
     g_stop_signal_received = true;
+}
+
+static std::string read_hidden_password(const std::string& prompt) {
+    std::cout << prompt << std::flush;
+    termios old_t, new_t;
+    tcgetattr(STDIN_FILENO, &old_t);
+    new_t = old_t;
+    new_t.c_lflag &= ~ECHO;
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_t);
+
+    std::string pass;
+    std::getline(std::cin, pass);
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_t);
+    std::cout << std::endl;
+    return pass;
+}
+
+static std::string read_confirmed_hidden_password(const std::string& prompt) {
+    while (true) {
+        std::string p1 = read_hidden_password(prompt);
+        if (p1.empty()) {
+            std::cerr << "[-] Password cannot be empty. Please try again." << std::endl;
+            continue;
+        }
+        std::string p2 = read_hidden_password("Retype password: ");
+        if (p1 == p2) {
+            return p1;
+        }
+        std::cerr << "[-] Passwords do not match. Please try again." << std::endl;
+    }
 }
 
 static std::string get_host_lan_ip() {
@@ -59,6 +91,25 @@ static std::string get_host_lan_ip() {
     return p ? std::string(p) : "127.0.0.1";
 }
 #else
+static std::string read_hidden_password(const std::string& prompt) {
+    std::cout << prompt << std::flush;
+    std::string pass;
+    std::getline(std::cin, pass);
+    return pass;
+}
+static std::string read_confirmed_hidden_password(const std::string& prompt) {
+    while (true) {
+        std::cout << prompt << std::flush;
+        std::string p1;
+        std::getline(std::cin, p1);
+        if (p1.empty()) continue;
+        std::cout << "Retype password: " << std::flush;
+        std::string p2;
+        std::getline(std::cin, p2);
+        if (p1 == p2) return p1;
+        std::cerr << "[-] Passwords do not match. Please try again." << std::endl;
+    }
+}
 static std::string get_host_lan_ip() { return "127.0.0.1"; }
 #endif
 
@@ -114,103 +165,72 @@ void print_banner() {
                   __/ |
                  |___/ 
   Slug: Secure, Ephemeral, Git-like Workspace Sharing & Synchronization
-  Version: 1.0.0-rc1 | Post-Quantum Cryptography & AI Guard (Apache-2.0)
+  Version: 1.0.0-rc2 | Post-Quantum Cryptography & AI Guard (Apache-2.0)
 )" << std::endl;
 }
 
 void print_help() {
     print_banner();
     std::cout << R"(
-USAGE:
-  slug [COMMAND] [OPTIONS]
+THE ESSENTIAL 9 - CORE COMMAND SUITE:
 
-WORKSPACE HOSTING (SERVER):
-  add <path>               Host and share a folder with Post-Quantum protection
-                           Flags: -p, --port <port>       (Port number, default: 9443)
-                                  -s, --suite <1|2|3|pqc> (Crypto suite, default: 3 pure-pqc)
-                                  -t, --ttl <duration>    (Session TTL, e.g. 10m, 4h, 24h, 7d; default: 24h)
-                                  -ai, --ai               (Enable Stateful AI Secret Guard)
-                                  -d, --daemon            (Run as background daemon)
+  [HOST WORKSPACE]
+    add <path>               Share folder with Post-Quantum protection (PurePQC default)
+                             Flags: -p, --port <port>       (Default: 9443)
+                                    -s, --suite <1|2|3|pqc> (Default: 3 pure-pqc)
+                                    -t, --ttl <duration>    (Default: 24h, inf for permanent)
+                                    -a, --ai                (Enable Stateful AI Secret Guard)
+                                    -d, --daemon            (Run as background daemon)
 
-  status                   List all active workspaces, suites, role OTPs, and ports
-                           Flags: --flagged               (Show AI-flagged / skipped files)
+    status                   Inspect active workspaces, ports, suites, and realtime OTPs
+                             Flags: -s, --short             (Ultra-compact view)
+                                    -p, --port <port>       (Inspect specific server)
+                                    --flagged               (List AI-quarantined files)
 
-  totp [-p <port>]         Display active role-based One-Time TOTP tokens (rw, r, w)
-                           Flags: -r, --role <r|w|rw>     (Show token for specific role)
-                                  --code-only             (Print raw 8-digit code only)
+    totp [-p <port>]         Display active role-based One-Time TOTP tokens (rw, r, w)
+                             Flags: -r, --role <rw|r|w>     (Target specific role)
+                                    --code-only             (Print raw 8-digit code only)
 
-  stop [-p <port>]         Stop sharing workspace (defaults to active workspace)
+    stop [-p <port>] [-a]    Stop active workspace server(s)
+                             Flags: -a, --all               (Stop all hosted servers)
 
-  serve [-p <port>] [-w]   Inspect specific workspace server or launch Admin Web Dashboard
-                           Subcommands: list              (List all active servers)
-                           Flags: -p, --port <port>       (Target server port/ID; defaults to active server)
-                                  -w, --web               (Open Admin Dashboard in browser immediately)
+  [ACCESS CONTROL & SECURITY]
+    user <add|mod|rm|list>   Manage ephemeral & permanent accounts with RBAC (rw, r, w)
+                             Flags: -u, --user <name>       (Username)
+                                    -P, --pass <password>   (Account password; prompts if omitted)
+                                    -r, --role <rw|r|w>     (Default: r)
+                                    -t, --ttl <duration>    (e.g. 2h, 24h, inf)
+                                    -p, --port <port>       (Target server port)
 
-  web [id] [-p <port>]     Open authenticated Web Dropbox in browser
+    audit <list|scan|allow>  Stateful AI Secret Guard management
+                             Subcommands: list              (View flagged files)
+                                          scan <file>       (Deep semantic scan)
+                                          allow <file>      (Whitelist false positive)
+                                          recheck [--all]   (Rescan modified files)
 
-CLIENT WORKSPACE ACCESS:
-  connect -i <ip> -p <port> Connect to a remote Slug workspace & receive certificate
-                           Flags: -o, --otp <8_digit_code> (Role-based One-Time TOTP)
-                                  -u, --user <username>    (Ephemeral account username)
-                                  --pass <password>        (Account password)
-                                  -w, --web                (Launch Web Dropbox immediately)
+  [CLIENT WORKSPACE SYNC]
+    get <ENDPOINT?otp=CODE>  One-shot connect and pull remote workspace into local directory
+                             Examples: slug get 192.168.1.107:9443?otp=12822565
+                                       slug get 192.168.1.107:9443?otp=12822565 ./target_dir
 
-  connect list             List all saved client connections with live heartbeat status
-                           Flags: --prune                 (Automatically prune dead connections)
-  connect prune            Prune dead/unreachable and expired client connections
-  connect [id] [-w]        Inspect connection certificate or launch web view (-w)
+    pull [target_dir] [id]   Differential sync using BLAKE3 chunking (Git-like delta sync)
+                             Flags: --dry-run               (Preview changes without downloading)
+                                    --only <pattern>        (Selective pull, e.g. "src/*")
+                                    --prune                 (Remove deleted local files)
 
-  set <id>                 Set active connection context (omits need for ID on list/pull)
+    push <file> [dest] [id]  Upload file to remote workspace (requires 'w' or 'rw' role)
 
-  list [id]                List remote workspace files from root using connection cert
+  [SYSTEM UTILITIES]
+    conn <list|use|prune|rm> Manage saved client connections (alias: connections)
+    connect -i <ip> -p <port> Authenticate to remote workspace and save connection certificate
+    serve [-p <port>] [-w]   Server inspection box; pass -w to open Web Admin Dashboard
+    web [conn_id] [-p port]  Open authenticated Web Dropbox in browser
+    completion <bash|zsh>    Generate shell autocompletion script
+    env <init|run>           RAM-only PQC secret injection (EnvShield)
+    bench [--quick] [--json] Run cryptography & I/O performance benchmarks
+    version                  Display version and platform build details
 
-  pull <target_dir> [id]   Pull remote workspace with Git-like Delta Sync
-                           Flags: -i, --host <ip> -p, --port <port> -o, --otp <otp>
-                                  --dry-run                (Preview transfer diff without saving)
-                                  --only <pattern>         (Selective pull, e.g. "src/*")
-                                  --ext <exts>             (e.g. ".cpp,.hpp,.md")
-                                  --max-size <bytes>       (e.g. 50MB)
-                                  --prune                  (Remove deleted local files)
-
-  push <file> [dest] [id]  Upload file to remote workspace (requires 'w' or 'rw' role)
-                           Flags: -i, --host <ip> -p, --port <port> -o, --otp <otp>
-
-WORKSPACE ACCESS CONTROL:
-  user add -u <user>       Create ephemeral workspace account
-                           Flags: --pass <password>        (Account password)
-                                  -r, --role <r|w|rw>      (r=read, w=write, rw=full; default: r)
-                                  -t, --ttl <duration>     (Account TTL, e.g. 2h, 24h; default: 24h)
-                                  -p, --port <port>        (Target workspace port)
-                                  --dir <path>             (Target workspace directory)
-
-  user rm -u <user>        Remove workspace user account
-  user list [-p <port>]    List active accounts and remaining TTL
-
-SECURITY & SECRETS:
-  rule list                List security filter rules (.slug/rules.conf)
-  rule block               Add a block rule (--path | --ext | --contains | --regex)
-  rule allow               Add a whitelist rule (--path <path>)
-  rule rm <rule_id>        Remove a security rule
-
-  audit list               List all files currently flagged or skipped by AI Guard
-  audit scan <file>        Inspect a single file directly (--deep | --ollama | --cloud)
-  audit recheck <path|--all> Rescan file(s); automatically unblocks if secret was removed
-  audit allow <path>       Whitelist false positive (--reason "...")
-
-  env init                 Encrypt .env into .env.pqc with Suite 3 PurePQC
-  env run -- <cmd...>      Decrypt .env.pqc in RAM only and execute command
-
-BENCHMARK & UTILS:
-  bench                    Run crypto suites, BLAKE3, AI Guard, & chunker benchmark
-                           Flags: --quick (fast run) | --json (machine-readable)
-
-  uninstall                Completely uninstall Slug from this system
-                           Flags: -y, --yes               (Non-interactive automatic confirmation)
-                                  -n, --no                (Cancel uninstallation immediately)
-                                  --keep-data             (Preserve ~/.slug directory)
-
-  version                  Print version information
-  help                     Show this help message
+Run 'slug help' to view this cheat sheet.
 )" << std::endl;
 }
 
@@ -218,7 +238,7 @@ static int cmd_serve(int argc, char* argv[]);
 
 int cmd_add(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: slug add <path> [-p <port>] [-s <suite>] [--ttl <duration>] [-ai] [--daemon]" << std::endl;
+        std::cerr << "Usage: slug add <path> [-p <port>] [-s <suite>] [-t <duration>] [-a|--ai] [-d|--daemon]" << std::endl;
         return 1;
     }
 
@@ -242,7 +262,7 @@ int cmd_add(int argc, char* argv[]) {
             suite = core::suite_from_string(argv[++i]);
         } else if ((arg == "-t" || arg == "--ttl") && i + 1 < argc) {
             ttl_sec = core::Utils::parse_ttl(argv[++i]);
-        } else if (arg == "-ai" || arg == "--ai") {
+        } else if (arg == "-a" || arg == "--ai" || arg == "-ai") {
             enable_ai = true;
         } else if (arg == "--daemon" || arg == "-d") {
             daemon = true;
@@ -319,9 +339,10 @@ int cmd_add(int argc, char* argv[]) {
         std::cout << "    [r]  Read-Only OTP:  " << cr  << " (Read/Pull/View files only)" << clr;
         std::cout << "    [w]  Write-Only OTP: " << cw  << " (Blind Drop/Upload only)" << clr;
         std::cout << "+----------------------------------------------------------------------------+" << clr;
-        std::cout << "Connect (Local):   slug connect -i 127.0.0.1 -p " << port << " -o " << crw << clr;
-        std::cout << "Connect (Network): slug connect -i " << lan_ip << " -p " << port << " -o " << crw << clr;
-        std::cout << "                   (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << clr;
+        std::cout << "Connect (One-Shot): slug get " << lan_ip << ":" << port << "?otp=" << crw << clr;
+        std::cout << "Connect (Local):    slug get 127.0.0.1:" << port << "?otp=" << crw << clr;
+        std::cout << "Connect (Standard): slug connect -i " << lan_ip << " -p " << port << " -o " << crw << clr;
+        std::cout << "                    (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << clr;
         std::cout << "+----------------------------------------------------------------------------+" << clr;
         std::cout << clr;
         std::cout << "[*] Press Ctrl+C to stop server..." << clr;
@@ -414,10 +435,12 @@ static nlohmann::json query_workspace_api(uint16_t port, const std::string& path
 
 int cmd_status(int argc, char* argv[]) {
     bool show_flagged = false;
+    bool short_mode = false;
     uint16_t target_port = 0;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--flagged") show_flagged = true;
+        else if (arg == "-s" || arg == "--short" || arg == "--compact") short_mode = true;
         else if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
             target_port = static_cast<uint16_t>(std::stoi(argv[++i]));
         }
@@ -456,14 +479,18 @@ int cmd_status(int argc, char* argv[]) {
         }
 
         std::string totp_display = "-";
+        std::string live_rw = "", live_r = "", live_w = "";
+        int rem = 0;
         auto st = query_workspace_api(w.port);
         if (st.is_object() && st.contains("totp_rw")) {
-            std::string live_rw = st.value("totp_rw", st.value("totp", ""));
-            int rem = st.value("totp_remaining_sec", 0);
+            live_rw = st.value("totp_rw", st.value("totp", ""));
+            live_r  = st.value("totp_r", "");
+            live_w  = st.value("totp_w", "");
+            rem = st.value("totp_remaining_sec", 0);
             totp_display = live_rw + " (" + std::to_string(rem) + "s)";
         } else if (st.is_object() && st.contains("totp")) {
-            std::string live_rw = st["totp"].get<std::string>();
-            int rem = st.value("totp_remaining_sec", 0);
+            live_rw = st["totp"].get<std::string>();
+            rem = st.value("totp_remaining_sec", 0);
             totp_display = live_rw + " (" + std::to_string(rem) + "s)";
         }
 
@@ -476,7 +503,14 @@ int cmd_status(int argc, char* argv[]) {
                   << std::setw(10) << w.pid
                   << std::endl;
 
-        std::cout << "  Path:    " << norm_path.string() << "\n" << std::endl;
+        std::cout << "  Path:      " << norm_path.string() << std::endl;
+        if (!live_r.empty() && !live_w.empty()) {
+            std::cout << "  Role OTPs: [rw] " << live_rw << " | [r] " << live_r << " | [w] " << live_w << " (Rotates in " << rem << "s)" << std::endl;
+        }
+        if (!short_mode) {
+            std::cout << "  Connect:   slug connect -i 127.0.0.1 -p " << w.port << " -o " << live_rw << std::endl;
+        }
+        std::cout << std::endl;
 
         if (show_flagged) {
             std::filesystem::path idx_path = norm_path / ".slug" / "index.db";
@@ -530,12 +564,14 @@ int cmd_totp(int argc, char* argv[]) {
     int rem = st.value("totp_remaining_sec", 0);
     std::string lan_ip = get_host_lan_ip();
 
+    if (code_only) {
+        std::string code = (req_role == "r") ? totp_r : ((req_role == "w") ? totp_w : totp_rw);
+        std::cout << code << std::endl;
+        return 0;
+    }
+
     if (!req_role.empty()) {
         std::string code = (req_role == "r") ? totp_r : ((req_role == "w") ? totp_w : totp_rw);
-        if (code_only) {
-            std::cout << code << std::endl;
-            return 0;
-        }
         std::cout << "[*] Role [" << req_role << "] One-Time TOTP (Port " << port << ", Rotates in " << rem << "s): " << code << std::endl;
         std::cout << "    slug connect -i " << lan_ip << " -p " << port << " -o " << code << std::endl;
         return 0;
@@ -554,11 +590,25 @@ int cmd_totp(int argc, char* argv[]) {
 
 int cmd_stop(int argc, char* argv[]) {
     uint16_t port = 0;
+    bool stop_all = false;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
             port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        } else if (arg == "-a" || arg == "--all") {
+            stop_all = true;
         }
+    }
+    if (stop_all) {
+        auto list = core::WorkspaceManager::load_registry();
+        int count = 0;
+        for (const auto& w : list) {
+            if (core::WorkspaceManager::instance().stop_workspace(w.port)) {
+                count++;
+            }
+        }
+        std::cout << "[+] Stopped " << count << " workspace server(s)." << std::endl;
+        return 0;
     }
     if (port == 0) {
         auto list = core::WorkspaceManager::load_registry();
@@ -633,7 +683,7 @@ int cmd_serve(int argc, char* argv[]) {
         return 0;
     }
 
-    // Detailed server view
+    // Detailed server view matching hosted box
     std::string totp_rw = st.value("totp_rw", st.value("totp", ""));
     std::string totp_r  = st.value("totp_r", "");
     std::string totp_w  = st.value("totp_w", "");
@@ -643,17 +693,16 @@ int cmd_serve(int argc, char* argv[]) {
     std::string suite = st.value("suite", "");
     bool ai_enabled = st.value("ai_enabled", false);
     uint64_t ttl_sec = st.value("ttl_seconds", 86400ULL);
-    std::string ttl_str = (ttl_sec % 86400 == 0) ? std::to_string(ttl_sec / 86400) + "d"
+    std::string ttl_str = (ttl_sec == 0) ? "∞ (Permanent)"
+                        : (ttl_sec % 86400 == 0) ? std::to_string(ttl_sec / 86400) + "d"
                         : (ttl_sec % 3600 == 0) ? std::to_string(ttl_sec / 3600) + "h"
                         : core::Utils::format_duration(ttl_sec);
 
-    std::cout << "\n+----------------------------------------------------------------------------+" << std::endl;
+    std::cout << "[*] Inspecting Workspace at: " << ws_path << "\n" << std::endl;
+    std::cout << "+----------------------------------------------------------------------------+" << std::endl;
     std::cout << "| SLUG SECURE WORKSPACE HOSTED SUCCESSFULLY                                  |" << std::endl;
     std::cout << "+----------------------------------------------------------------------------+" << std::endl;
     std::cout << "  Port:            " << port << std::endl;
-    if (!ws_path.empty()) {
-        std::cout << "  Workspace:       " << ws_path << std::endl;
-    }
     std::cout << "  Crypto Suite:    " << suite << std::endl;
     std::cout << "  AI Secret Guard: " << (ai_enabled ? "ON" : "OFF") << std::endl;
     std::cout << "  Session TTL:     " << ttl_str << std::endl;
@@ -662,9 +711,10 @@ int cmd_serve(int argc, char* argv[]) {
     std::cout << "    [r]  Read-Only OTP:  " << totp_r  << " (Read/Pull/View files only)" << std::endl;
     std::cout << "    [w]  Write-Only OTP: " << totp_w  << " (Blind Drop/Upload only)" << std::endl;
     std::cout << "+----------------------------------------------------------------------------+" << std::endl;
-    std::cout << "Connect (Local):   slug connect -i 127.0.0.1 -p " << port << " -o " << totp_rw << std::endl;
-    std::cout << "Connect (Network): slug connect -i " << lan_ip << " -p " << port << " -o " << totp_rw << std::endl;
-    std::cout << "                   (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << std::endl;
+    std::cout << "Connect (One-Shot): slug get " << lan_ip << ":" << port << "?otp=" << totp_rw << std::endl;
+    std::cout << "Connect (Local):    slug get 127.0.0.1:" << port << "?otp=" << totp_rw << std::endl;
+    std::cout << "Connect (Standard): slug connect -i " << lan_ip << " -p " << port << " -o " << totp_rw << std::endl;
+    std::cout << "                    (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << std::endl;
     if (!ticket.empty()) {
         std::cout << "Admin Dashboard:   http://127.0.0.1:" << port << "/admin?ticket=" << ticket << std::endl;
     }
@@ -757,7 +807,7 @@ int cmd_connect(int argc, char* argv[]) {
         else if (arg == "-p" || arg == "--port") { if (i + 1 < argc) port = static_cast<uint16_t>(std::stoi(argv[++i])); }
         else if (arg == "-o" || arg == "--otp") { if (i + 1 < argc) totp = argv[++i]; }
         else if (arg == "-u" || arg == "--user") { if (i + 1 < argc) user = argv[++i]; }
-        else if (arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
+        else if (arg == "-P" || arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
         else if (arg == "-w" || arg == "--web") { open_web = true; }
         else if (arg.front() != '-') {
             explicit_id = arg;
@@ -799,10 +849,13 @@ int cmd_connect(int argc, char* argv[]) {
         std::cout << "[*] Authenticating with single-use TOTP: " << totp << "..." << std::endl;
         auth = client.authenticate_totp(totp);
     } else if (!user.empty()) {
+        if (pass.empty()) {
+            pass = read_hidden_password("Enter password for '" + user + "': ");
+        }
         std::cout << "[*] Authenticating with account '" << user << "'..." << std::endl;
         auth = client.authenticate_user(user, pass);
     } else {
-        std::cerr << "[-] Authentication credential required: -o <otp> or -u <user> --pass <pass>" << std::endl;
+        std::cerr << "[-] Authentication credential required: -o <otp> or -u <user> [-P <pass>]" << std::endl;
         return 1;
     }
 
@@ -850,14 +903,14 @@ int cmd_connect(int argc, char* argv[]) {
 
     std::cout << "\nQuick Actions (no IP/port/OTP needed):" << std::endl;
     if (ci.role != core::Role::WRITE_ONLY) {
-        std::cout << "  slug list              Browse remote files" << std::endl;
+        std::cout << "  slug ls                Browse remote files" << std::endl;
         std::cout << "  slug pull ./clone      Pull remote files incrementally" << std::endl;
     }
     if (ci.role != core::Role::READ_ONLY) {
         std::cout << "  slug push <file>       Push file to remote workspace" << std::endl;
     }
     std::cout << "  slug connect -w        Open authenticated Web Dropbox" << std::endl;
-    std::cout << "  slug connect list      List all saved connections\n" << std::endl;
+    std::cout << "  slug conn list         List all saved connections\n" << std::endl;
 
     if (open_web) {
         std::cout << "[*] Opening browser..." << std::endl;
@@ -875,12 +928,46 @@ int cmd_set(int argc, char* argv[]) {
     std::string id = argv[2];
     auto conn = core::ConnectionManager::instance().get_connection(id);
     if (!conn) {
-        std::cerr << "[-] Connection '" << id << "' not found. Run 'slug connect list' to see available connections." << std::endl;
+        std::cerr << "[-] Connection '" << id << "' not found. Run 'slug conn list' to see available connections." << std::endl;
         return 1;
     }
     core::ConnectionManager::instance().set_active_connection(id);
     std::cout << "[+] Active connection context set to '" << id << "' (" << conn->workspace << " @ " << conn->host << ":" << conn->port << ")" << std::endl;
     return 0;
+}
+
+int cmd_conn(int argc, char* argv[]) {
+    if (argc < 3 || std::string(argv[2]) == "list" || std::string(argv[2]) == "ls") {
+        std::vector<char*> fwd = { argv[0], (char*)"connect", (char*)"list" };
+        for (int i = 3; i < argc; ++i) fwd.push_back(argv[i]);
+        return cmd_connect(static_cast<int>(fwd.size()), fwd.data());
+    }
+    std::string sub = argv[2];
+    if (sub == "prune") {
+        char* prune_argv[] = { argv[0], (char*)"connect", (char*)"prune" };
+        return cmd_connect(3, prune_argv);
+    }
+    if (sub == "use" || sub == "set") {
+        if (argc < 4) {
+            std::cerr << "Usage: slug conn use <connection_id>" << std::endl;
+            return 1;
+        }
+        char* set_argv[] = { argv[0], (char*)"set", argv[3] };
+        return cmd_set(3, set_argv);
+    }
+    if (sub == "rm" || sub == "remove" || sub == "del" || sub == "delete") {
+        if (argc < 4) {
+            std::cerr << "Usage: slug conn rm <connection_id>" << std::endl;
+            return 1;
+        }
+        std::string id = argv[3];
+        core::ConnectionManager::instance().remove_connection(id);
+        std::cout << "[+] Connection '" << id << "' removed from saved connections." << std::endl;
+        return 0;
+    }
+
+    // Direct inspect e.g. `slug conn conn_1` or `slug conn conn_1 -w`
+    return cmd_connect(argc, argv);
 }
 
 int cmd_list(int argc, char* argv[]) {
@@ -960,7 +1047,7 @@ int cmd_pull(int argc, char* argv[]) {
         else if (arg == "-p" || arg == "--port") { if (i + 1 < argc) port = static_cast<uint16_t>(std::stoi(argv[++i])); }
         else if (arg == "-o" || arg == "--otp") { if (i + 1 < argc) totp = argv[++i]; }
         else if (arg == "-u" || arg == "--user") { if (i + 1 < argc) user = argv[++i]; }
-        else if (arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
+        else if (arg == "-P" || arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
         else if (arg == "--dry-run") opts.dry_run = true;
         else if (arg == "--prune") opts.prune = true;
         else if (arg == "--only" && i + 1 < argc) opts.only_pattern = argv[++i];
@@ -988,9 +1075,12 @@ int cmd_pull(int argc, char* argv[]) {
         if (!totp.empty()) {
             auth = client.authenticate_totp(totp);
         } else if (!user.empty()) {
+            if (pass.empty()) {
+                pass = read_hidden_password("Enter password for '" + user + "': ");
+            }
             auth = client.authenticate_user(user, pass);
         } else {
-            std::cerr << "[-] Auth credential required: -o <otp> or -u <user> --pass <pass>" << std::endl;
+            std::cerr << "[-] Auth credential required: -o <otp> or -u <user> [-P <pass>]" << std::endl;
             return 1;
         }
 
@@ -1027,6 +1117,312 @@ int cmd_pull(int argc, char* argv[]) {
     return ok ? 0 : 1;
 }
 
+int cmd_get(int argc, char* argv[]) {
+    if (argc < 3) {
+        std::cerr << "Usage: slug get <ENDPOINT?otp=CODE | URL> [dest_dir] [-o <otp>] [-u <user>] [-P <pass>]" << std::endl;
+        std::cerr << "Example: slug get 192.168.1.107:9443?otp=12822565" << std::endl;
+        return 1;
+    }
+
+    std::string raw_target = argv[2];
+    std::string dest_dir = "";
+    std::string ip = "";
+    uint16_t port = core::kDefaultPort;
+    std::string totp, user, pass, ticket;
+
+    for (int i = 3; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-o" || arg == "--otp") { if (i + 1 < argc) totp = argv[++i]; }
+        else if (arg == "-u" || arg == "--user") { if (i + 1 < argc) user = argv[++i]; }
+        else if (arg == "-P" || arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
+        else if (arg == "-p" || arg == "--port") { if (i + 1 < argc) port = static_cast<uint16_t>(std::stoi(argv[++i])); }
+        else if (arg == "-i" || arg == "--host") { if (i + 1 < argc) ip = argv[++i]; }
+        else if (arg.front() != '-') {
+            if (dest_dir.empty()) dest_dir = arg;
+        }
+    }
+
+    std::string endpoint = raw_target;
+    if (core::Utils::starts_with(endpoint, "slug://")) endpoint = endpoint.substr(7);
+    else if (core::Utils::starts_with(endpoint, "http://")) endpoint = endpoint.substr(7);
+    else if (core::Utils::starts_with(endpoint, "https://")) endpoint = endpoint.substr(8);
+
+    size_t qpos = endpoint.find('?');
+    std::string query = "";
+    if (qpos != std::string::npos) {
+        query = endpoint.substr(qpos + 1);
+        endpoint = endpoint.substr(0, qpos);
+    }
+    size_t slashpos = endpoint.find('/');
+    if (slashpos != std::string::npos) {
+        endpoint = endpoint.substr(0, slashpos);
+    }
+
+    if (!endpoint.empty()) {
+        size_t colon = endpoint.rfind(':');
+        if (colon != std::string::npos) {
+            ip = endpoint.substr(0, colon);
+            try {
+                port = static_cast<uint16_t>(std::stoi(endpoint.substr(colon + 1)));
+            } catch (...) {}
+        } else {
+            ip = endpoint;
+        }
+    }
+
+    if (!query.empty()) {
+        std::stringstream ss(query);
+        std::string token;
+        while (std::getline(ss, token, '&')) {
+            size_t eq = token.find('=');
+            if (eq != std::string::npos) {
+                std::string k = token.substr(0, eq);
+                std::string v = token.substr(eq + 1);
+                if (k == "otp" || k == "token") {
+                    if (totp.empty()) totp = v;
+                } else if (k == "user" || k == "username") {
+                    if (user.empty()) user = v;
+                } else if (k == "pass" || k == "password") {
+                    if (pass.empty()) pass = v;
+                } else if (k == "ticket") {
+                    if (ticket.empty()) ticket = v;
+                }
+            }
+        }
+    }
+
+    if (ip.empty()) ip = "127.0.0.1";
+
+    net::SlugClient client;
+    std::cout << "[*] One-Shot Client connecting to " << ip << ":" << port << "..." << std::endl;
+    if (!client.connect(ip, port)) {
+        std::cerr << "[-] Connection failed to " << ip << ":" << port << std::endl;
+        return 1;
+    }
+    std::cout << "[+] Handshake OK! Negotiated: " << client.negotiated_suite_name() << std::endl;
+
+    net::ClientAuthResult auth;
+    if (!totp.empty()) {
+        std::cout << "[*] Authenticating with single-use OTP: " << totp << "..." << std::endl;
+        auth = client.authenticate_totp(totp);
+    } else if (!user.empty()) {
+        if (pass.empty()) {
+            pass = read_hidden_password("Enter password for '" + user + "': ");
+        }
+        std::cout << "[*] Authenticating with account '" << user << "'..." << std::endl;
+        auth = client.authenticate_user(user, pass);
+    } else if (!ticket.empty()) {
+        std::cout << "[*] Authenticating with session certificate ticket..." << std::endl;
+        auth = client.authenticate_ticket(ticket);
+    } else {
+        std::cerr << "[-] Authentication credential missing in link. Pass ?otp=<code> or -o <code>." << std::endl;
+        return 1;
+    }
+
+    if (!auth.success) {
+        std::cerr << "[-] " << auth.message << std::endl;
+        return 1;
+    }
+
+    std::cout << "[+] Authentication succeeded! Role: [" << core::role_to_string(auth.role) << "]" << std::endl;
+
+    auto conns = core::ConnectionManager::instance().list_connections();
+    int max_idx = 0;
+    for (const auto& c : conns) {
+        if (c.id.rfind("conn_", 0) == 0) {
+            try {
+                int idx = std::stoi(c.id.substr(5));
+                if (idx > max_idx) max_idx = idx;
+            } catch (...) {}
+        }
+    }
+    std::string new_id = "conn_" + std::to_string(max_idx + 1);
+
+    core::ConnectionInfo ci;
+    ci.id = new_id;
+    ci.host = ip;
+    ci.port = port;
+    ci.workspace = auth.workspace_name.empty() ? "workspace" : auth.workspace_name;
+    ci.identity = user.empty() ? ("get_client_" + ip) : user;
+    ci.role = auth.role;
+    ci.ticket = auth.web_ticket;
+    ci.created_at = core::Utils::current_timestamp();
+    ci.expires_at = (auth.ttl > 0) ? (ci.created_at + auth.ttl) : 0;
+    core::ConnectionManager::instance().save_connection(ci);
+    core::ConnectionManager::instance().set_active_connection(new_id);
+
+    std::string target_dir = dest_dir;
+    if (target_dir.empty()) {
+        target_dir = "./" + ci.workspace;
+    }
+
+    std::cout << "[*] Starting One-Shot Sync into " << target_dir << "..." << std::endl;
+    sync::DeltaSyncOptions opts;
+    bool sync_ok = client.pull(target_dir, opts);
+    if (!sync_ok) {
+        std::cerr << "[-] Failed to synchronize remote workspace." << std::endl;
+        return 1;
+    }
+
+    std::cout << "\n[+] One-Shot Get completed! Workspace files pulled into: " << target_dir << std::endl;
+    std::cout << "[+] Connection context saved as: " << new_id << " (Use 'slug pull' or 'slug push' for future syncs)" << std::endl;
+    return 0;
+}
+
+int cmd_completion(int argc, char* argv[]) {
+    std::string shell = "bash";
+    if (argc >= 3) {
+        shell = argv[2];
+    }
+
+    if (shell == "zsh") {
+        std::cout << R"(#compdef slug
+_slug() {
+    local -a commands
+    commands=(
+        'add:Share a folder with Post-Quantum protection'
+        'status:List all active workspaces, suites, role OTPs, and ports'
+        'totp:Display active role-based One-Time TOTP tokens'
+        'stop:Stop workspace server'
+        'user:Manage workspace accounts and RBAC permissions'
+        'audit:Inspect or whitelist AI-flagged files'
+        'get:One-shot connect and pull remote workspace'
+        'pull:Incremental differential sync using BLAKE3'
+        'push:Upload file to remote workspace'
+        'conn:Manage saved client connections'
+        'serve:Detailed server view or open Admin Dashboard'
+        'web:Launch authenticated Web Dropbox'
+        'completion:Generate shell autocompletion script'
+        'env:Post-quantum RAM-only environment secret injection'
+        'bench:Performance and cryptography benchmark'
+        'version:Show version information'
+        'help:Show help information'
+    )
+    _arguments -C \
+        '1: :->command' \
+        '*:: :->args'
+
+    case $state in
+        command)
+            _describe -t commands 'slug command' commands
+            ;;
+        args)
+            case $line[1] in
+                add)
+                    _arguments -s \
+                        '-p[Port number]:port:' \
+                        '--port[Port number]:port:' \
+                        '-s[Crypto suite (1|2|3|pqc)]:suite:(1 2 3 classical modern pqc)' \
+                        '--suite[Crypto suite (1|2|3|pqc)]:suite:(1 2 3 classical modern pqc)' \
+                        '-t[Session TTL]:ttl:' \
+                        '--ttl[Session TTL]:ttl:' \
+                        '-a[Enable Stateful AI Secret Guard]' \
+                        '--ai[Enable Stateful AI Secret Guard]' \
+                        '-d[Run in background as daemon]' \
+                        '--daemon[Run in background as daemon]' \
+                        '*:directory:_files -/'
+                    ;;
+                user)
+                    _arguments '1:subcommand:(add mod rm list)' '*:args:_files'
+                    ;;
+                conn)
+                    _arguments '1:subcommand:(list use prune rm)' '*:args:_files'
+                    ;;
+                audit)
+                    _arguments '1:subcommand:(list scan allow recheck)' '*:args:_files'
+                    ;;
+                *)
+                    _files
+                    ;;
+            esac
+            ;;
+    esac
+}
+_slug "$@"
+)" << std::endl;
+        return 0;
+    }
+
+    // Default to Bash
+    std::cout << R"(# Bash completion for Slug CLI
+_slug_completions() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    local commands="add status totp stop user audit get pull push conn serve web completion env bench ls set version help"
+
+    case "${prev}" in
+        slug)
+            COMPREPLY=( $(compgen -W "${commands}" -- ${cur}) )
+            return 0
+            ;;
+        serve|server|stop)
+            local ports=$(slug --internal-list-ports 2>/dev/null)
+            COMPREPLY=( $(compgen -W "${ports} list stop -p --port -w --web -a --all" -- ${cur}) )
+            return 0
+            ;;
+        totp)
+            local ports=$(slug --internal-list-ports 2>/dev/null)
+            COMPREPLY=( $(compgen -W "${ports} -p --port -r --role --code-only" -- ${cur}) )
+            return 0
+            ;;
+        conn)
+            COMPREPLY=( $(compgen -W "list use prune rm" -- ${cur}) )
+            return 0
+            ;;
+        connect)
+            COMPREPLY=( $(compgen -W "list prune -i --host -p --port -o --otp -u --user -P --pass -w --web" -- ${cur}) )
+            return 0
+            ;;
+        user)
+            local ports=$(slug --internal-list-ports 2>/dev/null)
+            COMPREPLY=( $(compgen -W "add mod rm list -p --port -u --user -P --pass -r --role -t --ttl" -- ${cur}) )
+            return 0
+            ;;
+        audit)
+            local ports=$(slug --internal-list-ports 2>/dev/null)
+            COMPREPLY=( $(compgen -W "list scan allow recheck -p --port --deep" -- ${cur}) )
+            return 0
+            ;;
+        completion)
+            COMPREPLY=( $(compgen -W "bash zsh" -- ${cur}) )
+            return 0
+            ;;
+        -s|--suite)
+            COMPREPLY=( $(compgen -W "1 2 3 classical modern pqc" -- ${cur}) )
+            return 0
+            ;;
+        -r|--role)
+            COMPREPLY=( $(compgen -W "rw r w" -- ${cur}) )
+            return 0
+            ;;
+        env)
+            COMPREPLY=( $(compgen -W "init run -s --suite" -- ${cur}) )
+            return 0
+            ;;
+        bench)
+            COMPREPLY=( $(compgen -W "--quick -q --json" -- ${cur}) )
+            return 0
+            ;;
+        *)
+            ;;
+    esac
+
+    if [[ "${cur}" == -* ]]; then
+        local flags="-p --port -P --pass -s --short --suite -t --ttl -a --ai -d --daemon -i --host -o --otp -u --user -r --role -w --web --dry-run --code-only --quick -q --json -y --yes -n --no --keep-data"
+        COMPREPLY=( $(compgen -W "${flags}" -- ${cur}) )
+        return 0
+    fi
+
+    COMPREPLY=( $(compgen -f -- "${cur}") )
+}
+complete -F _slug_completions slug
+)" << std::endl;
+    return 0;
+}
+
 int cmd_push(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: slug push <local_file> [remote_dest] [-i <host> -p <port> -o <otp>]" << std::endl;
@@ -1046,7 +1442,7 @@ int cmd_push(int argc, char* argv[]) {
         else if (arg == "-p" || arg == "--port") { if (i + 1 < argc) port = static_cast<uint16_t>(std::stoi(argv[++i])); }
         else if (arg == "-o" || arg == "--otp") { if (i + 1 < argc) totp = argv[++i]; }
         else if (arg == "-u" || arg == "--user") { if (i + 1 < argc) user = argv[++i]; }
-        else if (arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
+        else if (arg == "-P" || arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
         else if (arg.front() != '-') {
             if (remote_dest.empty()) remote_dest = arg;
             else conn_id = arg;
@@ -1069,6 +1465,9 @@ int cmd_push(int argc, char* argv[]) {
         if (!totp.empty()) {
             auth = client.authenticate_totp(totp);
         } else if (!user.empty()) {
+            if (pass.empty()) {
+                pass = read_hidden_password("Enter password for '" + user + "': ");
+            }
             auth = client.authenticate_user(user, pass, "w");
         }
 
@@ -1159,7 +1558,7 @@ int cmd_web(int argc, char* argv[]) {
 
 int cmd_user(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: slug user [add|rm|list] ..." << std::endl;
+        std::cerr << "Usage: slug user [add|mod|rm|list] ..." << std::endl;
         return 1;
     }
     std::string sub = argv[2];
@@ -1168,7 +1567,7 @@ int cmd_user(int argc, char* argv[]) {
 
     for (int i = 3; i < argc; ++i) {
         std::string arg = argv[i];
-        if ((arg == "-p" || arg == "-P" || arg == "--port") && i + 1 < argc) {
+        if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
             std::string val = argv[++i];
             if (std::all_of(val.begin(), val.end(), ::isdigit)) {
                 port = static_cast<uint16_t>(std::stoi(val));
@@ -1183,6 +1582,11 @@ int cmd_user(int argc, char* argv[]) {
         for (const auto& w : list) {
             if (w.port == port) dir = w.path;
         }
+    } else {
+        auto list = core::WorkspaceManager::load_registry();
+        if (list.size() == 1) {
+            dir = list[0].path;
+        }
     }
 
     core::AclManager acl(dir / ".slug" / "acl.db");
@@ -1192,43 +1596,75 @@ int cmd_user(int argc, char* argv[]) {
         for (int i = 3; i < argc; ++i) {
             std::string arg = argv[i];
             if ((arg == "-u" || arg == "--user") && i + 1 < argc) u = argv[++i];
-            else if ((arg == "--pass" || arg == "--password") && i + 1 < argc) p = argv[++i];
+            else if ((arg == "-P" || arg == "--pass" || arg == "--password") && i + 1 < argc) p = argv[++i];
             else if ((arg == "-r" || arg == "--role") && i + 1 < argc) r = argv[++i];
             else if ((arg == "-t" || arg == "--ttl") && i + 1 < argc) ttl_str = argv[++i];
-            else if ((arg == "-p" || arg == "-P" || arg == "--port") && i + 1 < argc) {
-                std::string val = argv[++i];
-                if (std::all_of(val.begin(), val.end(), ::isdigit) && port == 0) {
-                    port = static_cast<uint16_t>(std::stoi(val));
-                } else if (p.empty()) {
-                    p = val;
-                }
-            }
         }
-        if (u.empty() || p.empty()) {
-            std::cerr << "Usage: slug user add -u <username> --pass <password> [-r r|w|rw] [-t <ttl>] [-p <port>]" << std::endl;
+        if (u.empty()) {
+            std::cerr << "Usage: slug user add -u <username> [-P <password>] [-r r|w|rw] [-t <ttl>] [-p <port>]" << std::endl;
             return 1;
+        }
+        if (p.empty()) {
+            p = read_confirmed_hidden_password("Enter password for '" + u + "': ");
+            if (p.empty()) return 1;
         }
 
         uint64_t ttl_sec = core::Utils::parse_ttl(ttl_str);
         if (acl.add_user(u, p, core::role_from_string(r), ttl_sec)) {
-            std::cout << "[+] Ephemeral account '" << u << "' created with role [" << r << "] (TTL: " << ttl_str << ")" << std::endl;
+            std::cout << "[+] Ephemeral account '" << u << "' created with role [" << r << "] (TTL: " << core::Utils::format_ttl(ttl_sec) << ")" << std::endl;
             return 0;
         }
         return 1;
 
-    } else if (sub == "rm") {
+    } else if (sub == "mod" || sub == "modify" || sub == "edit") {
+        std::string u, p;
+        std::optional<core::Role> role = std::nullopt;
+        std::optional<uint64_t> ttl_sec = std::nullopt;
+
+        for (int i = 3; i < argc; ++i) {
+            std::string arg = argv[i];
+            if ((arg == "-u" || arg == "--user") && i + 1 < argc) u = argv[++i];
+            else if ((arg == "-P" || arg == "--pass" || arg == "--password") && i + 1 < argc) p = argv[++i];
+            else if ((arg == "-r" || arg == "--role") && i + 1 < argc) role = core::role_from_string(argv[++i]);
+            else if ((arg == "-t" || arg == "--ttl") && i + 1 < argc) ttl_sec = core::Utils::parse_ttl(argv[++i]);
+        }
+        if (u.empty()) {
+            std::cerr << "Usage: slug user mod -u <username> [-P <new_pass>] [-r r|w|rw] [-t <ttl>] [-p <port>]" << std::endl;
+            return 1;
+        }
+
+        if (p.empty() && !role.has_value() && !ttl_sec.has_value()) {
+            p = read_confirmed_hidden_password("Enter new password for '" + u + "': ");
+            if (p.empty()) return 1;
+        }
+
+        if (acl.update_user(u, p, role, ttl_sec)) {
+            std::cout << "[+] Account '" << u << "' modified successfully." << std::endl;
+            return 0;
+        } else {
+            std::cerr << "[-] Failed to modify user '" << u << "' (user not found or invalid options)." << std::endl;
+            return 1;
+        }
+
+    } else if (sub == "rm" || sub == "del" || sub == "delete") {
         std::string u;
         for (int i = 3; i < argc; ++i) {
             std::string arg = argv[i];
             if ((arg == "-u" || arg == "--user") && i + 1 < argc) u = argv[++i];
         }
+        if (u.empty() && argc >= 4 && argv[3][0] != '-') u = argv[3];
+        if (u.empty()) {
+            std::cerr << "Usage: slug user rm -u <username> [-p <port>]" << std::endl;
+            return 1;
+        }
         if (acl.remove_user(u)) {
             std::cout << "[+] User '" << u << "' removed" << std::endl;
             return 0;
         }
+        std::cerr << "[-] User not found: " << u << std::endl;
         return 1;
 
-    } else if (sub == "list") {
+    } else if (sub == "list" || sub == "ls") {
         auto users = acl.list_users();
         std::cout << "WORKSPACE USERS (" << users.size() << "):\n" << std::endl;
         std::cout << std::left
@@ -1240,7 +1676,7 @@ int cmd_user(int argc, char* argv[]) {
         std::cout << std::string(66, '-') << std::endl;
         uint64_t now = core::Utils::current_timestamp();
         for (const auto& u : users) {
-            std::string exp_str = (u.expires_at == 0) ? "Permanent"
+            std::string exp_str = (u.expires_at == 0) ? "Permanent (∞)"
                                   : (u.expires_at > now ? core::Utils::format_duration(u.expires_at - now) : "Expired");
             std::cout << std::left
                       << std::setw(16) << u.username
@@ -1266,7 +1702,7 @@ int cmd_rule(int argc, char* argv[]) {
 
     for (int i = 3; i < argc; ++i) {
         std::string arg = argv[i];
-        if ((arg == "-p" || arg == "-P" || arg == "--port") && i + 1 < argc) {
+        if ((arg == "-p" || arg == "--port" || arg == "-P") && i + 1 < argc) {
             port = static_cast<uint16_t>(std::stoi(argv[++i]));
         } else if (arg == "--dir" && i + 1 < argc) {
             dir = argv[++i];
@@ -1277,6 +1713,11 @@ int cmd_rule(int argc, char* argv[]) {
         auto list = core::WorkspaceManager::load_registry();
         for (const auto& w : list) {
             if (w.port == port) dir = w.path;
+        }
+    } else {
+        auto list = core::WorkspaceManager::load_registry();
+        if (list.size() == 1) {
+            dir = list[0].path;
         }
     }
 
@@ -1358,9 +1799,10 @@ int cmd_audit(int argc, char* argv[]) {
     uint16_t port = 0;
 
     for (int i = 3; i < argc; ++i) {
-        if (std::string(argv[i]) == "-P" && i + 1 < argc) {
+        std::string arg = argv[i];
+        if ((arg == "-p" || arg == "--port" || arg == "-P") && i + 1 < argc) {
             port = static_cast<uint16_t>(std::stoi(argv[++i]));
-        } else if (std::string(argv[i]) == "--dir" && i + 1 < argc) {
+        } else if (arg == "--dir" && i + 1 < argc) {
             dir = argv[++i];
         }
     }
@@ -1369,6 +1811,11 @@ int cmd_audit(int argc, char* argv[]) {
         auto list = core::WorkspaceManager::load_registry();
         for (const auto& w : list) {
             if (w.port == port) dir = w.path;
+        }
+    } else {
+        auto list = core::WorkspaceManager::load_registry();
+        if (list.size() == 1) {
+            dir = list[0].path;
         }
     }
 
@@ -1728,10 +2175,11 @@ int main(int argc, char* argv[]) {
 
     if (cmd == "add") return cmd_add(argc, argv);
     if (cmd == "status") return cmd_status(argc, argv);
-    if (cmd == "serve" || cmd == "server") return cmd_serve(argc, argv);
+    if (cmd == "serve" || cmd == "server" || cmd == "inspect") return cmd_serve(argc, argv);
     if (cmd == "totp") return cmd_totp(argc, argv);
     if (cmd == "stop") return cmd_stop(argc, argv);
     if (cmd == "connect") return cmd_connect(argc, argv);
+    if (cmd == "conn" || cmd == "connections") return cmd_conn(argc, argv);
     if (cmd == "set") return cmd_set(argc, argv);
     if (cmd == "list" || cmd == "ls") return cmd_list(argc, argv);
     if (cmd == "web") return cmd_web(argc, argv);
@@ -1742,9 +2190,18 @@ int main(int argc, char* argv[]) {
     if (cmd == "audit") return cmd_audit(argc, argv);
     if (cmd == "env") return cmd_env(argc, argv);
     if (cmd == "bench" || cmd == "benchmark") return cmd_bench(argc, argv);
-    if (cmd == "uninstall") return cmd_uninstall(argc, argv);
+    if (cmd == "--internal-list-ports") {
+        auto list = core::WorkspaceManager::load_registry();
+        for (size_t i = 0; i < list.size(); ++i) {
+            std::cout << list[i].port << (i + 1 < list.size() ? " " : "");
+        }
+        std::cout << std::endl;
+        return 0;
+    }
+    if (cmd == "get") return cmd_get(argc, argv);
+    if (cmd == "completion") return cmd_completion(argc, argv);
     if (cmd == "version" || cmd == "-v" || cmd == "--version") {
-        std::cout << "Slug 1.0.0-rc1 (Linux/Windows/macOS x86_64, Post-Quantum Suites 1-3, Apache-2.0)" << std::endl;
+        std::cout << "Slug 1.0.0-rc2 (Linux/Windows/macOS x86_64, Post-Quantum Suites 1-3, Apache-2.0)" << std::endl;
         return 0;
     }
     if (cmd == "help" || cmd == "-h" || cmd == "--help") {

@@ -19,41 +19,54 @@ SlugClient::~SlugClient() {
 void SlugClient::disconnect() {
     socket_.close();
     session_id_ = 0;
+    is_encrypted_ = false;
+    tx_seq_ = 1;
 }
 
-static bool send_framed(platform::TcpSocket& sock, const json& j) {
-    std::string s = j.dump();
-    uint32_t len = static_cast<uint32_t>(s.size());
-    uint8_t hdr[4];
-    hdr[0] = static_cast<uint8_t>((len >> 24) & 0xFF);
-    hdr[1] = static_cast<uint8_t>((len >> 16) & 0xFF);
-    hdr[2] = static_cast<uint8_t>((len >> 8) & 0xFF);
-    hdr[3] = static_cast<uint8_t>(len & 0xFF);
-
-    if (!sock.send_all(std::span<const uint8_t>(hdr, 4))) return false;
-    return sock.send_all(s);
+bool SlugClient::send_packet(const std::string& json_str) {
+    if (is_encrypted_) {
+        std::span<const uint8_t> bytes(reinterpret_cast<const uint8_t*>(json_str.data()), json_str.size());
+        return AeadFrameChannel::send_frame(socket_, session_keys_.session_key, session_keys_.client_to_server_salt, tx_seq_++, bytes);
+    } else {
+        uint32_t len = static_cast<uint32_t>(json_str.size());
+        uint8_t hdr[4];
+        hdr[0] = static_cast<uint8_t>((len >> 24) & 0xFF);
+        hdr[1] = static_cast<uint8_t>((len >> 16) & 0xFF);
+        hdr[2] = static_cast<uint8_t>((len >> 8) & 0xFF);
+        hdr[3] = static_cast<uint8_t>(len & 0xFF);
+        if (!socket_.send_all(std::span<const uint8_t>(hdr, 4))) return false;
+        return socket_.send_all(json_str);
+    }
 }
 
-static std::optional<json> recv_framed(platform::TcpSocket& sock, int timeout_ms = 5000) {
-    uint8_t hdr[4];
-    if (!sock.receive_exact(std::span<uint8_t>(hdr, 4), timeout_ms)) {
-        return std::nullopt;
+std::optional<std::string> SlugClient::recv_packet(int timeout_ms) {
+    if (is_encrypted_) {
+        auto dec = AeadFrameChannel::recv_frame(socket_, session_keys_.session_key, session_keys_.server_to_client_salt, s2c_window_, timeout_ms);
+        if (!dec) return std::nullopt;
+        return std::string(dec->begin(), dec->end());
+    } else {
+        uint8_t hdr[4];
+        if (!socket_.receive_exact(std::span<uint8_t>(hdr, 4), timeout_ms)) return std::nullopt;
+        uint32_t len = (static_cast<uint32_t>(hdr[0]) << 24) |
+                       (static_cast<uint32_t>(hdr[1]) << 16) |
+                       (static_cast<uint32_t>(hdr[2]) << 8)  |
+                        static_cast<uint32_t>(hdr[3]);
+        if (len > 50 * 1024 * 1024) return std::nullopt;
+        std::vector<uint8_t> body(len);
+        if (!socket_.receive_exact(std::span<uint8_t>(body), timeout_ms)) return std::nullopt;
+        return std::string(body.begin(), body.end());
     }
-    uint32_t len = (static_cast<uint32_t>(hdr[0]) << 24) |
-                   (static_cast<uint32_t>(hdr[1]) << 16) |
-                   (static_cast<uint32_t>(hdr[2]) << 8) |
-                    static_cast<uint32_t>(hdr[3]);
+}
 
-    if (len > 50 * 1024 * 1024) return std::nullopt;
+bool SlugClient::send_json(const json& j) {
+    return send_packet(j.dump());
+}
 
-    std::vector<uint8_t> body(len);
-    if (!sock.receive_exact(std::span<uint8_t>(body), timeout_ms)) {
-        return std::nullopt;
-    }
-
+std::optional<json> SlugClient::recv_json(int timeout_ms) {
+    auto s = recv_packet(timeout_ms);
+    if (!s) return std::nullopt;
     try {
-        std::string s(body.begin(), body.end());
-        return json::parse(s);
+        return json::parse(*s);
     } catch (...) {
         return std::nullopt;
     }
@@ -61,23 +74,26 @@ static std::optional<json> recv_framed(platform::TcpSocket& sock, int timeout_ms
 
 bool SlugClient::connect(const std::string& host, uint16_t port, int timeout_ms) {
     disconnect();
+    is_encrypted_ = false;
+    tx_seq_ = 1;
 
     if (!socket_.connect(host, port, timeout_ms)) {
         return false;
     }
 
     // Step 1: Handshake ClientHello
+    std::vector<uint8_t> client_random = core::Utils::random_bytes(32);
     json ch;
     ch["type"] = "client_hello";
     ch["version"] = 1;
-    ch["client_nonce"] = core::Utils::to_hex(core::Utils::random_bytes(16));
-    if (!send_framed(socket_, ch)) {
+    ch["client_random"] = core::Utils::to_hex(client_random);
+    if (!send_json(ch)) {
         disconnect();
         return false;
     }
 
     // Step 2: ServerHello
-    auto sh_opt = recv_framed(socket_, timeout_ms);
+    auto sh_opt = recv_json(timeout_ms);
     if (!sh_opt) {
         disconnect();
         return false;
@@ -94,6 +110,28 @@ bool SlugClient::connect(const std::string& host, uint16_t port, int timeout_ms)
     suite_name_ = sh.value("suite_name", "PurePQC");
     suite_ = crypto::ICryptoSuite::create(suite_id_);
 
+    // Step 3: KEM Exchange & AEAD Key Derivation
+    std::string server_kem_pub_hex = sh.value("server_kem_pub", "");
+    std::string server_random_hex = sh.value("server_random", "");
+    if (!server_kem_pub_hex.empty()) {
+        auto server_kem_pub = core::Utils::from_hex(server_kem_pub_hex);
+        auto server_random = core::Utils::from_hex(server_random_hex);
+        auto kem_res = suite_->encapsulate(server_kem_pub);
+        if (kem_res) {
+            json kx;
+            kx["type"] = "kem_exchange";
+            kx["ciphertext"] = core::Utils::to_hex(kem_res->ciphertext);
+            if (send_json(kx)) {
+                auto ok_opt = recv_json(timeout_ms);
+                if (ok_opt && ok_opt->value("type", "") == "kem_ok" && ok_opt->value("status", "") == "ok") {
+                    session_keys_ = SessionKeys::derive(kem_res->shared_secret, client_random, server_random);
+                    is_encrypted_ = true;
+                    tx_seq_ = 1;
+                }
+            }
+        }
+    }
+
     return true;
 }
 
@@ -107,12 +145,12 @@ ClientAuthResult SlugClient::authenticate_totp(const std::string& totp_code) {
     json req;
     req["type"] = "auth_totp";
     req["code"] = totp_code;
-    if (!send_framed(socket_, req)) {
+    if (!send_json(req)) {
         res.message = "Failed to send auth request";
         return res;
     }
 
-    auto resp_opt = recv_framed(socket_, 5000);
+    auto resp_opt = recv_json(5000);
     if (!resp_opt) {
         res.message = "No response from server";
         return res;
@@ -149,12 +187,12 @@ ClientAuthResult SlugClient::authenticate_user(const std::string& username, cons
     req["username"] = username;
     req["password"] = password;
     req["role"] = role;
-    if (!send_framed(socket_, req)) {
+    if (!send_json(req)) {
         res.message = "Failed to send auth request";
         return res;
     }
 
-    auto resp_opt = recv_framed(socket_, 5000);
+    auto resp_opt = recv_json(5000);
     if (!resp_opt) {
         res.message = "No response from server";
         return res;
@@ -189,12 +227,12 @@ ClientAuthResult SlugClient::authenticate_ticket(const std::string& ticket) {
     json req;
     req["type"] = "auth_ticket";
     req["ticket"] = ticket;
-    if (!send_framed(socket_, req)) {
+    if (!send_json(req)) {
         res.message = "Failed to send auth request";
         return res;
     }
 
-    auto resp_opt = recv_framed(socket_, 5000);
+    auto resp_opt = recv_json(5000);
     if (!resp_opt) {
         res.message = "No response from server";
         return res;
@@ -224,9 +262,9 @@ std::optional<sync::WorkspaceManifest> SlugClient::fetch_manifest() {
 
     json req;
     req["type"] = "get_manifest";
-    if (!send_framed(socket_, req)) return std::nullopt;
+    if (!send_json(req)) return std::nullopt;
 
-    auto resp_opt = recv_framed(socket_, 10000);
+    auto resp_opt = recv_json(10000);
     if (!resp_opt) return std::nullopt;
 
     const auto& resp = *resp_opt;
@@ -242,9 +280,9 @@ std::optional<std::vector<uint8_t>> SlugClient::fetch_chunk(const std::string& r
     req["type"] = "get_chunk";
     req["path"] = rel_path;
     req["chunk_index"] = chunk_idx;
-    if (!send_framed(socket_, req)) return std::nullopt;
+    if (!send_json(req)) return std::nullopt;
 
-    auto resp_opt = recv_framed(socket_, 10000);
+    auto resp_opt = recv_json(10000);
     if (!resp_opt) return std::nullopt;
 
     const auto& resp = *resp_opt;
@@ -377,12 +415,12 @@ bool SlugClient::push(const fs::path& local_file,
     req["path"] = remote_dest;
     req["data_b64"] = core::Utils::to_base64(*data);
 
-    if (!send_framed(socket_, req)) {
+    if (!send_json(req)) {
         log("Error: Failed to send push request");
         return false;
     }
 
-    auto resp_opt = recv_framed(socket_, 15000);
+    auto resp_opt = recv_json(15000);
     if (!resp_opt) {
         log("Error: No response from server");
         return false;

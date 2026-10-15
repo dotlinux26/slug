@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0-rc1"
+VERSION="1.0.0-rc2"
 ARCH="amd64"
 DIST_DIR="dist"
 DEB_ROOT="${DIST_DIR}/slug_${VERSION}_${ARCH}"

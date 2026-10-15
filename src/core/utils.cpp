@@ -7,6 +7,12 @@
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
 
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#include <sys/file.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace slug::core {
 
 std::string Utils::to_hex(std::span<const uint8_t> data) {
@@ -120,23 +126,37 @@ std::string Utils::format_duration(uint64_t seconds) {
 
 uint64_t Utils::parse_ttl(std::string_view ttl_str) {
     if (ttl_str.empty()) return 86400; // default 24h
+    std::string s(ttl_str);
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    if (s == "inf" || s == "infinity" || s == "forever" || s == "permanent" || s == "0") {
+        return 0; // 0 = permanent / no expiration
+    }
     uint64_t val = 0;
     size_t i = 0;
-    while (i < ttl_str.size() && std::isdigit(ttl_str[i])) {
-        val = val * 10 + (ttl_str[i] - '0');
+    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+        val = val * 10 + (s[i] - '0');
         i++;
     }
     if (i == 0) return 86400;
-    if (i >= ttl_str.size()) return val; // plain seconds
+    if (i >= s.size()) return val; // plain seconds
 
-    char unit = ttl_str[i];
+    char unit = s[i];
     switch (unit) {
         case 's': return val;
         case 'm': return val * 60;
         case 'h': return val * 3600;
         case 'd': return val * 86400;
+        case 'w': return val * 86400 * 7;
+        case 'y': return val * 86400 * 365;
         default: return val;
     }
+}
+
+std::string Utils::format_ttl(uint64_t expires_at, uint64_t now) {
+    if (expires_at == 0) return "∞ (Permanent)";
+    if (now == 0) now = current_timestamp();
+    if (now >= expires_at) return "Expired";
+    return format_duration(expires_at - now);
 }
 
 uint64_t Utils::current_timestamp() {
@@ -184,6 +204,27 @@ bool Utils::starts_with(std::string_view str, std::string_view prefix) {
 bool Utils::ends_with(std::string_view str, std::string_view suffix) {
     if (suffix.size() > str.size()) return false;
     return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+FileLockGuard::FileLockGuard(const std::string& file_path) {
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+    std::string lock_file = file_path + ".lock";
+    fd_ = ::open(lock_file.c_str(), O_RDWR | O_CREAT, 0600);
+    if (fd_ >= 0) {
+        ::flock(fd_, LOCK_EX);
+    }
+#else
+    (void)file_path;
+#endif
+}
+
+FileLockGuard::~FileLockGuard() {
+#if defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+    if (fd_ >= 0) {
+        ::flock(fd_, LOCK_UN);
+        ::close(fd_);
+    }
+#endif
 }
 
 } // namespace slug::core

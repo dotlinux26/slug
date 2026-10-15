@@ -31,8 +31,11 @@ public:
     // Human-readable duration
     static std::string format_duration(uint64_t seconds);
 
-    // Parse TTL string like "30s", "5m", "2h", "24h", "7d" -> seconds
+    // Parse TTL string like "30s", "5m", "2h", "24h", "7d", "inf", "forever", "0" -> seconds (0 = permanent)
     static uint64_t parse_ttl(std::string_view ttl_str);
+
+    // Format expiration timestamp: "∞ (Permanent)", "Expired", or duration e.g. "23h 59m"
+    static std::string format_ttl(uint64_t expires_at, uint64_t now = 0);
 
     // Current Unix timestamp in seconds
     static uint64_t current_timestamp();
@@ -43,6 +46,16 @@ public:
     static std::string join(const std::vector<std::string>& list, std::string_view delim);
     static bool starts_with(std::string_view str, std::string_view prefix);
     static bool ends_with(std::string_view str, std::string_view suffix);
+};
+
+class FileLockGuard {
+public:
+    explicit FileLockGuard(const std::string& file_path);
+    ~FileLockGuard();
+    FileLockGuard(const FileLockGuard&) = delete;
+    FileLockGuard& operator=(const FileLockGuard&) = delete;
+private:
+    int fd_{-1};
 };
 
 } // namespace slug::core

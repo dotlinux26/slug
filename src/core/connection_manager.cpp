@@ -38,133 +38,7 @@ fs::path ConnectionManager::active_context_file_path() {
     return p;
 }
 
-void ConnectionManager::save_connection(const ConnectionInfo& conn) {
-    auto list = list_connections();
-    std::vector<ConnectionInfo> updated;
-    for (const auto& item : list) {
-        if (item.id != conn.id) {
-            if (!item.is_expired()) {
-                updated.push_back(item);
-            }
-        }
-    }
-    updated.push_back(conn);
-
-    json arr = json::array();
-    for (const auto& c : updated) {
-        json obj;
-        obj["id"] = c.id;
-        obj["host"] = c.host;
-        obj["port"] = c.port;
-        obj["workspace"] = c.workspace;
-        obj["identity"] = c.identity;
-        obj["role"] = role_to_string(c.role);
-        obj["ticket"] = c.ticket;
-        obj["created_at"] = c.created_at;
-        obj["expires_at"] = c.expires_at;
-        arr.push_back(obj);
-    }
-
-    platform::PathUtils::write_text_file_atomic(connections_file_path(), arr.dump(2));
-}
-
-size_t ConnectionManager::prune_expired_connections() {
-    auto list = list_connections(false);
-    std::vector<ConnectionInfo> kept;
-    size_t pruned = 0;
-    std::string active_id = get_active_connection();
-    bool active_pruned = false;
-
-    for (const auto& c : list) {
-        if (c.is_expired()) {
-            pruned++;
-            if (c.id == active_id) active_pruned = true;
-        } else {
-            kept.push_back(c);
-        }
-    }
-
-    if (pruned > 0) {
-        json arr = json::array();
-        for (const auto& c : kept) {
-            json obj;
-            obj["id"] = c.id;
-            obj["host"] = c.host;
-            obj["port"] = c.port;
-            obj["workspace"] = c.workspace;
-            obj["identity"] = c.identity;
-            obj["role"] = role_to_string(c.role);
-            obj["ticket"] = c.ticket;
-            obj["created_at"] = c.created_at;
-            obj["expires_at"] = c.expires_at;
-            arr.push_back(obj);
-        }
-        platform::PathUtils::write_text_file_atomic(connections_file_path(), arr.dump(2));
-        if (active_pruned) {
-            if (!kept.empty()) {
-                set_active_connection(kept.front().id);
-            } else {
-                set_active_connection("");
-            }
-        }
-    }
-    return pruned;
-}
-
-bool ConnectionManager::ping_connection(const ConnectionInfo& c, int timeout_ms) {
-    platform::TcpSocket sock;
-    return sock.connect(c.host, c.port, timeout_ms);
-}
-
-size_t ConnectionManager::prune_dead_connections(int timeout_ms) {
-    prune_expired_connections();
-    auto list = list_connections(false);
-    std::vector<ConnectionInfo> kept;
-    size_t pruned = 0;
-    std::string active_id = get_active_connection();
-    bool active_pruned = false;
-
-    for (const auto& c : list) {
-        if (!ping_connection(c, timeout_ms)) {
-            pruned++;
-            if (c.id == active_id) active_pruned = true;
-        } else {
-            kept.push_back(c);
-        }
-    }
-
-    if (pruned > 0) {
-        json arr = json::array();
-        for (const auto& c : kept) {
-            json obj;
-            obj["id"] = c.id;
-            obj["host"] = c.host;
-            obj["port"] = c.port;
-            obj["workspace"] = c.workspace;
-            obj["identity"] = c.identity;
-            obj["role"] = role_to_string(c.role);
-            obj["ticket"] = c.ticket;
-            obj["created_at"] = c.created_at;
-            obj["expires_at"] = c.expires_at;
-            arr.push_back(obj);
-        }
-        platform::PathUtils::write_text_file_atomic(connections_file_path(), arr.dump(2));
-        if (active_pruned) {
-            if (!kept.empty()) {
-                set_active_connection(kept.front().id);
-            } else {
-                set_active_connection("");
-            }
-        }
-    }
-    return pruned;
-}
-
-std::vector<ConnectionInfo> ConnectionManager::list_connections(bool prune_expired) {
-    if (prune_expired) {
-        prune_expired_connections();
-    }
-    fs::path p = connections_file_path();
+static std::vector<ConnectionInfo> list_connections_unlocked(const fs::path& p) {
     if (!fs::exists(p)) return {};
 
     auto text_opt = platform::PathUtils::read_text_file(p);
@@ -194,6 +68,113 @@ std::vector<ConnectionInfo> ConnectionManager::list_connections(bool prune_expir
     return out;
 }
 
+static void write_connections_unlocked(const fs::path& p, const std::vector<ConnectionInfo>& list) {
+    json arr = json::array();
+    for (const auto& c : list) {
+        json obj;
+        obj["id"] = c.id;
+        obj["host"] = c.host;
+        obj["port"] = c.port;
+        obj["workspace"] = c.workspace;
+        obj["identity"] = c.identity;
+        obj["role"] = role_to_string(c.role);
+        obj["ticket"] = c.ticket;
+        obj["created_at"] = c.created_at;
+        obj["expires_at"] = c.expires_at;
+        arr.push_back(obj);
+    }
+    platform::PathUtils::write_text_file_atomic(p, arr.dump(2));
+}
+
+static size_t prune_expired_connections_unlocked(const fs::path& p) {
+    auto list = list_connections_unlocked(p);
+    std::vector<ConnectionInfo> kept;
+    size_t pruned = 0;
+    std::string active_id = ConnectionManager::instance().get_active_connection();
+    bool active_pruned = false;
+
+    for (const auto& c : list) {
+        if (c.is_expired()) {
+            pruned++;
+            if (c.id == active_id) active_pruned = true;
+        } else {
+            kept.push_back(c);
+        }
+    }
+
+    if (pruned > 0) {
+        write_connections_unlocked(p, kept);
+        if (active_pruned) {
+            ConnectionManager::instance().set_active_connection(!kept.empty() ? kept.front().id : "");
+        }
+    }
+    return pruned;
+}
+
+void ConnectionManager::save_connection(const ConnectionInfo& conn) {
+    fs::path p = connections_file_path();
+    FileLockGuard lock(p.string());
+    auto list = list_connections_unlocked(p);
+    std::vector<ConnectionInfo> updated;
+    for (const auto& item : list) {
+        if (item.id != conn.id) {
+            if (!item.is_expired()) {
+                updated.push_back(item);
+            }
+        }
+    }
+    updated.push_back(conn);
+    write_connections_unlocked(p, updated);
+}
+
+size_t ConnectionManager::prune_expired_connections() {
+    fs::path p = connections_file_path();
+    FileLockGuard lock(p.string());
+    return prune_expired_connections_unlocked(p);
+}
+
+bool ConnectionManager::ping_connection(const ConnectionInfo& c, int timeout_ms) {
+    platform::TcpSocket sock;
+    return sock.connect(c.host, c.port, timeout_ms);
+}
+
+size_t ConnectionManager::prune_dead_connections(int timeout_ms) {
+    fs::path p = connections_file_path();
+    FileLockGuard lock(p.string());
+    prune_expired_connections_unlocked(p);
+    auto list = list_connections_unlocked(p);
+    std::vector<ConnectionInfo> kept;
+    size_t pruned = 0;
+    std::string active_id = get_active_connection();
+    bool active_pruned = false;
+
+    for (const auto& c : list) {
+        if (!ping_connection(c, timeout_ms)) {
+            pruned++;
+            if (c.id == active_id) active_pruned = true;
+        } else {
+            kept.push_back(c);
+        }
+    }
+
+    if (pruned > 0) {
+        write_connections_unlocked(p, kept);
+        if (active_pruned) {
+            set_active_connection(!kept.empty() ? kept.front().id : "");
+        }
+    }
+    return pruned;
+}
+
+std::vector<ConnectionInfo> ConnectionManager::list_connections(bool prune_expired) {
+    fs::path p = connections_file_path();
+    FileLockGuard lock(p.string());
+    if (prune_expired) {
+        prune_expired_connections_unlocked(p);
+    }
+    return list_connections_unlocked(p);
+}
+
 std::optional<ConnectionInfo> ConnectionManager::get_connection(const std::string& id) {
     auto list = list_connections();
     for (const auto& c : list) {
@@ -205,24 +186,19 @@ std::optional<ConnectionInfo> ConnectionManager::get_connection(const std::strin
 }
 
 void ConnectionManager::remove_connection(const std::string& id) {
-    auto list = list_connections();
-    json arr = json::array();
+    fs::path p = connections_file_path();
+    FileLockGuard lock(p.string());
+    auto list = list_connections_unlocked(p);
+    std::vector<ConnectionInfo> kept;
     for (const auto& c : list) {
         if (c.id != id) {
-            json obj;
-            obj["id"] = c.id;
-            obj["host"] = c.host;
-            obj["port"] = c.port;
-            obj["workspace"] = c.workspace;
-            obj["identity"] = c.identity;
-            obj["role"] = role_to_string(c.role);
-            obj["ticket"] = c.ticket;
-            obj["created_at"] = c.created_at;
-            obj["expires_at"] = c.expires_at;
-            arr.push_back(obj);
+            kept.push_back(c);
         }
     }
-    platform::PathUtils::write_text_file_atomic(connections_file_path(), arr.dump(2));
+    write_connections_unlocked(p, kept);
+    if (get_active_connection() == id) {
+        set_active_connection(!kept.empty() ? kept.front().id : "");
+    }
 }
 
 void ConnectionManager::set_active_connection(const std::string& id) {

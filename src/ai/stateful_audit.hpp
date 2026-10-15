@@ -37,6 +37,7 @@ public:
     bool remove_entry(const std::string& file_path);
 
     std::optional<AuditIndexEntry> get_entry(const std::string& file_path) const;
+    bool is_flagged(const std::string& file_path) const;
     std::vector<AuditIndexEntry> list_flagged_or_all(bool only_flagged = false) const;
 
 private:

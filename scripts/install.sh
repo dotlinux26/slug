@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO="${SLUG_REPO:-dotlinux26/slug}"
-VERSION="1.0.0-rc1"
+VERSION="1.0.0-rc2"
 
 print_info() {
     echo "[*] $1"
@@ -255,8 +255,12 @@ if [ -n "$COMPLETION_SRC" ]; then
         USER_COMP_DIR="$HOME/.bash_completion.d"
         mkdir -p "$USER_COMP_DIR"
         cp "$COMPLETION_SRC" "$USER_COMP_DIR/slug"
-        print_info "Installed user shell completion to $USER_COMP_DIR/slug"
     fi
+fi
+
+if [ -z "$COMPLETION_SRC" ] && [ -x "$TARGET_BIN" ]; then
+    COMPLETION_SRC="$(mktemp 2>/dev/null || echo "/tmp/slug.bash")"
+    "$TARGET_BIN" completion bash > "$COMPLETION_SRC" 2>/dev/null || true
 fi
 
 # 5. Check PATH environment
@@ -276,9 +280,9 @@ if command -v slug >/dev/null 2>&1 || [ -x "$TARGET_BIN" ]; then
     print_success "Slug installed successfully to $TARGET_BIN"
     echo ""
     echo "Quickstart Examples:"
-    echo "  Host folder:   slug add ./my_project -p 9443 -s 3 --ttl 2h"
-    echo "  Connect client:slug connect -i <host_ip> -p 9443 -o <totp_code>"
-    echo "  Pull files:    slug pull ./backup -i <host_ip> -p 9443 -o <totp_code>"
+    echo "  Host folder:   slug add ./my_project"
+    echo "  One-Shot sync: slug get <host_ip>:9443?otp=<totp_code>"
+    echo "  Server status: slug status"
     echo "  Run benchmark: slug bench --quick"
     echo "  View docs:     slug help"
 else

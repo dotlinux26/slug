@@ -5,6 +5,8 @@
 #include "src/crypto/crypto_suite.hpp"
 #include "src/sync/manifest.hpp"
 #include "src/sync/delta.hpp"
+#include "src/net/aead_frame.hpp"
+#include "third_party/json/json.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -67,6 +69,17 @@ private:
     std::unique_ptr<crypto::ICryptoSuite> suite_;
     uint32_t session_id_{0};
     core::Role role_{core::Role::READ_ONLY};
+
+    bool is_encrypted_{false};
+    SessionKeys session_keys_;
+    uint64_t tx_seq_{1};
+    AntiReplaySlidingWindow s2c_window_;
+
+    bool send_packet(const std::string& json_str);
+    std::optional<std::string> recv_packet(int timeout_ms = 10000);
+
+    bool send_json(const nlohmann::json& j);
+    std::optional<nlohmann::json> recv_json(int timeout_ms = 10000);
 
     std::optional<std::vector<uint8_t>> fetch_chunk(const std::string& rel_path, uint32_t chunk_idx);
 };

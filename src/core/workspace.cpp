@@ -31,8 +31,7 @@ fs::path WorkspaceManager::registry_file_path() {
     return fs::temp_directory_path() / ".slug_registry.json";
 }
 
-std::vector<WorkspaceInfo> WorkspaceManager::load_registry() {
-    fs::path p = registry_file_path();
+static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p) {
     if (!fs::exists(p)) return {};
 
     auto text = platform::PathUtils::read_text_file(p);
@@ -57,8 +56,16 @@ std::vector<WorkspaceInfo> WorkspaceManager::load_registry() {
     return list;
 }
 
+std::vector<WorkspaceInfo> WorkspaceManager::load_registry() {
+    fs::path p = registry_file_path();
+    FileLockGuard lock(p.string());
+    return load_registry_unlocked(p);
+}
+
 void WorkspaceManager::update_registry(const WorkspaceInfo& info, bool remove) {
-    auto list = load_registry();
+    fs::path p = registry_file_path();
+    FileLockGuard lock(p.string());
+    auto list = load_registry_unlocked(p);
     std::vector<WorkspaceInfo> updated;
 
     for (const auto& item : list) {

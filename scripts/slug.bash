@@ -5,7 +5,7 @@ _slug_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="add serve server connect pull push status diff list set web stop totp user rule audit env bench uninstall version help"
+    local commands="add serve server connect conn ls pull push status diff list set web stop totp user rule audit env bench uninstall version help"
 
     case "${prev}" in
         slug)
@@ -16,8 +16,12 @@ _slug_completion() {
             COMPREPLY=( $(compgen -W "list stop -p --port -w --web" -- ${cur}) )
             return 0
             ;;
+        conn)
+            COMPREPLY=( $(compgen -W "list use prune rm" -- ${cur}) )
+            return 0
+            ;;
         connect)
-            COMPREPLY=( $(compgen -W "list prune -i --host -p --port -o --otp -u --user --pass -w --web" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "list prune -i --host -p --port -o --otp -u --user -P --pass -w --web" -- ${cur}) )
             return 0
             ;;
         -s|--suite)
@@ -25,15 +29,15 @@ _slug_completion() {
             return 0
             ;;
         rule)
-            COMPREPLY=( $(compgen -W "list block allow rm" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "list block allow rm -p --port" -- ${cur}) )
             return 0
             ;;
         audit)
-            COMPREPLY=( $(compgen -W "list recheck allow" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "list recheck allow -p --port" -- ${cur}) )
             return 0
             ;;
         user)
-            COMPREPLY=( $(compgen -W "add rm list" -- ${cur}) )
+            COMPREPLY=( $(compgen -W "add mod rm list -p --port" -- ${cur}) )
             return 0
             ;;
         uninstall)
@@ -53,7 +57,7 @@ _slug_completion() {
     esac
 
     if [[ "${cur}" == -* ]]; then
-        local flags="-p --port -s --suite -t --ttl -ai --ai -d --daemon -i --host -o --otp -u --user --pass -r --role -w --web --dry-run --quick -q --json -y --yes -n --no --keep-data"
+        local flags="-p --port -P --pass -s --short --suite -t --ttl -a --ai -d --daemon -i --host -o --otp -u --user -r --role -w --web --dry-run --code-only --quick -q --json -y --yes -n --no --keep-data"
         COMPREPLY=( $(compgen -W "${flags}" -- ${cur}) )
         return 0
     fi

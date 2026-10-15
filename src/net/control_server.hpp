@@ -7,6 +7,7 @@
 #include "src/crypto/crypto_suite.hpp"
 #include "src/crypto/totp.hpp"
 #include "src/sync/manifest.hpp"
+#include "src/core/vfs.hpp"
 #include <string>
 #include <memory>
 #include <thread>
@@ -57,6 +58,9 @@ public:
     std::optional<SessionState> find_session_by_ticket(const std::string& ticket) const;
     std::string create_host_admin_ticket(uint64_t ttl_sec = 14400);
 
+    core::SlugVFS& vfs() { return vfs_; }
+    const core::SlugVFS& vfs() const { return vfs_; }
+
     void set_web_server(class WebServer* ws) { web_server_ = ws; }
 
 private:
@@ -77,6 +81,7 @@ private:
     core::AuditLogger audit_logger_;
     crypto::KemKeyPair server_kem_;
     crypto::SigKeyPair server_sig_;
+    core::SlugVFS vfs_;
 
     mutable std::mutex session_mutex_;
     std::map<uint32_t, SessionState> sessions_;

@@ -83,8 +83,8 @@ if [ ! -f "$BIN" ]; then
     make static -j$(nproc)
 fi
 
-assert_success "$BIN version | grep -q 'Slug 1.0.0-rc1'" "Binary version check ($BIN)"
-assert_success "$STATIC_BIN version | grep -q 'Slug 1.0.0-rc1'" "Static binary execution check ($STATIC_BIN)"
+assert_success "$BIN version | grep -q 'Slug 1.0.0-rc2'" "Binary version check ($BIN)"
+assert_success "$STATIC_BIN version | grep -q 'Slug 1.0.0-rc2'" "Static binary execution check ($STATIC_BIN)"
 
 mkdir -p "$TEST_DIR"
 
@@ -139,11 +139,11 @@ MIIEowIBAAKCAQEAz...FAKE_TEST_KEY...
 -----END RSA PRIVATE KEY-----' > "$WORKSPACE_DIR/tests/id_rsa.pem"
 
 log_info "Hosting workspace on port $TEST_PORT with AI Guard and Daemon mode..."
-HOST_OUTPUT=$($BIN add "$WORKSPACE_DIR" -p $TEST_PORT -s 3 --ttl 2h -ai --daemon)
+HOST_OUTPUT=$($BIN add "$WORKSPACE_DIR" -p $TEST_PORT -s 3 --ttl 2h -a --daemon)
 echo "$HOST_OUTPUT"
 
 # Extract TOTP token from host output
-TOTP=$(echo "$HOST_OUTPUT" | grep -oP 'One-Time TOTP:\s+\K[0-9]{8}' || true)
+TOTP=$(echo "$HOST_OUTPUT" | grep -oP '(?:Read-Write OTP|TOTP):\s+\K[0-9]{8}' || true)
 if [ -z "$TOTP" ]; then
     # Fallback grep
     TOTP=$(echo "$HOST_OUTPUT" | grep -E -o '[0-9]{8}' | head -n 1)
@@ -166,28 +166,37 @@ echo -e "\n${BOLD}--- TEST SUITE 3: Single-Use TOTP One-Time-Bind & Burn ---${NC
 assert_success "$BIN connect -i 127.0.0.1 -p $TEST_PORT -o $TOTP" "First connection with valid TOTP succeeds"
 assert_failure "$BIN connect -i 127.0.0.1 -p $TEST_PORT -o $TOTP" "Second connection with same TOTP rejected (Token Burned!)"
 
+# Verify slug totp command and slug get (One-Shot Sync with Read-Only OTP)
+TOTP_RO=$($BIN totp -p $TEST_PORT -r r --code-only | tr -d '[:space:]')
+assert_success "[ ${#TOTP_RO} -eq 8 ]" "Command 'slug totp -p <port> -r r --code-only' returns valid 8-digit OTP"
+
+ONE_SHOT_DIR="$TEST_DIR/oneshot_get"
+assert_success "$BIN get '127.0.0.1:$TEST_PORT?otp=$TOTP_RO' '$ONE_SHOT_DIR'" "One-Shot 'slug get <ip:port?otp=code>' connects and syncs workspace in 1 command"
+assert_success "[ -f '$ONE_SHOT_DIR/src/main.rs' ]" "One-Shot synced legitimate file src/main.rs"
+assert_success "[ ! -f '$ONE_SHOT_DIR/build/main.o' ]" "One-Shot skipped gitignored file build/main.o"
+
 # ==============================================================================
 # TEST SUITE 4: Ephemeral User Accounts & RBAC
 # ==============================================================================
 echo -e "\n${BOLD}--- TEST SUITE 4: Ephemeral User Accounts & RBAC ---${NC}"
 
-assert_success "$BIN user add -u alice -p alice_pass_123 --role rw --ttl 1h -P $TEST_PORT" "Add read-write user 'alice'"
-assert_success "$BIN user add -u bob -p bob_pass_456 --role r --ttl 1h -P $TEST_PORT" "Add read-only user 'bob'"
+assert_success "$BIN user add -u alice -P alice_pass_123 --role rw --ttl 1h -p $TEST_PORT" "Add read-write user 'alice'"
+assert_success "$BIN user add -u bob -P bob_pass_456 --role r --ttl 1h -p $TEST_PORT" "Add read-only user 'bob'"
 
-USER_LIST=$($BIN user list -P $TEST_PORT)
+USER_LIST=$($BIN user list -p $TEST_PORT)
 assert_success "echo '$USER_LIST' | grep -q 'alice.*rw.*ACTIVE'" "User 'alice' active with 'rw' role"
 assert_success "echo '$USER_LIST' | grep -q 'bob.*r.*ACTIVE'" "User 'bob' active with 'r' role"
 
-assert_success "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123" "Authenticate as 'alice' with valid password"
-assert_failure "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -W wrong_password" "Reject 'alice' with invalid password"
+assert_success "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Authenticate as 'alice' with valid password"
+assert_failure "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -P wrong_password" "Reject 'alice' with invalid password"
 
 # ==============================================================================
 # TEST SUITE 5: Security Policy & Dynamic Rules
 # ==============================================================================
 echo -e "\n${BOLD}--- TEST SUITE 5: Security Policy Engine & Rules ---${NC}"
 
-assert_success "$BIN rule block --ext .pem -P $TEST_PORT" "Add block rule for .pem extension"
-RULE_LIST=$($BIN rule list -P $TEST_PORT)
+assert_success "$BIN rule block --ext .pem -p $TEST_PORT" "Add block rule for .pem extension"
+RULE_LIST=$($BIN rule list -p $TEST_PORT)
 assert_success "echo '$RULE_LIST' | grep -q '.pem'" "Verify block rule '.pem' registered in .slug/rules.conf"
 
 # ==============================================================================
@@ -199,11 +208,11 @@ PULL_DIR="$TEST_DIR/pulled"
 mkdir -p "$PULL_DIR"
 
 # Pull dry-run
-DRY_RUN_OUT=$($BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123 --dry-run)
+DRY_RUN_OUT=$($BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123 --dry-run)
 assert_success "echo '$DRY_RUN_OUT' | grep -i -q 'dry-run'" "Dry-run execution previews transfer"
 
 # Actual pull
-assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123" "Pull workspace as 'alice'"
+assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Pull workspace as 'alice'"
 
 # Verify legitimate files transferred
 assert_success "[ -f '$PULL_DIR/src/main.rs' ] && grep -q 'Hello from Slug' '$PULL_DIR/src/main.rs'" "Safe file src/main.rs synchronized"
@@ -216,7 +225,7 @@ assert_success "[ ! -f '$PULL_DIR/tests/leaked_token.ts' ]" "AI-flagged file tes
 
 # Test Incremental Delta Sync (only modified/new files transferred)
 echo 'pub fn helper() {}' > "$WORKSPACE_DIR/src/helper.rs"
-PULL_DELTA_OUT=$($BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123)
+PULL_DELTA_OUT=$($BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123)
 assert_success "echo '$PULL_DELTA_OUT' | grep -q 'Synced: src/helper.rs' && echo '$PULL_DELTA_OUT' | grep -q 'saved' && [ -f '$PULL_DIR/src/helper.rs' ]" "Delta Sync transferred helper.rs and reported saved bytes"
 
 # ==============================================================================
@@ -228,10 +237,10 @@ LOCAL_UPLOAD="$TEST_DIR/contrib.rs"
 echo '// Contributed feature code' > "$LOCAL_UPLOAD"
 
 # Bob has role 'r' (read only) -> Push should be denied
-assert_failure "$BIN push '$LOCAL_UPLOAD' src/contrib.rs -i 127.0.0.1 -p $TEST_PORT -u bob -W bob_pass_456" "Bob (role 'r') denied push upload"
+assert_failure "$BIN push '$LOCAL_UPLOAD' src/contrib.rs -i 127.0.0.1 -p $TEST_PORT -u bob -P bob_pass_456" "Bob (role 'r') denied push upload"
 
 # Alice has role 'rw' -> Push should succeed
-assert_success "$BIN push '$LOCAL_UPLOAD' src/contrib.rs -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123" "Alice (role 'rw') successfully uploads file"
+assert_success "$BIN push '$LOCAL_UPLOAD' src/contrib.rs -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Alice (role 'rw') successfully uploads file"
 assert_success "[ -f '$WORKSPACE_DIR/src/contrib.rs' ]" "Uploaded file saved in remote workspace root"
 
 # ==============================================================================
@@ -240,7 +249,7 @@ assert_success "[ -f '$WORKSPACE_DIR/src/contrib.rs' ]" "Uploaded file saved in 
 echo -e "\n${BOLD}--- TEST SUITE 8: Path Traversal Attack Confinement ---${NC}"
 
 # Attempt to escape workspace root via directory traversal on push
-assert_failure "$BIN push '$LOCAL_UPLOAD' ../../hacked.txt -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123" "Path traversal attack on push strictly blocked"
+assert_failure "$BIN push '$LOCAL_UPLOAD' ../../hacked.txt -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Path traversal attack on push strictly blocked"
 assert_success "[ ! -f '$TEST_DIR/hacked.txt' ]" "Escaped file does NOT exist outside workspace root"
 
 # ==============================================================================
@@ -248,14 +257,14 @@ assert_success "[ ! -f '$TEST_DIR/hacked.txt' ]" "Escaped file does NOT exist ou
 # ==============================================================================
 echo -e "\n${BOLD}--- TEST SUITE 9: AI Guard Audit & Whitelist ---${NC}"
 
-AUDIT_LIST=$($BIN audit list -P $TEST_PORT)
+AUDIT_LIST=$($BIN audit list -p $TEST_PORT)
 assert_success "echo '$AUDIT_LIST' | grep -q 'leaked_token.ts.*AI_FLAGGED'" "Audit list shows leaked_token.ts"
 
 # Whitelist false positive with user override
-assert_success "$BIN audit allow tests/leaked_token.ts --reason 'Safe mock token for lab testing' -P $TEST_PORT" "Whitelist false-positive with user override"
+assert_success "$BIN audit allow tests/leaked_token.ts --reason 'Safe mock token for lab testing' -p $TEST_PORT" "Whitelist false-positive with user override"
 
 # Re-pull: previously blocked file should now be synchronized
-assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123" "Re-pull after user whitelist approval"
+assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Re-pull after user whitelist approval"
 assert_success "[ -f '$PULL_DIR/tests/leaked_token.ts' ]" "Whitelisted file successfully delivered to client"
 
 # ==============================================================================
@@ -267,7 +276,7 @@ assert_success "$BIN stop -p $TEST_PORT" "Stop workspace server on port $TEST_PO
 sleep 1
 
 # Verify port is closed
-assert_failure "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -W alice_pass_123" "Server successfully terminated (connection refused)"
+assert_failure "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Server successfully terminated (connection refused)"
 STATUS_FINAL=$($BIN status)
 if echo "$STATUS_FINAL" | grep -q "$TEST_PORT"; then
     log_fail "Port $TEST_PORT still found in registry"
@@ -290,9 +299,9 @@ assert_success "$STATIC_BIN bench --quick | grep -q 'Suite 3: PurePQC'" "Run qui
 echo -e "\n${BOLD}--- TEST SUITE 12: Packaging & Release Validation ---${NC}"
 
 assert_success "$PROJECT_ROOT/scripts/package_linux.sh > /dev/null" "Build universal Linux tarball (slug-*-linux-x86_64.tar.gz)"
-assert_success "[ -f '$PROJECT_ROOT/dist/slug-1.0.0-rc1-linux-x86_64.tar.gz' ]" "Universal Linux release archive exists"
+assert_success "[ -f '$PROJECT_ROOT/dist/slug-1.0.0-rc2-linux-x86_64.tar.gz' ]" "Universal Linux release archive exists"
 assert_success "$PROJECT_ROOT/scripts/package_deb.sh > /dev/null" "Build Debian/Ubuntu .deb package (slug_*_amd64.deb)"
-assert_success "[ -f '$PROJECT_ROOT/dist/slug_1.0.0-rc1_amd64.deb' ]" "Debian package exists and validated"
+assert_success "[ -f '$PROJECT_ROOT/dist/slug_1.0.0-rc2_amd64.deb' ]" "Debian package exists and validated"
 
 # ==============================================================================
 # TEST SUMMARY

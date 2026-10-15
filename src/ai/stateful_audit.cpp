@@ -135,6 +135,13 @@ std::optional<AuditIndexEntry> StatefulAuditIndex::get_entry(const std::string& 
     return std::nullopt;
 }
 
+bool StatefulAuditIndex::is_flagged(const std::string& file_path) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = entries_.find(file_path);
+    if (it == entries_.end()) return false;
+    return (it->second.status == core::AuditStatus::AI_FLAGGED || it->second.status == core::AuditStatus::RULE_BLOCKED);
+}
+
 std::vector<AuditIndexEntry> StatefulAuditIndex::list_flagged_or_all(bool only_flagged) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<AuditIndexEntry> res;
