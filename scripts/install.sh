@@ -53,16 +53,25 @@ print_info "Detected Platform: $OS ($SLUG_ARCH)"
 
 # 2. Determine source binary
 SOURCE_BIN=""
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd || echo "")"
+SCRIPT_DIR=""
+ROOT_DIR=""
 
-if [ -f "$SCRIPT_DIR/slug" ]; then
-    SOURCE_BIN="$SCRIPT_DIR/slug"
-elif [ -f "./slug" ]; then
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+fi
+
+if [ -n "$SCRIPT_DIR" ]; then
+    ROOT_DIR="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd || echo "")"
+    if [ -f "$SCRIPT_DIR/slug" ]; then
+        SOURCE_BIN="$SCRIPT_DIR/slug"
+    fi
+fi
+
+if [ -z "$SOURCE_BIN" ] && [ -f "./slug" ]; then
     SOURCE_BIN="./slug"
-elif [ -n "$ROOT_DIR" ] && [ -f "$ROOT_DIR/bin/slug-static" ]; then
+elif [ -z "$SOURCE_BIN" ] && [ -n "$ROOT_DIR" ] && [ -f "$ROOT_DIR/bin/slug-static" ]; then
     SOURCE_BIN="$ROOT_DIR/bin/slug-static"
-elif [ -n "$ROOT_DIR" ] && [ -f "$ROOT_DIR/bin/slug" ]; then
+elif [ -z "$SOURCE_BIN" ] && [ -n "$ROOT_DIR" ] && [ -f "$ROOT_DIR/bin/slug" ]; then
     SOURCE_BIN="$ROOT_DIR/bin/slug"
 fi
 
@@ -89,8 +98,12 @@ if [ -z "$SOURCE_BIN" ]; then
     fi
 
     if [ -f "$TMP_DIR/slug.tar.gz" ] && [ -s "$TMP_DIR/slug.tar.gz" ]; then
-        tar -xzf "$TMP_DIR/slug.tar.gz" -C "$TMP_DIR"
-        SOURCE_BIN="$TMP_DIR/slug"
+        tar -xzf "$TMP_DIR/slug.tar.gz" -C "$TMP_DIR" --strip-components=1 2>/dev/null || tar -xzf "$TMP_DIR/slug.tar.gz" -C "$TMP_DIR"
+        if [ -f "$TMP_DIR/slug" ]; then
+            SOURCE_BIN="$TMP_DIR/slug"
+        elif [ -f "$TMP_DIR/slug-${VERSION}-linux-${SLUG_ARCH}/slug" ]; then
+            SOURCE_BIN="$TMP_DIR/slug-${VERSION}-linux-${SLUG_ARCH}/slug"
+        fi
     else
         print_warn "Release binary not yet published or download failed."
         print_info "Attempting local compilation..."
@@ -98,7 +111,7 @@ if [ -z "$SOURCE_BIN" ]; then
             make -C "$ROOT_DIR" static -j"$(nproc 2>/dev/null || echo 2)"
             SOURCE_BIN="$ROOT_DIR/bin/slug-static"
         else
-            print_error "Cannot compile: Makefile not found in parent directory."
+            print_error "Cannot compile: Makefile not found."
             exit 1
         fi
     fi
@@ -136,7 +149,9 @@ fi
 
 # 4. Install Bash Completion if available
 COMPLETION_SRC=""
-if [ -f "$SCRIPT_DIR/slug.bash" ]; then
+if [ -n "$TMP_DIR" ] && [ -f "$TMP_DIR/scripts/slug.bash" ]; then
+    COMPLETION_SRC="$TMP_DIR/scripts/slug.bash"
+elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/slug.bash" ]; then
     COMPLETION_SRC="$SCRIPT_DIR/slug.bash"
 elif [ -n "$ROOT_DIR" ] && [ -f "$ROOT_DIR/scripts/slug.bash" ]; then
     COMPLETION_SRC="$ROOT_DIR/scripts/slug.bash"
