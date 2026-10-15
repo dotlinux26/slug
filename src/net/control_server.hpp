@@ -23,6 +23,7 @@ struct SessionState {
     uint64_t expires_at{0};
     std::array<uint8_t, 32> session_key{};
     std::string identity;
+    std::string web_ticket;
 
     bool has_permission(core::Role required) const {
         if (role == core::Role::READ_WRITE) return true;
@@ -49,8 +50,11 @@ public:
     core::AclManager& acl_manager() { return acl_manager_; }
     core::AuditLogger& audit_logger() { return audit_logger_; }
     bool is_running() const { return running_; }
+    bool ai_enabled() const { return enable_ai_; }
 
     std::optional<SessionState> get_session(uint32_t session_id) const;
+    std::optional<SessionState> find_session_by_ticket(const std::string& ticket) const;
+    std::string create_host_admin_ticket(uint64_t ttl_sec = 14400);
 
     void set_web_server(class WebServer* ws) { web_server_ = ws; }
 

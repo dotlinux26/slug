@@ -1,10 +1,12 @@
 #pragma once
 
+#include "src/core/types.hpp"
 #include <string>
 #include <vector>
 #include <set>
 #include <mutex>
 #include <cstdint>
+#include <optional>
 
 namespace slug::crypto {
 
@@ -15,12 +17,13 @@ public:
 
     explicit TotpManager(std::vector<uint8_t> secret_seed = {});
 
-    // Generates current 8-digit TOTP code
-    std::string generate_code(uint64_t timestamp = 0) const;
+    // Generates current 8-digit TOTP code for a specific role (default: READ_WRITE)
+    std::string generate_code(core::Role role = core::Role::READ_WRITE, uint64_t timestamp = 0) const;
 
-    // Checks code validity and burns it atomically (single-use)
-    // Returns true if code is valid and was successfully burned.
-    // Subsequent calls with the same code return false (One-Time-Bind).
+    // Checks code validity, returns the verified role, and burns it atomically (single-use)
+    std::optional<core::Role> verify_and_burn_role(const std::string& code, uint64_t timestamp = 0);
+
+    // Backward-compatible overload: returns true if code is valid for any role and burns it
     bool verify_and_burn(const std::string& code, uint64_t timestamp = 0);
 
     // Remaining seconds before next rotation
@@ -35,7 +38,7 @@ private:
     std::set<std::string> burned_codes_;
     uint64_t last_cleanup_step_{0};
 
-    std::string compute_code_for_step(uint64_t step) const;
+    std::string compute_code_for_step(uint64_t step, core::Role role) const;
 };
 
 } // namespace slug::crypto

@@ -68,6 +68,33 @@ std::optional<SessionState> ControlServer::get_session(uint32_t session_id) cons
     return std::nullopt;
 }
 
+std::optional<SessionState> ControlServer::find_session_by_ticket(const std::string& ticket) const {
+    if (ticket.empty()) return std::nullopt;
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    for (const auto& [id, s] : sessions_) {
+        if (s.web_ticket == ticket) {
+            if (core::Utils::current_timestamp() < s.expires_at) {
+                return s;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::string ControlServer::create_host_admin_ticket(uint64_t ttl_sec) {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    uint32_t sid = next_session_id_++;
+    std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
+    SessionState ss;
+    ss.session_id = sid;
+    ss.role = core::Role::READ_WRITE;
+    ss.expires_at = core::Utils::current_timestamp() + ttl_sec;
+    ss.identity = "host_admin";
+    ss.web_ticket = ticket;
+    sessions_[sid] = ss;
+    return ticket;
+}
+
 void ControlServer::run_accept_loop() {
     while (running_) {
         auto client_opt = listener_.accept(500);
@@ -150,28 +177,33 @@ void ControlServer::handle_client(platform::TcpSocket client) {
 
         } else if (type == "auth_totp") {
             std::string code = req.value("code", "");
-            bool ok = totp_manager_.verify_and_burn(code);
+            auto role_opt = totp_manager_.verify_and_burn_role(code);
 
             json resp;
-            if (ok) {
+            if (role_opt.has_value()) {
+                core::Role granted_role = *role_opt;
                 uint32_t sid = 0;
+                std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
                 {
                     std::lock_guard<std::mutex> lock(session_mutex_);
                     sid = next_session_id_++;
                     SessionState ss;
                     ss.session_id = sid;
-                    ss.role = core::Role::READ_WRITE;
+                    ss.role = granted_role;
                     ss.expires_at = core::Utils::current_timestamp() + cert_ttl_;
                     ss.identity = "totp_client_" + client.peer_endpoint().ip;
+                    ss.web_ticket = ticket;
                     sessions_[sid] = ss;
                 }
                 cur_session_id = sid;
                 resp["status"] = "ok";
                 resp["session_id"] = sid;
-                resp["role"] = "rw";
+                resp["role"] = core::role_to_string(granted_role);
                 resp["ttl"] = cert_ttl_;
-                resp["message"] = "Authenticated via TOTP (token burned)";
-                audit_logger_.log(client.peer_endpoint().ip, "AUTH_TOTP_SUCCESS", "", "TOTP verified and burned");
+                resp["web_ticket"] = ticket;
+                resp["workspace"] = workspace_root_.filename().string();
+                resp["message"] = "Authenticated via TOTP (" + core::role_to_string(granted_role) + " role, token burned)";
+                audit_logger_.log(client.peer_endpoint().ip, "AUTH_TOTP_SUCCESS", "", "TOTP verified (" + core::role_to_string(granted_role) + ") and burned");
             } else {
                 resp["status"] = "error";
                 resp["message"] = "Invalid or already burned TOTP token";
@@ -194,6 +226,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                                : cert_ttl_;
 
                 uint32_t sid = 0;
+                std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
                 {
                     std::lock_guard<std::mutex> lock(session_mutex_);
                     sid = next_session_id_++;
@@ -202,6 +235,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                     ss.role = acc_opt ? acc_opt->role : core::Role::READ_ONLY;
                     ss.expires_at = core::Utils::current_timestamp() + ttl;
                     ss.identity = u;
+                    ss.web_ticket = ticket;
                     sessions_[sid] = ss;
                 }
                 cur_session_id = sid;
@@ -209,12 +243,34 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 resp["session_id"] = sid;
                 resp["role"] = core::role_to_string(sessions_[sid].role);
                 resp["ttl"] = ttl;
+                resp["web_ticket"] = ticket;
+                resp["workspace"] = workspace_root_.filename().string();
                 resp["message"] = "Authenticated via account " + u;
                 audit_logger_.log(u, "AUTH_USER_SUCCESS", "", "Account logged in with role " + core::role_to_string(sessions_[sid].role));
             } else {
                 resp["status"] = "error";
                 resp["message"] = "Authentication failed (invalid credentials, role mismatch, or expired account)";
                 audit_logger_.log(u.empty() ? client.peer_endpoint().ip : u, "AUTH_USER_FAIL", "", "Invalid credentials or expired", false);
+            }
+            if (!send_msg(client, resp)) break;
+
+        } else if (type == "auth_ticket") {
+            std::string ticket = req.value("ticket", "");
+            auto sess_opt = find_session_by_ticket(ticket);
+            json resp;
+            if (sess_opt) {
+                cur_session_id = sess_opt->session_id;
+                resp["status"] = "ok";
+                resp["session_id"] = sess_opt->session_id;
+                resp["role"] = core::role_to_string(sess_opt->role);
+                resp["ttl"] = (sess_opt->expires_at > core::Utils::current_timestamp()) ? (sess_opt->expires_at - core::Utils::current_timestamp()) : 0;
+                resp["workspace"] = workspace_root_.filename().string();
+                resp["message"] = "Authenticated via certificate ticket";
+                audit_logger_.log(sess_opt->identity, "AUTH_TICKET_SUCCESS", "", "Ticket authenticated");
+            } else {
+                resp["status"] = "error";
+                resp["message"] = "Invalid or expired session ticket";
+                audit_logger_.log(client.peer_endpoint().ip, "AUTH_TICKET_FAIL", "", "Invalid ticket", false);
             }
             if (!send_msg(client, resp)) break;
 

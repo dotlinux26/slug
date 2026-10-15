@@ -15,13 +15,19 @@ TotpManager::TotpManager(std::vector<uint8_t> secret_seed)
     }
 }
 
-std::string TotpManager::compute_code_for_step(uint64_t step) const {
-    // Big-endian 8-byte step
-    uint8_t step_bytes[8];
+std::string TotpManager::compute_code_for_step(uint64_t step, core::Role role) const {
+    // Big-endian 8-byte step + 1-byte role prefix ('r', 'w', 'x' for rw)
+    uint8_t data[9];
+    uint64_t s = step;
     for (int i = 7; i >= 0; --i) {
-        step_bytes[i] = static_cast<uint8_t>(step & 0xFF);
-        step >>= 8;
+        data[i] = static_cast<uint8_t>(s & 0xFF);
+        s >>= 8;
     }
+    uint8_t role_byte = 'x'; // default rw
+    if (role == core::Role::READ_ONLY) role_byte = 'r';
+    else if (role == core::Role::WRITE_ONLY) role_byte = 'w';
+    else if (role == core::Role::READ_WRITE) role_byte = 'x';
+    data[8] = role_byte;
 
     uint8_t mac[32];
     size_t mac_len = 0;
@@ -32,7 +38,7 @@ std::string TotpManager::compute_code_for_step(uint64_t step) const {
 
     EVP_Q_mac(nullptr, "HMAC", nullptr, nullptr, params,
               seed_.data(), seed_.size(),
-              step_bytes, sizeof(step_bytes),
+              data, sizeof(data),
               mac, sizeof(mac), &mac_len);
 
     if (mac_len < 20) return "00000000";
@@ -52,10 +58,10 @@ std::string TotpManager::compute_code_for_step(uint64_t step) const {
     return oss.str();
 }
 
-std::string TotpManager::generate_code(uint64_t timestamp) const {
+std::string TotpManager::generate_code(core::Role role, uint64_t timestamp) const {
     if (timestamp == 0) timestamp = core::Utils::current_timestamp();
     uint64_t step = timestamp / kStepSeconds;
-    return compute_code_for_step(step);
+    return compute_code_for_step(step, role);
 }
 
 uint32_t TotpManager::remaining_seconds(uint64_t timestamp) const {
@@ -63,8 +69,8 @@ uint32_t TotpManager::remaining_seconds(uint64_t timestamp) const {
     return kStepSeconds - static_cast<uint32_t>(timestamp % kStepSeconds);
 }
 
-bool TotpManager::verify_and_burn(const std::string& code, uint64_t timestamp) {
-    if (code.size() != 8) return false;
+std::optional<core::Role> TotpManager::verify_and_burn_role(const std::string& code, uint64_t timestamp) {
+    if (code.size() != 8) return std::nullopt;
     if (timestamp == 0) timestamp = core::Utils::current_timestamp();
 
     uint64_t cur_step = timestamp / kStepSeconds;
@@ -73,23 +79,33 @@ bool TotpManager::verify_and_burn(const std::string& code, uint64_t timestamp) {
 
     // Check if code was already burned
     if (burned_codes_.find(code) != burned_codes_.end()) {
-        return false; // Token burned / invalid!
+        return std::nullopt; // Token burned / invalid!
     }
 
-    // Allow current step, or step-1 to accommodate clock drift (grace period)
-    bool matched = false;
-    std::string step_code = compute_code_for_step(cur_step);
-    if (core::Utils::constant_time_compare(step_code, code)) {
-        matched = true;
-    } else if (cur_step > 0) {
-        std::string prev_code = compute_code_for_step(cur_step - 1);
-        if (core::Utils::constant_time_compare(prev_code, code)) {
-            matched = true;
+    const std::vector<core::Role> candidate_roles = {
+        core::Role::READ_WRITE,
+        core::Role::READ_ONLY,
+        core::Role::WRITE_ONLY
+    };
+
+    std::optional<core::Role> matched_role;
+    for (auto r : candidate_roles) {
+        std::string step_code = compute_code_for_step(cur_step, r);
+        if (core::Utils::constant_time_compare(step_code, code)) {
+            matched_role = r;
+            break;
+        }
+        if (cur_step > 0) {
+            std::string prev_code = compute_code_for_step(cur_step - 1, r);
+            if (core::Utils::constant_time_compare(prev_code, code)) {
+                matched_role = r;
+                break;
+            }
         }
     }
 
-    if (!matched) {
-        return false;
+    if (!matched_role) {
+        return std::nullopt;
     }
 
     // Burn token immediately
@@ -104,7 +120,11 @@ bool TotpManager::verify_and_burn(const std::string& code, uint64_t timestamp) {
         }
     }
 
-    return true;
+    return matched_role;
+}
+
+bool TotpManager::verify_and_burn(const std::string& code, uint64_t timestamp) {
+    return verify_and_burn_role(code, timestamp).has_value();
 }
 
 } // namespace slug::crypto

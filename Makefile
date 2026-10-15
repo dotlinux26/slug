@@ -22,6 +22,7 @@ SRC_CXX = src/main.cpp \
           src/core/acl.cpp \
           src/core/audit.cpp \
           src/core/workspace.cpp \
+          src/core/connection_manager.cpp \
           src/crypto/xchacha20poly1305.cpp \
           src/crypto/blake3_wrapper.cpp \
           src/crypto/sha256.cpp \

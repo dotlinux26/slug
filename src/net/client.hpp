@@ -19,6 +19,8 @@ struct ClientAuthResult {
     uint32_t session_id{0};
     core::Role role{core::Role::READ_ONLY};
     uint64_t ttl{0};
+    std::string web_ticket;
+    std::string workspace_name;
     std::string message;
 };
 
@@ -36,6 +38,9 @@ public:
 
     // Authenticate via username / password / requested role
     ClientAuthResult authenticate_user(const std::string& username, const std::string& password, const std::string& role = "r");
+
+    // Authenticate via session ticket / certificate
+    ClientAuthResult authenticate_ticket(const std::string& ticket);
 
     // Fetches remote workspace manifest
     std::optional<sync::WorkspaceManifest> fetch_manifest();

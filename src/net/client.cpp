@@ -124,6 +124,8 @@ ClientAuthResult SlugClient::authenticate_totp(const std::string& totp_code) {
         res.session_id = resp.value("session_id", 0U);
         res.role = core::role_from_string(resp.value("role", "rw"));
         res.ttl = resp.value("ttl", 0ULL);
+        res.web_ticket = resp.value("web_ticket", "");
+        res.workspace_name = resp.value("workspace", "");
         res.message = resp.value("message", "Authenticated");
 
         session_id_ = res.session_id;
@@ -164,6 +166,8 @@ ClientAuthResult SlugClient::authenticate_user(const std::string& username, cons
         res.session_id = resp.value("session_id", 0U);
         res.role = core::role_from_string(resp.value("role", "r"));
         res.ttl = resp.value("ttl", 0ULL);
+        res.web_ticket = resp.value("web_ticket", "");
+        res.workspace_name = resp.value("workspace", "");
         res.message = resp.value("message", "Authenticated");
 
         session_id_ = res.session_id;
@@ -171,6 +175,46 @@ ClientAuthResult SlugClient::authenticate_user(const std::string& username, cons
     } else {
         res.success = false;
         res.message = resp.value("message", "Authentication failed");
+    }
+    return res;
+}
+
+ClientAuthResult SlugClient::authenticate_ticket(const std::string& ticket) {
+    ClientAuthResult res;
+    if (!socket_.is_valid()) {
+        res.message = "Not connected";
+        return res;
+    }
+
+    json req;
+    req["type"] = "auth_ticket";
+    req["ticket"] = ticket;
+    if (!send_framed(socket_, req)) {
+        res.message = "Failed to send auth request";
+        return res;
+    }
+
+    auto resp_opt = recv_framed(socket_, 5000);
+    if (!resp_opt) {
+        res.message = "No response from server";
+        return res;
+    }
+
+    const auto& resp = *resp_opt;
+    if (resp.value("status", "") == "ok") {
+        res.success = true;
+        res.session_id = resp.value("session_id", 0U);
+        res.role = core::role_from_string(resp.value("role", "r"));
+        res.ttl = resp.value("ttl", 0ULL);
+        res.web_ticket = ticket;
+        res.workspace_name = resp.value("workspace", "");
+        res.message = resp.value("message", "Authenticated via ticket");
+
+        session_id_ = res.session_id;
+        role_ = res.role;
+    } else {
+        res.success = false;
+        res.message = resp.value("message", "Ticket authentication failed");
     }
     return res;
 }
