@@ -1,0 +1,37 @@
+# Binaries and object files
+bin/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Build directories
+build/
+build_win/
+build_mingw/
+build_cross/
+CMakeCache.txt
+CMakeFiles/
+Makefile.cmake
+cmake_install.cmake
+
+# Test and runtime outputs
+test_run/
+dist/
+*.deb
+*.tar.gz
+*.zip
+.slug/
+.slug_registry.json
+.env
+.env.bak
+.env.pqc
+
+# Editor and IDE metadata
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

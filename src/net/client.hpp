@@ -1,0 +1,69 @@
+#pragma once
+
+#include "src/platform/socket.hpp"
+#include "src/core/types.hpp"
+#include "src/crypto/crypto_suite.hpp"
+#include "src/sync/manifest.hpp"
+#include "src/sync/delta.hpp"
+#include <functional>
+#include <string>
+#include <vector>
+#include <filesystem>
+#include <memory>
+#include <optional>
+
+namespace slug::net {
+
+struct ClientAuthResult {
+    bool success{false};
+    uint32_t session_id{0};
+    core::Role role{core::Role::READ_ONLY};
+    uint64_t ttl{0};
+    std::string message;
+};
+
+class SlugClient {
+public:
+    SlugClient();
+    ~SlugClient();
+
+    // Connects to server, performs handshake and negotiates suite
+    bool connect(const std::string& host, uint16_t port, int timeout_ms = 5000);
+    void disconnect();
+
+    // Authenticate via single-use 8-digit TOTP
+    ClientAuthResult authenticate_totp(const std::string& totp_code);
+
+    // Authenticate via username / password / requested role
+    ClientAuthResult authenticate_user(const std::string& username, const std::string& password, const std::string& role = "r");
+
+    // Fetches remote workspace manifest
+    std::optional<sync::WorkspaceManifest> fetch_manifest();
+
+    // Performs incremental delta pull into local_dir
+    bool pull(const std::filesystem::path& local_target_dir,
+              const sync::DeltaSyncOptions& options,
+              std::function<void(const std::string& msg)> log_callback = nullptr);
+
+    // Pushes local file to remote workspace
+    bool push(const std::filesystem::path& local_file,
+              const std::string& remote_dest,
+              std::function<void(const std::string& msg)> log_callback = nullptr);
+
+    core::SuiteID negotiated_suite() const { return suite_id_; }
+    const std::string& negotiated_suite_name() const { return suite_name_; }
+    uint32_t session_id() const { return session_id_; }
+    core::Role role() const { return role_; }
+
+private:
+    platform::TcpSocket socket_;
+    core::SuiteID suite_id_{core::SuiteID::SUITE_3_PURE_PQC};
+    std::string suite_name_;
+    std::unique_ptr<crypto::ICryptoSuite> suite_;
+    uint32_t session_id_{0};
+    core::Role role_{core::Role::READ_ONLY};
+
+    std::optional<std::vector<uint8_t>> fetch_chunk(const std::string& rel_path, uint32_t chunk_idx);
+};
+
+} // namespace slug::net
