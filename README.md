@@ -89,7 +89,7 @@ Slug is distributed as a zero-dependency portable binary for both Linux and Wind
 
 **One-line automated installation:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/slugproject/slug/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.sh | bash
 # or run locally:
 ./scripts/install.sh
 ```

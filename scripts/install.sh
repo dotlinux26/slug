@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-REPO="slugproject/slug"
+REPO="${SLUG_REPO:-dotlinux26/slug}"
 VERSION="1.0.0-rc1"
 
 print_info() {

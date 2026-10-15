@@ -46,7 +46,7 @@ Slug được biên dịch tĩnh hoàn toàn (`slug-static`), không phụ thu�
 ### Cách 1: Script cài đặt tự động (Khuyên dùng)
 Chỉ cần chạy lệnh sau trên terminal:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/slugproject/slug/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.sh | bash
 ```
 Hoặc nếu bạn đã tải mã nguồn về máy:
 ```bash

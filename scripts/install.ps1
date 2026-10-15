@@ -47,7 +47,8 @@ if (Test-Path "$scriptDir\slug.exe") {
 
 if (-not $sourceExe) {
     Write-Info "No local slug.exe detected. Downloading latest release from GitHub..."
-    $zipUrl = "https://github.com/slugproject/slug/releases/download/v$Version/slug-$Version-windows-x64.zip"
+    $repo = if ($env:SLUG_REPO) { $env:SLUG_REPO } else { "dotlinux26/slug" }
+    $zipUrl = "https://github.com/$repo/releases/download/v$Version/slug-$Version-windows-x64.zip"
     $tempZip = Join-Path $env:TEMP "slug-$Version-windows.zip"
     $tempExtract = Join-Path $env:TEMP "slug-extract-$Version"
 

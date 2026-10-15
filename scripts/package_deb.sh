@@ -54,7 +54,7 @@ Description: Secure, Ephemeral, Git-like Workspace Sharing and Synchronization
  ephemeral TOTP-gated access control, Git-like differential sync with 64 KiB
  content-addressable chunking, and stateful AI Secret Guard.
  Fully static executable with zero external runtime dependencies.
-Homepage: https://github.com/slugproject/slug
+Homepage: https://github.com/dotlinux26/slug
 EOF
 
 # 6. Build .deb package

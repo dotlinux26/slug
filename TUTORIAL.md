@@ -62,7 +62,7 @@ Slug is distributed as a **fully static ELF binary** (`slug-static`). It has zer
 
 Run the automated installer script:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/slugproject/slug/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.sh | bash
 ```
 
 If you already cloned the repository or have the binary locally:
@@ -114,7 +114,7 @@ Launch an elevated or standard PowerShell terminal and execute:
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
 # Or via remote one-liner:
-irm https://raw.githubusercontent.com/slugproject/slug/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.ps1 | iex
 ```
 
 The installer:
