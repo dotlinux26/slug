@@ -313,7 +313,7 @@ std::string WebServer::render_directory_listing(const std::string& rel_subpath, 
       << "<span class='pqc-badge'>" << core::suite_to_string(control_server_.suite_id()) << "</span></h1>"
       << "<div style='display:flex; align-items:center; gap:12px;'>"
       << "<div class='user-badge'><span>👤</span> " << session.identity << " <span class='role-tag'>" << core::role_to_string(session.role) << "</span></div>"
-      << (session.role == core::Role::READ_WRITE ? "<a class='btn-sec' href='/admin'>Admin Dashboard</a>" : "")
+      << (session.identity == "host_admin" ? "<a class='btn-sec' href='/admin'>Admin Dashboard</a>" : "")
       << "<a class='btn-sec' href='/logout' style='color:#f85149;'>Logout</a>"
       << "</div>"
       << "</div>"
@@ -458,14 +458,23 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
       << ".btn:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }"
       << ".btn-sec { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 500; }"
       << ".btn-sec:hover { background: #30363d; }"
+      << ".btn-danger { background: #da3633; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 11px; border: none; cursor: pointer; }"
+      << ".btn-danger:hover { background: #f85149; }"
+      << ".btn-sm { padding: 4px 10px; font-size: 12px; }"
+      << ".input-text { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-size: 13px; width: 100%; box-sizing: border-box; }"
+      << ".input-select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 6px; font-size: 13px; width: 100%; box-sizing: border-box; }"
+      << ".modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; }"
+      << ".modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; width: 380px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); }"
+      << ".form-group { margin-bottom: 12px; }"
+      << ".form-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }"
       << ".log-entry { font-family: monospace; font-size: 12px; margin: 4px 0; color: #8b949e; }"
       << "</style><script>"
+      << "let isBenchmarking = false;"
       << "function runLiveBenchmark() {"
-      << "  const btn = document.getElementById('bench-btn');"
+      << "  if (isBenchmarking) return;"
+      << "  isBenchmarking = true;"
       << "  const status = document.getElementById('bench-status');"
-      << "  btn.disabled = true;"
-      << "  btn.innerText = 'Measuring live...';"
-      << "  status.innerText = 'Running benchmark suite...';"
+      << "  if (status) status.innerHTML = '<span style=\"color:#58a6ff;\">● Fetching telemetry...</span>';"
       << "  fetch('/api/bench/run')"
       << "    .then(r => r.json())"
       << "    .then(rep => {"
@@ -485,26 +494,127 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
       << "          }"
       << "        });"
       << "      }"
-      << "      document.getElementById('m-blake3').innerText = b3 + ' MB/s';"
-      << "      document.getElementById('m-kem').innerText = kem + ' µs';"
-      << "      document.getElementById('m-sig').innerText = sig + ' µs';"
-      << "      document.getElementById('m-cipher').innerText = ciph + ' MB/s';"
+      << "      const mb3 = document.getElementById('m-blake3'); if (mb3) mb3.innerText = b3 + ' MB/s';"
+      << "      const mkem = document.getElementById('m-kem'); if (mkem) mkem.innerText = kem + ' µs';"
+      << "      const msig = document.getElementById('m-sig'); if (msig) msig.innerText = sig + ' µs';"
+      << "      const mciph = document.getElementById('m-cipher'); if (mciph) mciph.innerText = ciph + ' MB/s';"
       << "      if (rep.ai) {"
-      << "        document.getElementById('m-ai').innerText = Math.round(rep.ai.lines_per_sec) + ' L/s';"
-      << "        document.getElementById('m-cache').innerText = Number(rep.ai.cache_hit_lookup_us).toFixed(2) + ' µs';"
+      << "        const mai = document.getElementById('m-ai'); if (mai) mai.innerText = Math.round(rep.ai.lines_per_sec) + ' L/s';"
+      << "        const mcache = document.getElementById('m-cache'); if (mcache) mcache.innerText = Number(rep.ai.cache_hit_lookup_us).toFixed(2) + ' µs';"
       << "      }"
-      << "      btn.disabled = false;"
-      << "      btn.innerText = 'Run Real-Time Benchmark';"
-      << "      status.innerText = '✓ Updated at ' + new Date().toLocaleTimeString();"
-      << "      status.style.color = '#3fb950';"
+      << "      if (status) status.innerHTML = '<span style=\"color:#3fb950;\">● Live Telemetry (' + new Date().toLocaleTimeString() + ')</span>';"
+      << "      isBenchmarking = false;"
       << "    })"
       << "    .catch(e => {"
-      << "      status.innerText = 'Error: ' + e;"
-      << "      status.style.color = '#f85149';"
-      << "      btn.disabled = false;"
-      << "      btn.innerText = 'Run Real-Time Benchmark';"
+      << "      if (status) status.innerHTML = '<span style=\"color:#f85149;\">Telemetry Error: ' + e + '</span>';"
+      << "      isBenchmarking = false;"
       << "    });"
       << "}"
+
+      << "function formatSec(s) {"
+      << "  if (s <= 0) return 'Permanent';"
+      << "  if (s >= 86400) return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';"
+      << "  if (s >= 3600) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';"
+      << "  return s + 's';"
+      << "}"
+
+      << "function reloadUsers() {"
+      << "  fetch('/api/admin/users')"
+      << "    .then(r => r.json())"
+      << "    .then(users => {"
+      << "      const tbody = document.getElementById('users-tbody');"
+      << "      if (!tbody) return;"
+      << "      if (!users || users.length === 0) {"
+      << "        tbody.innerHTML = '<tr><td colspan=\"4\" style=\"color:#8b949e;\">No user accounts configured</td></tr>';"
+      << "        return;"
+      << "      }"
+      << "      let html = '';"
+      << "      users.forEach(u => {"
+      << "        let status = u.is_expired ? '<span style=\"color:#f85149;\">Expired</span>' : '<span style=\"color:#3fb950;\">Active (' + formatSec(u.remaining_sec) + ')</span>';"
+      << "        let roleBadge = '<span class=\"role-tag\">' + u.role + '</span>';"
+      << "        html += '<tr><td><strong>' + u.username + '</strong></td><td>' + roleBadge + '</td><td>' + status + '</td>'"
+      << "             + '<td><button class=\"btn-sec btn-sm\" onclick=\"openEditModal(\'' + u.username + '\', \'' + u.role + '\')\">Edit</button> '"
+      << "             + '<button class=\"btn-danger btn-sm\" onclick=\"deleteUser(\'' + u.username + '\')\">Delete</button></td></tr>';"
+      << "      });"
+      << "      tbody.innerHTML = html;"
+      << "    });"
+      << "}"
+
+      << "function openAddModal() { document.getElementById('modal-add-user').style.display = 'flex'; }"
+      << "function closeAddModal() { document.getElementById('modal-add-user').style.display = 'none'; }"
+      << "function submitAddUser(e) {"
+      << "  e.preventDefault();"
+      << "  const u = document.getElementById('add-u').value.trim();"
+      << "  const p = document.getElementById('add-p').value;"
+      << "  const r = document.getElementById('add-r').value;"
+      << "  const ttl = parseInt(document.getElementById('add-ttl').value);"
+      << "  if (!u || !p) { alert('Username and Password required'); return; }"
+      << "  fetch('/api/admin/users/add', {"
+      << "    method: 'POST',"
+      << "    headers: { 'Content-Type': 'application/json' },"
+      << "    body: JSON.stringify({ username: u, password: p, role: r, ttl_sec: ttl })"
+      << "  }).then(r => r.json()).then(res => {"
+      << "    if (res.status === 'ok') {"
+      << "      closeAddModal();"
+      << "      document.getElementById('add-u').value = '';"
+      << "      document.getElementById('add-p').value = '';"
+      << "      reloadUsers();"
+      << "    } else {"
+      << "      alert(res.message || 'Failed to add user');"
+      << "    }"
+      << "  });"
+      << "}"
+
+      << "function openEditModal(username, currentRole) {"
+      << "  document.getElementById('edit-u').value = username;"
+      << "  document.getElementById('edit-u-display').innerText = username;"
+      << "  document.getElementById('edit-p').value = '';"
+      << "  document.getElementById('edit-r').value = currentRole;"
+      << "  document.getElementById('modal-edit-user').style.display = 'flex';"
+      << "}"
+      << "function closeEditModal() { document.getElementById('modal-edit-user').style.display = 'none'; }"
+      << "function submitEditUser(e) {"
+      << "  e.preventDefault();"
+      << "  const u = document.getElementById('edit-u').value;"
+      << "  const p = document.getElementById('edit-p').value;"
+      << "  const r = document.getElementById('edit-r').value;"
+      << "  const ttl = parseInt(document.getElementById('edit-ttl').value);"
+      << "  const payload = { username: u, role: r };"
+      << "  if (p) payload.password = p;"
+      << "  if (ttl > 0) payload.ttl_sec = ttl;"
+      << "  fetch('/api/admin/users/update', {"
+      << "    method: 'POST',"
+      << "    headers: { 'Content-Type': 'application/json' },"
+      << "    body: JSON.stringify(payload)"
+      << "  }).then(r => r.json()).then(res => {"
+      << "    if (res.status === 'ok') {"
+      << "      closeEditModal();"
+      << "      reloadUsers();"
+      << "    } else {"
+      << "      alert(res.message || 'Failed to update user');"
+      << "    }"
+      << "  });"
+      << "}"
+
+      << "function deleteUser(username) {"
+      << "  if (!confirm('Are you sure you want to delete user ' + username + '?')) return;"
+      << "  fetch('/api/admin/users/delete', {"
+      << "    method: 'POST',"
+      << "    headers: { 'Content-Type': 'application/json' },"
+      << "    body: JSON.stringify({ username: username })"
+      << "  }).then(r => r.json()).then(res => {"
+      << "    if (res.status === 'ok') {"
+      << "      reloadUsers();"
+      << "    } else {"
+      << "      alert(res.message || 'Failed to delete user');"
+      << "    }"
+      << "  });"
+      << "}"
+
+      << "window.addEventListener('DOMContentLoaded', () => {"
+      << "  runLiveBenchmark();"
+      << "  setInterval(runLiveBenchmark, 3500);"
+      << "});"
       << "</script></head><body><div class='container'>"
       << "<div class='top-bar'>"
       << "<h1>Slug Admin &amp; Metrics Dashboard</h1>"
@@ -524,24 +634,24 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
       << "<p><strong>AI Secret Shield:</strong> " << (control_server_.ai_enabled() ? "<span style='color:#3fb950;'>ACTIVE</span>" : "OFF") << "</p>"
       << "</div>"
 
-      << "<div class='card'><h3>User Accounts &amp; Ephemeral Roles</h3>"
-      << "<table><thead><tr><th>User</th><th>Role</th><th>Status/TTL</th></tr></thead><tbody>";
+      << "<div class='card'><h3><span>User Accounts &amp; Ephemeral Roles</span><button class='btn btn-sm' onclick='openAddModal()'>+ Create Account</button></h3>"
+      << "<table><thead><tr><th>User</th><th>Role</th><th>Status/TTL</th><th>Actions</th></tr></thead><tbody id='users-tbody'>";
 
     for (const auto& u : users) {
-        h << "<tr><td>" << u.username << "</td><td>" << core::role_to_string(u.role) << "</td><td>"
+        h << "<tr><td><strong>" << u.username << "</strong></td><td><span class='role-tag'>" << core::role_to_string(u.role) << "</span></td><td>"
           << (u.is_expired() ? "<span style='color:#f85149'>Expired</span>" : "<span style='color:#3fb950'>Active</span>")
-          << "</td></tr>";
+          << "</td><td><button class='btn-sec btn-sm' onclick=\"openEditModal('" << u.username << "', '" << core::role_to_string(u.role) << "')\">Edit</button> "
+          << "<button class='btn-danger btn-sm' onclick=\"deleteUser('" << u.username << "')\">Delete</button></td></tr>";
     }
     if (users.empty()) {
-        h << "<tr><td colspan='3' style='color:#8b949e;'>No separate user accounts configured</td></tr>";
+        h << "<tr><td colspan='4' style='color:#8b949e;'>No separate user accounts configured</td></tr>";
     }
     h << "</tbody></table></div></div>"
 
       // Real-time benchmark card
       << "<div class='card' style='margin-bottom: 16px;'>"
       << "<h3><span>Performance &amp; Cryptographic Benchmark</span>"
-      << "<span><span id='bench-status' style='font-size:12px; margin-right:8px;'></span>"
-      << "<button id='bench-btn' class='btn' onclick='runLiveBenchmark()'>Run Real-Time Benchmark</button></span></h3>"
+      << "<span id='bench-status' style='font-size:12px;'></span></h3>"
       << "<div class='metric-grid'>"
       << "<div class='metric-box'><div class='metric-lbl'>BLAKE3 Throughput</div><div id='m-blake3' class='metric-val' style='color:#3fb950;'>" << static_cast<int>(blake3_speed) << " MB/s</div></div>"
       << "<div class='metric-box'><div class='metric-lbl'>ML-KEM-768 Decap</div><div id='m-kem' class='metric-val' style='color:#a371f7;'>" << static_cast<int>(pqc_kem_decap) << " &mu;s</div></div>"
@@ -575,7 +685,60 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
     if (events.empty()) {
         h << "<div class='log-entry'>No audit events recorded yet.</div>";
     }
-    h << "</div></div></div></body></html>";
+    h << "</div></div></div>"
+
+      // Modals for Add & Edit User
+      << "<div id='modal-add-user' class='modal'>"
+      << "<div class='modal-content'>"
+      << "<h3 style='margin-top:0; color:#58a6ff;'>Create Ephemeral User Account</h3>"
+      << "<form onsubmit='submitAddUser(event)'>"
+      << "<div class='form-group'><label>Username</label><input type='text' id='add-u' class='input-text' placeholder='e.g. dev_guest' required></div>"
+      << "<div class='form-group'><label>Password</label><input type='password' id='add-p' class='input-text' placeholder='Strong password' required></div>"
+      << "<div class='form-group'><label>Permission Role</label>"
+      << "<select id='add-r' class='input-select'>"
+      << "<option value='r'>[r] Read-Only (Pull / View files only)</option>"
+      << "<option value='rw' selected>[rw] Read-Write (Full Sync &amp; Drop)</option>"
+      << "<option value='w'>[w] Write-Only (Blind Drop only)</option>"
+      << "</select></div>"
+      << "<div class='form-group'><label>Session TTL</label>"
+      << "<select id='add-ttl' class='input-select'>"
+      << "<option value='3600'>1 Hour (1h)</option>"
+      << "<option value='14400'>4 Hours (4h)</option>"
+      << "<option value='86400' selected>24 Hours (1d)</option>"
+      << "<option value='604800'>7 Days (7d)</option>"
+      << "<option value='0'>Permanent (no expiry)</option>"
+      << "</select></div>"
+      << "<div style='display:flex; justify-content:flex-end; gap:8px; margin-top:16px;'>"
+      << "<button type='button' class='btn-sec' onclick='closeAddModal()'>Cancel</button>"
+      << "<button type='submit' class='btn'>Create User</button>"
+      << "</div></form></div></div>"
+
+      << "<div id='modal-edit-user' class='modal'>"
+      << "<div class='modal-content'>"
+      << "<h3 style='margin-top:0; color:#58a6ff;'>Edit User Account: <span id='edit-u-display' style='color:#fff;'></span></h3>"
+      << "<form onsubmit='submitEditUser(event)'>"
+      << "<input type='hidden' id='edit-u'>"
+      << "<div class='form-group'><label>New Password (leave blank to keep unchanged)</label><input type='password' id='edit-p' class='input-text' placeholder='New password'></div>"
+      << "<div class='form-group'><label>Permission Role</label>"
+      << "<select id='edit-r' class='input-select'>"
+      << "<option value='r'>[r] Read-Only (Pull / View files only)</option>"
+      << "<option value='rw'>[rw] Read-Write (Full Sync &amp; Drop)</option>"
+      << "<option value='w'>[w] Write-Only (Blind Drop only)</option>"
+      << "</select></div>"
+      << "<div class='form-group'><label>Extend TTL (optional)</label>"
+      << "<select id='edit-ttl' class='input-select'>"
+      << "<option value='0'>Keep existing expiration</option>"
+      << "<option value='3600'>+ 1 Hour</option>"
+      << "<option value='14400'>+ 4 Hours</option>"
+      << "<option value='86400'>+ 24 Hours</option>"
+      << "<option value='604800'>+ 7 Days</option>"
+      << "</select></div>"
+      << "<div style='display:flex; justify-content:flex-end; gap:8px; margin-top:16px;'>"
+      << "<button type='button' class='btn-sec' onclick='closeEditModal()'>Cancel</button>"
+      << "<button type='submit' class='btn'>Save Changes</button>"
+      << "</div></form></div></div>"
+
+      << "</body></html>";
     return h.str();
 }
 
@@ -657,8 +820,8 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
     }
 
     if (path == "/admin") {
-        if (current_session->role != core::Role::READ_WRITE) {
-            std::string body = render_forbidden_page("Permission Denied: Admin dashboard requires Read-Write role.");
+        if (current_session->identity != "host_admin") {
+            std::string body = render_forbidden_page("Permission Denied: Admin dashboard is restricted strictly to the workspace host administrator.");
             send_resp(403, "Forbidden", "text/html; charset=utf-8", body);
             return;
         }
@@ -679,12 +842,122 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
     }
 
     if (path == "/api/bench/run") {
-        if (current_session->role != core::Role::READ_WRITE) {
-            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+        if (current_session->identity != "host_admin") {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\",\"message\":\"Admin privilege required\"}");
             return;
         }
         auto rep = bench::BenchmarkEngine::run_all(true);
         send_resp(200, "OK", "application/json", rep.to_json().dump(2));
+        return;
+    }
+
+    if (path == "/api/admin/users") {
+        if (current_session->identity != "host_admin") {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        auto users = control_server_.acl_manager().list_users();
+        uint64_t now = core::Utils::current_timestamp();
+        json arr = json::array();
+        for (const auto& u : users) {
+            json item;
+            item["username"] = u.username;
+            item["role"] = core::role_to_string(u.role);
+            item["created_at"] = u.created_at;
+            item["expires_at"] = u.expires_at;
+            item["is_expired"] = u.is_expired(now);
+            item["remaining_sec"] = (u.expires_at > now) ? (u.expires_at - now) : 0;
+            arr.push_back(item);
+        }
+        send_resp(200, "OK", "application/json", arr.dump(2));
+        return;
+    }
+
+    if (path == "/api/admin/users/add" && method == "POST") {
+        if (current_session->identity != "host_admin") {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string u = j.value("username", "");
+            std::string p = j.value("password", "");
+            std::string r_str = j.value("role", "r");
+            uint64_t ttl = j.value("ttl_sec", 86400ULL);
+            if (u.empty() || p.empty()) {
+                send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Username and password required\"}");
+                return;
+            }
+            core::Role role = core::role_from_string(r_str);
+            bool ok = control_server_.acl_manager().add_user(u, p, role, ttl);
+            if (ok) {
+                control_server_.audit_logger().log(current_session->identity, "USER_ADD", u, "Created user role=" + r_str);
+                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"User created successfully\"}");
+            } else {
+                send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Failed to add user\"}");
+            }
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+        }
+        return;
+    }
+
+    if (path == "/api/admin/users/update" && method == "POST") {
+        if (current_session->identity != "host_admin") {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string u = j.value("username", "");
+            std::string p = j.value("password", "");
+            std::optional<core::Role> role = std::nullopt;
+            if (j.contains("role") && !j["role"].get<std::string>().empty()) {
+                role = core::role_from_string(j["role"].get<std::string>());
+            }
+            std::optional<uint64_t> ttl = std::nullopt;
+            if (j.contains("ttl_sec")) {
+                ttl = j["ttl_sec"].get<uint64_t>();
+            }
+            if (u.empty()) {
+                send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Username required\"}");
+                return;
+            }
+            bool ok = control_server_.acl_manager().update_user(u, p, role, ttl);
+            if (ok) {
+                control_server_.audit_logger().log(current_session->identity, "USER_UPDATE", u, "Updated user settings");
+                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"User updated successfully\"}");
+            } else {
+                send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"User not found\"}");
+            }
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+        }
+        return;
+    }
+
+    if (path == "/api/admin/users/delete" && method == "POST") {
+        if (current_session->identity != "host_admin") {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string u = j.value("username", "");
+            if (u.empty()) {
+                send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Username required\"}");
+                return;
+            }
+            bool ok = control_server_.acl_manager().remove_user(u);
+            if (ok) {
+                control_server_.audit_logger().log(current_session->identity, "USER_DELETE", u, "Removed user");
+                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"User removed successfully\"}");
+            } else {
+                send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"User not found\"}");
+            }
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+        }
         return;
     }
 

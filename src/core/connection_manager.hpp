@@ -27,7 +27,10 @@ public:
     static ConnectionManager& instance();
 
     void save_connection(const ConnectionInfo& conn);
-    std::vector<ConnectionInfo> list_connections();
+    std::vector<ConnectionInfo> list_connections(bool prune_expired = true);
+    size_t prune_expired_connections();
+    static bool ping_connection(const ConnectionInfo& c, int timeout_ms = 400);
+    size_t prune_dead_connections(int timeout_ms = 400);
     std::optional<ConnectionInfo> get_connection(const std::string& id);
     void remove_connection(const std::string& id);
 

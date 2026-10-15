@@ -5,11 +5,19 @@ _slug_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="add connect pull push status diff list stop rule audit env bench version help"
+    local commands="add serve server connect pull push status diff list set web stop totp user rule audit env bench uninstall version help"
 
     case "${prev}" in
         slug)
             COMPREPLY=( $(compgen -W "${commands}" -- ${cur}) )
+            return 0
+            ;;
+        serve|server)
+            COMPREPLY=( $(compgen -W "list stop -p --port -w --web" -- ${cur}) )
+            return 0
+            ;;
+        connect)
+            COMPREPLY=( $(compgen -W "list prune -i --host -p --port -o --otp -u --user --pass -w --web" -- ${cur}) )
             return 0
             ;;
         -s|--suite)
@@ -22,6 +30,14 @@ _slug_completion() {
             ;;
         audit)
             COMPREPLY=( $(compgen -W "list recheck allow" -- ${cur}) )
+            return 0
+            ;;
+        user)
+            COMPREPLY=( $(compgen -W "add rm list" -- ${cur}) )
+            return 0
+            ;;
+        uninstall)
+            COMPREPLY=( $(compgen -W "-y --yes -n --no --keep-data" -- ${cur}) )
             return 0
             ;;
         env)
@@ -37,7 +53,7 @@ _slug_completion() {
     esac
 
     if [[ "${cur}" == -* ]]; then
-        local flags="-p -s --suite --ttl -ai --ai --daemon -d -i --ip -o --totp --user -u --dry-run --quick -q --json"
+        local flags="-p --port -s --suite -t --ttl -ai --ai -d --daemon -i --host -o --otp -u --user --pass -r --role -w --web --dry-run --quick -q --json -y --yes -n --no --keep-data"
         COMPREPLY=( $(compgen -W "${flags}" -- ${cur}) )
         return 0
     fi

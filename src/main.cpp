@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <algorithm>
+#include <set>
 
 #if defined(SLUG_PLATFORM_POSIX)
 #include <unistd.h>
@@ -72,6 +73,34 @@ static void open_browser(const std::string& url) {
     [[maybe_unused]] int r = std::system(cmd.c_str());
 }
 
+static std::string get_current_executable_path() {
+#if defined(SLUG_PLATFORM_POSIX)
+    char buf[4096];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len > 0) {
+        buf[len] = '\0';
+        return std::string(buf);
+    }
+#elif defined(SLUG_PLATFORM_WINDOWS)
+    char buf[MAX_PATH];
+    DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
+    if (len > 0) {
+        return std::string(buf, len);
+    }
+#endif
+    return "";
+}
+
+struct TerminalCursorRestorer {
+    bool enabled{false};
+    explicit TerminalCursorRestorer(bool enable) : enabled(enable) {
+        if (enabled) std::cout << "\033[?25l" << std::flush;
+    }
+    ~TerminalCursorRestorer() {
+        if (enabled) std::cout << "\033[?25h" << std::flush;
+    }
+};
+
 using namespace slug;
 
 void print_banner() {
@@ -112,6 +141,11 @@ WORKSPACE HOSTING (SERVER):
 
   stop [-p <port>]         Stop sharing workspace (defaults to active workspace)
 
+  serve [-p <port>] [-w]   Inspect specific workspace server or launch Admin Web Dashboard
+                           Subcommands: list              (List all active servers)
+                           Flags: -p, --port <port>       (Target server port/ID; defaults to active server)
+                                  -w, --web               (Open Admin Dashboard in browser immediately)
+
   web [id] [-p <port>]     Open authenticated Web Dropbox in browser
 
 CLIENT WORKSPACE ACCESS:
@@ -121,7 +155,9 @@ CLIENT WORKSPACE ACCESS:
                                   --pass <password>        (Account password)
                                   -w, --web                (Launch Web Dropbox immediately)
 
-  connect list             List all saved client connections, roles, and certificates
+  connect list             List all saved client connections with live heartbeat status
+                           Flags: --prune                 (Automatically prune dead connections)
+  connect prune            Prune dead/unreachable and expired client connections
   connect [id] [-w]        Inspect connection certificate or launch web view (-w)
 
   set <id>                 Set active connection context (omits need for ID on list/pull)
@@ -167,6 +203,11 @@ SECURITY & SECRETS:
 BENCHMARK & UTILS:
   bench                    Run crypto suites, BLAKE3, AI Guard, & chunker benchmark
                            Flags: --quick (fast run) | --json (machine-readable)
+
+  uninstall                Completely uninstall Slug from this system
+                           Flags: -y, --yes               (Non-interactive automatic confirmation)
+                                  -n, --no                (Cancel uninstallation immediately)
+                                  --keep-data             (Preserve ~/.slug directory)
 
   version                  Print version information
   help                     Show this help message
@@ -269,18 +310,25 @@ int cmd_add(int argc, char* argv[]) {
     std::cout << "  Crypto Suite:    " << core::suite_to_string(suite) << std::endl;
     std::cout << "  AI Secret Guard: " << (enable_ai ? "ENABLED (Stateful BLAKE3 Audit)" : "OFF") << std::endl;
     std::cout << "  Session TTL:     " << core::Utils::format_duration(ttl_sec) << std::endl;
-    std::cout << "  Role OTPs (Rotates in " << rem << "s):" << std::endl;
-    std::cout << "    [rw] Read-Write OTP: " << totp_rw << " (Full Sync & Web Dropbox)" << std::endl;
-    std::cout << "    [r]  Read-Only OTP:  " << totp_r  << " (Read/Pull/View files only)" << std::endl;
-    std::cout << "    [w]  Write-Only OTP: " << totp_w  << " (Blind Drop/Upload only)" << std::endl;
-    std::cout << "+----------------------------------------------------------------------------+" << std::endl;
-    std::cout << "Connect (Local):   slug connect -i 127.0.0.1 -p " << port << " -o " << totp_rw << std::endl;
-    std::cout << "Connect (Network): slug connect -i " << lan_ip << " -p " << port << " -o " << totp_rw << std::endl;
-    std::cout << "                   (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << std::endl;
-    std::cout << "+----------------------------------------------------------------------------+\n" << std::endl;
+    auto print_dynamic_panel = [&](uint32_t current_rem, const std::string& crw, const std::string& cr, const std::string& cw, bool clear_trailing) {
+        std::string clr = clear_trailing ? "\033[K\n" : "\n";
+        std::cout << "  Role OTPs (Rotates in " << current_rem << "s):" << clr;
+        std::cout << "    [rw] Read-Write OTP: " << crw << " (Full Sync & Web Dropbox)" << clr;
+        std::cout << "    [r]  Read-Only OTP:  " << cr  << " (Read/Pull/View files only)" << clr;
+        std::cout << "    [w]  Write-Only OTP: " << cw  << " (Blind Drop/Upload only)" << clr;
+        std::cout << "+----------------------------------------------------------------------------+" << clr;
+        std::cout << "Connect (Local):   slug connect -i 127.0.0.1 -p " << port << " -o " << crw << clr;
+        std::cout << "Connect (Network): slug connect -i " << lan_ip << " -p " << port << " -o " << crw << clr;
+        std::cout << "                   (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << clr;
+        std::cout << "+----------------------------------------------------------------------------+" << clr;
+        std::cout << clr;
+        std::cout << "[*] Press Ctrl+C to stop server..." << clr;
+        std::cout << std::flush;
+    };
 
 #if defined(SLUG_PLATFORM_POSIX)
     if (daemon) {
+        print_dynamic_panel(rem, totp_rw, totp_r, totp_w, false);
         char ok[] = "OK";
         [[maybe_unused]] auto w = write(pipefd[1], ok, sizeof(ok));
         close(pipefd[1]);
@@ -292,25 +340,48 @@ int cmd_add(int argc, char* argv[]) {
             dup2(devnull, STDERR_FILENO);
             close(devnull);
         }
-    } else {
-        std::cout << "[*] Press Ctrl+C to stop server..." << std::endl;
-    }
-
-    while (server->is_running() && !g_stop_signal_received) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        while (server->is_running() && !g_stop_signal_received) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+        server->stop();
+        return 0;
     }
 #else
     if (daemon) {
+        print_dynamic_panel(rem, totp_rw, totp_r, totp_w, false);
         std::cout << "[+] Server running in background." << std::endl;
         return 0;
     }
-    std::cout << "[*] Press Ctrl+C to stop server..." << std::endl;
-    while (server->is_running()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
 #endif
 
+    bool is_terminal = false;
+#if defined(SLUG_PLATFORM_POSIX)
+    is_terminal = (isatty(STDOUT_FILENO) != 0);
+#endif
+
+    TerminalCursorRestorer cursor_guard(is_terminal);
+    print_dynamic_panel(rem, totp_rw, totp_r, totp_w, is_terminal);
+
+    uint32_t last_rem = rem;
+    while (server->is_running() && !g_stop_signal_received) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (!server->is_running() || g_stop_signal_received) break;
+
+        uint32_t current_rem = server->totp_manager().remaining_seconds();
+        if (is_terminal && current_rem != last_rem) {
+            last_rem = current_rem;
+            std::string cur_totp_rw = server->totp_manager().generate_code(core::Role::READ_WRITE);
+            std::string cur_totp_r  = server->totp_manager().generate_code(core::Role::READ_ONLY);
+            std::string cur_totp_w  = server->totp_manager().generate_code(core::Role::WRITE_ONLY);
+
+            std::cout << "\033[11A\r";
+            print_dynamic_panel(current_rem, cur_totp_rw, cur_totp_r, cur_totp_w, true);
+        }
+    }
+
+    std::cout << "\n[*] Stopping workspace server..." << std::endl;
     server->stop();
+    std::cout << "[+] Server stopped." << std::endl;
     return 0;
 }
 
@@ -374,12 +445,21 @@ int cmd_status(int argc, char* argv[]) {
         }
 
         std::string totp_display = "-";
-        std::string live_totp_code = "";
+        std::string live_rw = "";
+        std::string live_r  = "";
+        std::string live_w  = "";
+        int rem = 0;
         auto st = query_workspace_api(w.port);
-        if (st.is_object() && st.contains("totp")) {
-            live_totp_code = st["totp"].get<std::string>();
-            int rem = st.value("totp_remaining_sec", 0);
-            totp_display = live_totp_code + " (" + std::to_string(rem) + "s)";
+        if (st.is_object() && st.contains("totp_rw")) {
+            live_rw = st.value("totp_rw", st.value("totp", ""));
+            live_r  = st.value("totp_r", "");
+            live_w  = st.value("totp_w", "");
+            rem = st.value("totp_remaining_sec", 0);
+            totp_display = live_rw + " (" + std::to_string(rem) + "s)";
+        } else if (st.is_object() && st.contains("totp")) {
+            live_rw = st["totp"].get<std::string>();
+            rem = st.value("totp_remaining_sec", 0);
+            totp_display = live_rw + " (" + std::to_string(rem) + "s)";
         }
 
         std::cout << std::left
@@ -392,8 +472,19 @@ int cmd_status(int argc, char* argv[]) {
                   << std::endl;
 
         std::cout << "  Path:    " << norm_path.string() << std::endl;
-        if (!live_totp_code.empty()) {
-            std::cout << "  Connect: slug connect -i 127.0.0.1 -p " << w.port << " -o " << live_totp_code << std::endl;
+        std::string lan_ip = get_host_lan_ip();
+        if (!live_rw.empty()) {
+            std::cout << "  Role OTPs (Rotates in " << rem << "s):" << std::endl;
+            std::cout << "    [rw] Read-Write OTP: " << live_rw << " (Full Sync & Web Dropbox)" << std::endl;
+            if (!live_r.empty()) {
+                std::cout << "    [r]  Read-Only OTP:  " << live_r  << " (Read/Pull/View files only)" << std::endl;
+            }
+            if (!live_w.empty()) {
+                std::cout << "    [w]  Write-Only OTP: " << live_w  << " (Blind Drop/Upload only)" << std::endl;
+            }
+            std::cout << "  Connect (Local):   slug connect -i 127.0.0.1 -p " << w.port << " -o " << live_rw << std::endl;
+            std::cout << "  Connect (Network): slug connect -i " << lan_ip << " -p " << w.port << " -o " << live_rw << std::endl;
+            std::cout << "                     (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << std::endl;
         }
         std::cout << std::endl;
 
@@ -497,9 +588,112 @@ int cmd_stop(int argc, char* argv[]) {
     }
 }
 
+int cmd_serve(int argc, char* argv[]) {
+    bool open_web = false;
+    uint16_t port = 0;
+    std::string sub = "";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "list" || arg == "ls") {
+            sub = "list";
+        } else if (arg == "stop") {
+            sub = "stop";
+        } else if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
+            port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        } else if (arg == "-w" || arg == "--web") {
+            open_web = true;
+        }
+    }
+
+    if (sub == "list") {
+        return cmd_status(argc, argv);
+    }
+    if (sub == "stop") {
+        return cmd_stop(argc, argv);
+    }
+
+    auto list = core::WorkspaceManager::load_registry();
+    if (list.empty()) {
+        std::cout << "[-] No active workspace servers found. Host a workspace with: slug add <path>" << std::endl;
+        return 1;
+    }
+
+    if (port == 0) {
+        if (list.size() == 1) {
+            port = list[0].port;
+        } else {
+            std::cout << "[!] Multiple active servers detected. Specify server port with -p <port>:\n" << std::endl;
+            return cmd_status(argc, argv);
+        }
+    }
+
+    auto st = query_workspace_api(port);
+    if (!st.is_object() || !st.contains("totp_rw")) {
+        std::cerr << "[-] Cannot connect to workspace server on port " << port << " (server might not be running)" << std::endl;
+        return 1;
+    }
+
+    std::string ticket = st.value("admin_ticket", "");
+    if (open_web) {
+        std::string url = "http://127.0.0.1:" + std::to_string(port) + "/admin?ticket=" + ticket;
+        std::cout << "[*] Opening Host Admin Web Dashboard (Port " << port << ")..." << std::endl;
+        std::cout << "    URL: " << url << std::endl;
+        open_browser(url);
+        return 0;
+    }
+
+    // Detailed server view
+    std::string totp_rw = st.value("totp_rw", st.value("totp", ""));
+    std::string totp_r  = st.value("totp_r", "");
+    std::string totp_w  = st.value("totp_w", "");
+    int rem = st.value("totp_remaining_sec", 0);
+    std::string lan_ip = get_host_lan_ip();
+    std::string ws_path = st.value("workspace", "");
+    std::string suite = st.value("suite", "");
+
+    std::cout << "\n+----------------------------------------------------------------------------+" << std::endl;
+    std::cout << "| SLUG WORKSPACE SERVER DETAILS (Port / Server ID: " << port << ")" << std::endl;
+    std::cout << "+----------------------------------------------------------------------------+" << std::endl;
+    std::cout << "  Port (ID):       " << port << std::endl;
+    std::cout << "  Workspace:       " << ws_path << std::endl;
+    std::cout << "  Crypto Suite:    " << suite << std::endl;
+    std::cout << "  Role OTPs (Rotates in " << rem << "s):" << std::endl;
+    std::cout << "    [rw] Read-Write OTP: " << totp_rw << " (Full Sync & Web Dropbox)" << std::endl;
+    std::cout << "    [r]  Read-Only OTP:  " << totp_r  << " (Read/Pull/View files only)" << std::endl;
+    std::cout << "    [w]  Write-Only OTP: " << totp_w  << " (Blind Drop/Upload only)" << std::endl;
+    std::cout << "+----------------------------------------------------------------------------+" << std::endl;
+    std::cout << "Connect (Local):   slug connect -i 127.0.0.1 -p " << port << " -o " << totp_rw << std::endl;
+    std::cout << "Connect (Network): slug connect -i " << lan_ip << " -p " << port << " -o " << totp_rw << std::endl;
+    std::cout << "                   (Replace " << lan_ip << " with your PUBLIC_IP if sharing over internet)" << std::endl;
+    if (!ticket.empty()) {
+        std::cout << "Admin Dashboard:   http://127.0.0.1:" << port << "/admin?ticket=" << ticket << std::endl;
+    }
+    std::cout << "+----------------------------------------------------------------------------+\n" << std::endl;
+    std::cout << "Tip: Pass -w to open the Admin Web Dashboard directly: slug serve -p " << port << " -w\n" << std::endl;
+    return 0;
+}
+
 int cmd_connect(int argc, char* argv[]) {
+    if (argc >= 3 && std::string(argv[2]) == "prune") {
+        size_t pruned = core::ConnectionManager::instance().prune_dead_connections(400);
+        std::cout << "[+] Pruned " << pruned << " dead or expired connection(s)." << std::endl;
+        return 0;
+    }
+
     if (argc >= 3 && std::string(argv[2]) == "list") {
-        auto list = core::ConnectionManager::instance().list_connections();
+        bool prune_dead = false;
+        for (int i = 3; i < argc; ++i) {
+            if (std::string(argv[i]) == "--prune") prune_dead = true;
+        }
+        if (prune_dead) {
+            size_t pruned = core::ConnectionManager::instance().prune_dead_connections(400);
+            if (pruned > 0) {
+                std::cout << "[+] Pruned " << pruned << " dead or expired connection(s)." << std::endl;
+            }
+        }
+
+        auto list = core::ConnectionManager::instance().list_connections(true);
         std::string active_id = core::ConnectionManager::instance().get_active_connection();
 
         std::cout << "\nCLIENT CONNECTIONS (" << list.size() << "):\n" << std::endl;
@@ -511,16 +705,22 @@ int cmd_connect(int argc, char* argv[]) {
         std::cout << std::left
                   << std::setw(4)  << " "
                   << std::setw(12) << "[ID]"
+                  << std::setw(12) << "[STATUS]"
                   << std::setw(8)  << "[ROLE]"
                   << std::setw(18) << "[WORKSPACE]"
                   << std::setw(24) << "[ENDPOINT]"
                   << std::setw(20) << "[EXPIRES IN]"
                   << std::endl;
-        std::cout << std::string(86, '-') << std::endl;
+        std::cout << std::string(98, '-') << std::endl;
 
         uint64_t now = core::Utils::current_timestamp();
+        bool has_dead = false;
         for (const auto& c : list) {
             bool is_active = (c.id == active_id);
+            bool alive = core::ConnectionManager::ping_connection(c, 250);
+            if (!alive) has_dead = true;
+            std::string status_str = alive ? "ONLINE" : "DEAD";
+
             std::string exp_str = (c.expires_at == 0) ? "Permanent"
                                   : (c.expires_at > now ? core::Utils::format_duration(c.expires_at - now) : "Expired");
             std::string marker = is_active ? "* " : "  ";
@@ -529,6 +729,7 @@ int cmd_connect(int argc, char* argv[]) {
             std::cout << std::left
                       << std::setw(4)  << marker
                       << std::setw(12) << c.id
+                      << std::setw(12) << status_str
                       << std::setw(8)  << core::role_to_string(c.role)
                       << std::setw(18) << (c.workspace.size() > 16 ? c.workspace.substr(0, 14) + ".." : c.workspace)
                       << std::setw(24) << endpoint
@@ -536,7 +737,12 @@ int cmd_connect(int argc, char* argv[]) {
                       << std::endl;
         }
         std::cout << "\n  * indicates currently active connection context." << std::endl;
-        std::cout << "  Switch context with: slug set <id>\n" << std::endl;
+        std::cout << "  Switch context with: slug set <id>" << std::endl;
+        if (has_dead) {
+            std::cout << "  [!] Notice: Dead connections detected. Run 'slug connect prune' to clean up.\n" << std::endl;
+        } else {
+            std::cout << std::endl;
+        }
         return 0;
     }
 
@@ -1353,6 +1559,164 @@ int cmd_bench(int argc, char* argv[]) {
     return 0;
 }
 
+int cmd_uninstall(int argc, char* argv[]) {
+    bool auto_confirm = false;
+    bool abort_now = false;
+    bool keep_data = false;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-y" || arg == "--yes") {
+            auto_confirm = true;
+        } else if (arg == "-n" || arg == "--no") {
+            abort_now = true;
+        } else if (arg == "--keep-data") {
+            keep_data = true;
+        }
+    }
+
+    if (abort_now) {
+        std::cout << "[*] Uninstallation cancelled." << std::endl;
+        return 0;
+    }
+
+    if (!auto_confirm) {
+        std::cout << "[?] Are you sure you want to completely uninstall Slug from your system? [y/N]: " << std::flush;
+        std::string answer;
+        if (!std::getline(std::cin, answer)) {
+            std::cout << "\n[*] Uninstallation cancelled." << std::endl;
+            return 0;
+        }
+        size_t first = answer.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) {
+            std::cout << "[*] Uninstallation cancelled." << std::endl;
+            return 0;
+        }
+        size_t last = answer.find_last_not_of(" \t\r\n");
+        std::string trimmed = answer.substr(first, (last - first + 1));
+        std::transform(trimmed.begin(), trimmed.end(), trimmed.begin(), ::tolower);
+
+        if (trimmed != "y" && trimmed != "yes") {
+            std::cout << "[*] Uninstallation cancelled." << std::endl;
+            return 0;
+        }
+    }
+
+    std::cout << "[*] Initiating Slug uninstallation..." << std::endl;
+
+    // 1. Terminate all active workspace daemons
+    auto workspaces = core::WorkspaceManager::load_registry();
+    if (!workspaces.empty()) {
+        std::cout << "[*] Stopping " << workspaces.size() << " active workspace server(s)..." << std::endl;
+        for (const auto& w : workspaces) {
+            core::WorkspaceManager::instance().stop_workspace(w.port);
+            std::cout << "    [+] Stopped workspace on port " << w.port << " (PID " << w.pid << ")" << std::endl;
+        }
+    }
+
+    // 2. Discover binaries to remove
+    std::set<std::filesystem::path> binaries_to_remove;
+    std::string self_path = get_current_executable_path();
+    if (!self_path.empty()) {
+        std::error_code ec;
+        auto p = std::filesystem::canonical(self_path, ec);
+        if (!ec && std::filesystem::exists(p)) {
+            bool in_source_repo = false;
+            auto parent = p.parent_path();
+            if (std::filesystem::exists(parent / ".git") || std::filesystem::exists(parent.parent_path() / ".git")) {
+                in_source_repo = true;
+            }
+            if (!in_source_repo) {
+                binaries_to_remove.insert(p);
+            }
+        }
+    }
+
+    const char* home = std::getenv("HOME");
+    if (!home) home = std::getenv("USERPROFILE");
+
+    std::vector<std::filesystem::path> candidate_bin_paths = {
+        "/usr/local/bin/slug",
+        "/usr/bin/slug"
+    };
+    if (home) {
+        candidate_bin_paths.push_back(std::filesystem::path(home) / ".local" / "bin" / "slug");
+        candidate_bin_paths.push_back(std::filesystem::path(home) / "bin" / "slug");
+    }
+
+    for (const auto& cb : candidate_bin_paths) {
+        std::error_code ec;
+        if (std::filesystem::exists(cb, ec)) {
+            auto can = std::filesystem::canonical(cb, ec);
+            binaries_to_remove.insert(ec ? cb : can);
+        }
+    }
+
+    bool removed_any_bin = false;
+    for (const auto& bp : binaries_to_remove) {
+        std::error_code ec;
+        if (std::filesystem::remove(bp, ec)) {
+            std::cout << "[+] Removed binary: " << bp.string() << std::endl;
+            removed_any_bin = true;
+        } else if (ec) {
+            std::cerr << "[-] Permission denied removing " << bp.string() << " (" << ec.message() << ")" << std::endl;
+            std::cerr << "    Try running: sudo rm -f " << bp.string() << std::endl;
+        }
+    }
+    if (!removed_any_bin && binaries_to_remove.empty()) {
+        std::cout << "[*] No system binary found in standard PATH directories." << std::endl;
+    }
+
+    // 3. Remove shell completions
+    std::vector<std::filesystem::path> completion_paths = {
+        "/etc/bash_completion.d/slug",
+        "/usr/share/bash-completion/completions/slug",
+        "/usr/local/share/zsh/site-functions/_slug"
+    };
+    if (home) {
+        completion_paths.push_back(std::filesystem::path(home) / ".bash_completion.d" / "slug");
+        completion_paths.push_back(std::filesystem::path(home) / ".zsh" / "completion" / "_slug");
+    }
+
+    for (const auto& cp : completion_paths) {
+        std::error_code ec;
+        if (std::filesystem::exists(cp, ec)) {
+            if (std::filesystem::remove(cp, ec)) {
+                std::cout << "[+] Removed shell completion: " << cp.string() << std::endl;
+            } else if (ec) {
+                std::cerr << "[-] Failed removing completion " << cp.string() << ": " << ec.message() << std::endl;
+            }
+        }
+    }
+
+    // 4. Remove user config and sessions directory (~/.slug)
+    if (!keep_data && home) {
+        std::filesystem::path slug_dir = std::filesystem::path(home) / ".slug";
+        std::error_code ec;
+        if (std::filesystem::exists(slug_dir, ec)) {
+            std::uintmax_t count = std::filesystem::remove_all(slug_dir, ec);
+            if (!ec) {
+                std::cout << "[+] Removed configuration and connection store: " << slug_dir.string() << " (" << count << " items)" << std::endl;
+            } else {
+                std::cerr << "[-] Failed removing directory " << slug_dir.string() << ": " << ec.message() << std::endl;
+            }
+        }
+    } else if (keep_data && home) {
+        std::cout << "[*] Preserved user directory (--keep-data): " << (std::filesystem::path(home) / ".slug").string() << std::endl;
+    }
+
+    // 5. Debian package status check
+#if defined(SLUG_PLATFORM_POSIX)
+    if (std::system("dpkg -s slug >/dev/null 2>&1") == 0) {
+        std::cout << "[!] Note: Slug was detected in Debian dpkg database." << std::endl;
+        std::cout << "    To clean up package database entry, run: sudo apt purge slug" << std::endl;
+    }
+#endif
+
+    std::cout << "[+] Slug has been successfully uninstalled from this system." << std::endl;
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     platform::initialize_network();
 
@@ -1365,6 +1729,7 @@ int main(int argc, char* argv[]) {
 
     if (cmd == "add") return cmd_add(argc, argv);
     if (cmd == "status") return cmd_status(argc, argv);
+    if (cmd == "serve" || cmd == "server") return cmd_serve(argc, argv);
     if (cmd == "totp") return cmd_totp(argc, argv);
     if (cmd == "stop") return cmd_stop(argc, argv);
     if (cmd == "connect") return cmd_connect(argc, argv);
@@ -1378,6 +1743,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "audit") return cmd_audit(argc, argv);
     if (cmd == "env") return cmd_env(argc, argv);
     if (cmd == "bench" || cmd == "benchmark") return cmd_bench(argc, argv);
+    if (cmd == "uninstall") return cmd_uninstall(argc, argv);
     if (cmd == "version" || cmd == "-v" || cmd == "--version") {
         std::cout << "Slug 1.0.0-rc1 (Linux/Windows/macOS x86_64, Post-Quantum Suites 1-3, Apache-2.0)" << std::endl;
         return 0;

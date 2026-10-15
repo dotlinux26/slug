@@ -105,6 +105,27 @@ bool AclManager::add_user(const std::string& username, const std::string& passwo
     return save();
 }
 
+bool AclManager::update_user(const std::string& username, const std::string& new_password, std::optional<Role> new_role, std::optional<uint64_t> new_ttl_seconds) {
+    if (username.empty()) return false;
+    load();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = users_.find(username);
+        if (it == users_.end()) return false;
+        if (!new_password.empty()) {
+            it->second.password_hash = hash_password(new_password);
+        }
+        if (new_role.has_value()) {
+            it->second.role = *new_role;
+        }
+        if (new_ttl_seconds.has_value()) {
+            uint64_t now = Utils::current_timestamp();
+            it->second.expires_at = (*new_ttl_seconds > 0) ? (now + *new_ttl_seconds) : 0;
+        }
+    }
+    return save();
+}
+
 bool AclManager::remove_user(const std::string& username) {
     load();
     {

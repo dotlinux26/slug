@@ -26,6 +26,83 @@ print_error() {
     echo "[-] $1" >&2
 }
 
+# Handle --uninstall flag
+if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "-u" ] || [ "${1:-}" = "uninstall" ]; then
+    AUTO_YES=0
+    ABORT=0
+    for arg in "$@"; do
+        if [ "$arg" = "-y" ] || [ "$arg" = "--yes" ]; then
+            AUTO_YES=1
+        elif [ "$arg" = "-n" ] || [ "$arg" = "--no" ]; then
+            ABORT=1
+        fi
+    done
+
+    if [ "$ABORT" -eq 1 ]; then
+        print_info "Uninstallation cancelled."
+        exit 0
+    fi
+
+    if [ "$AUTO_YES" -eq 0 ]; then
+        printf "[?] Are you sure you want to completely uninstall Slug from your system? [y/N]: "
+        read -r reply
+        case "$reply" in
+            [yY]|[yY][eE][sS]) ;;
+            *)
+                print_info "Uninstallation cancelled."
+                exit 0
+                ;;
+        esac
+    fi
+
+    print_info "Uninstalling Slug..."
+
+    # Stop any running slug processes
+    if command -v slug >/dev/null 2>&1; then
+        slug stop >/dev/null 2>&1 || true
+    fi
+    pkill -f "slug add" >/dev/null 2>&1 || true
+
+    # Remove binaries
+    for bin in "/usr/local/bin/slug" "/usr/bin/slug" "$HOME/.local/bin/slug" "$HOME/bin/slug"; do
+        if [ -f "$bin" ]; then
+            if [ -w "$(dirname "$bin")" ]; then
+                rm -f "$bin"
+                print_success "Removed binary: $bin"
+            elif command -v sudo >/dev/null 2>&1; then
+                sudo rm -f "$bin"
+                print_success "Removed binary: $bin (via sudo)"
+            fi
+        fi
+    done
+
+    # Remove shell completions
+    for comp in "/etc/bash_completion.d/slug" "/usr/share/bash-completion/completions/slug" "$HOME/.bash_completion.d/slug" "$HOME/.zsh/completion/_slug"; do
+        if [ -f "$comp" ]; then
+            if [ -w "$(dirname "$comp")" ]; then
+                rm -f "$comp"
+                print_success "Removed completion: $comp"
+            elif command -v sudo >/dev/null 2>&1; then
+                sudo rm -f "$comp"
+                print_success "Removed completion: $comp (via sudo)"
+            fi
+        fi
+    done
+
+    # Remove ~/.slug config and data
+    if [ -d "$HOME/.slug" ]; then
+        rm -rf "$HOME/.slug"
+        print_success "Removed user directory: $HOME/.slug"
+    fi
+
+    if command -v dpkg >/dev/null 2>&1 && dpkg -s slug >/dev/null 2>&1; then
+        print_warn "Slug is registered in Debian dpkg database. Run: sudo apt purge slug"
+    fi
+
+    print_success "Slug has been successfully uninstalled from this system."
+    exit 0
+fi
+
 # 1. Check OS and Architecture
 OS="$(uname -s)"
 ARCH="$(uname -m)"

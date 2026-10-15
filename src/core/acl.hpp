@@ -30,6 +30,7 @@ public:
     bool save() const;
 
     bool add_user(const std::string& username, const std::string& password, Role role, uint64_t ttl_seconds = 86400);
+    bool update_user(const std::string& username, const std::string& new_password, std::optional<Role> new_role = std::nullopt, std::optional<uint64_t> new_ttl_seconds = std::nullopt);
     bool remove_user(const std::string& username);
     std::vector<UserAccount> list_users() const;
     std::optional<UserAccount> get_user(const std::string& username) const;
