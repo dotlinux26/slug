@@ -305,8 +305,12 @@ int cmd_stop(int argc, char* argv[]) {
         }
     }
     if (port == 0) {
-        std::cerr << "Usage: slug stop -p <port>" << std::endl;
-        return 1;
+        auto list = core::WorkspaceManager::load_registry();
+        if (list.size() == 1) {
+            port = list[0].port;
+        } else {
+            port = core::kDefaultPort;
+        }
     }
 
     if (core::WorkspaceManager::instance().stop_workspace(port)) {
