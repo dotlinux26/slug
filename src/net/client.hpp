@@ -63,13 +63,18 @@ public:
               const std::string& remote_dest,
               std::function<void(const std::string& msg)> log_callback = nullptr);
 
+    // Tunnels raw HTTP request over Post-Quantum AEAD frame channel
+    std::vector<uint8_t> tunnel_http(const std::string& raw_http_request);
+
     core::SuiteID negotiated_suite() const { return suite_id_; }
     const std::string& negotiated_suite_name() const { return suite_name_; }
     uint32_t session_id() const { return session_id_; }
     core::Role role() const { return role_; }
+    const std::string& last_error() const { return last_error_; }
 
 private:
     platform::TcpSocket socket_;
+    std::string last_error_;
     core::SuiteID suite_id_{core::SuiteID::SUITE_3_PURE_PQC};
     std::string suite_name_;
     std::unique_ptr<crypto::ICryptoSuite> suite_;

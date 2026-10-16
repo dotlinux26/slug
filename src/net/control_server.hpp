@@ -78,6 +78,9 @@ public:
 
     void set_web_server(class WebServer* ws) { web_server_ = ws; }
 
+    std::string get_or_build_manifest_json();
+    void invalidate_manifest_cache();
+
 private:
     std::filesystem::path workspace_root_;
     uint16_t port_;
@@ -101,6 +104,11 @@ private:
     mutable std::mutex session_mutex_;
     std::map<uint32_t, SessionState> sessions_;
     uint32_t next_session_id_{1000};
+
+    mutable std::mutex manifest_mutex_;
+    std::string cached_manifest_json_;
+    uint64_t manifest_cached_at_{0};
+    bool manifest_dirty_{true};
 
     void run_accept_loop();
     void handle_client(platform::TcpSocket client);

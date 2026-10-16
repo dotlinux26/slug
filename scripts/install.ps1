@@ -130,12 +130,32 @@ try {
     Write-Success "Slug installed successfully to $targetExe"
     Write-Host ""
     Write-Host "Quickstart Examples (PowerShell / Command Prompt):" -ForegroundColor White
+    Write-Host "  slug (or slug portal)  # Launch local loopback Web Viewing Engine"
     Write-Host "  slug add C:\path\to\folder -p 9443 -s 3 --ttl 2h"
     Write-Host "  slug connect -i 192.168.1.50 -p 9443 -o <TOTP>"
     Write-Host "  slug pull .\backup -i 192.168.1.50 -p 9443 -o <TOTP>"
-    Write-Host "  slug bench --quick"
+    Write-Host "  slug shortcut          # Recreate Desktop shortcut"
     Write-Host "  slug help"
 } catch {
     Write-Err "Verification failed: $($_.Exception.Message)"
     return
 }
+
+# 5. Create Desktop Shortcut for Web Viewing Portal
+try {
+    $desktopPath = [Environment]::GetFolderPath('Desktop')
+    if (Test-Path $desktopPath) {
+        $shortcutFile = Join-Path $desktopPath "Slug Workspace.lnk"
+        $wscriptShell = New-Object -ComObject WScript.Shell
+        $shortcut = $wscriptShell.CreateShortcut($shortcutFile)
+        $shortcut.TargetPath = $targetExe
+        $shortcut.Arguments = "portal"
+        $shortcut.Description = "Slug Post-Quantum Workspace Viewing Engine"
+        $shortcut.IconLocation = "$targetExe,0"
+        $shortcut.Save()
+        Write-Success "Created Desktop Shortcut: $shortcutFile"
+    }
+} catch {
+    Write-Warn "Could not create Desktop shortcut automatically: $($_.Exception.Message)"
+}
+

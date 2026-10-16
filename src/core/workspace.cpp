@@ -1,5 +1,6 @@
 #include "src/core/workspace.hpp"
 #include "src/platform/fs.hpp"
+#include "src/platform/process.hpp"
 #include "src/core/utils.hpp"
 #include "src/sync/manifest.hpp"
 #include "third_party/json/json.hpp"
@@ -31,13 +32,14 @@ fs::path WorkspaceManager::registry_file_path() {
     return fs::temp_directory_path() / ".slug_registry.json";
 }
 
-static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p) {
+static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p, bool auto_prune_dead = true) {
     if (!fs::exists(p)) return {};
 
     auto text = platform::PathUtils::read_text_file(p);
     if (!text) return {};
 
     std::vector<WorkspaceInfo> list;
+    bool has_dead = false;
     try {
         auto j = json::parse(*text);
         if (j.is_array()) {
@@ -49,10 +51,32 @@ static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p) {
                 wi.ai_enabled = item.value("ai_enabled", false);
                 wi.ttl_seconds = item.value("ttl_seconds", 86400ULL);
                 wi.pid = item.value("pid", 0U);
+
+                if (auto_prune_dead && wi.pid > 0 && !platform::ProcessUtils::is_process_alive(wi.pid)) {
+                    has_dead = true;
+                    continue; // Skip dead process
+                }
+
                 list.push_back(wi);
             }
         }
     } catch (...) {}
+
+    if (auto_prune_dead && has_dead) {
+        json j = json::array();
+        for (const auto& item : list) {
+            json obj;
+            obj["port"] = item.port;
+            obj["path"] = item.path.string();
+            obj["suite"] = suite_to_short_name(item.suite);
+            obj["ai_enabled"] = item.ai_enabled;
+            obj["ttl_seconds"] = item.ttl_seconds;
+            obj["pid"] = item.pid;
+            j.push_back(obj);
+        }
+        platform::PathUtils::write_text_file_atomic(p, j.dump(2));
+    }
+
     return list;
 }
 

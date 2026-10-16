@@ -283,10 +283,16 @@ std::optional<std::vector<uint8_t>> SlugClient::fetch_chunk(const std::string& r
     if (!send_json(req)) return std::nullopt;
 
     auto resp_opt = recv_json(10000);
-    if (!resp_opt) return std::nullopt;
+    if (!resp_opt) {
+        last_error_ = "Timeout waiting for server chunk response";
+        return std::nullopt;
+    }
 
     const auto& resp = *resp_opt;
-    if (resp.value("status", "") != "ok") return std::nullopt;
+    if (resp.value("status", "") != "ok") {
+        last_error_ = resp.value("message", "Server rejected chunk request");
+        return std::nullopt;
+    }
 
     std::string b64 = resp.value("data_b64", "");
     return core::Utils::from_base64(b64);
@@ -354,7 +360,8 @@ bool SlugClient::pull(const fs::path& local_target_dir,
         for (uint32_t chunk_idx : delta.needed_chunk_indices) {
             auto chunk_data = fetch_chunk(delta.relative_path, chunk_idx);
             if (!chunk_data) {
-                log("Error downloading chunk " + std::to_string(chunk_idx) + " of " + delta.relative_path);
+                std::string err_suffix = last_error_.empty() ? "" : " (" + last_error_ + ")";
+                log("Error downloading chunk " + std::to_string(chunk_idx) + " of " + delta.relative_path + err_suffix);
                 return false;
             }
 
@@ -438,7 +445,8 @@ bool SlugClient::get_file(const std::string& remote_path,
     for (const auto& chunk : target_entry->chunks) {
         auto chunk_data = fetch_chunk(target_entry->relative_path, chunk.index);
         if (!chunk_data) {
-            log("Error: Failed to download chunk " + std::to_string(chunk.index) + " for " + remote_path);
+            std::string err_suffix = last_error_.empty() ? "" : " (" + last_error_ + ")";
+            log("Error: Failed to download chunk " + std::to_string(chunk.index) + " for " + remote_path + err_suffix);
             return false;
         }
         uint64_t offset = chunk.offset;
@@ -512,6 +520,23 @@ bool SlugClient::push(const fs::path& local_file,
         log("Push rejected: " + resp.value("message", "Permission denied"));
         return false;
     }
+}
+
+std::vector<uint8_t> SlugClient::tunnel_http(const std::string& raw_http_request) {
+    if (!is_encrypted_) return {};
+    json req;
+    req["type"] = "http_tunnel";
+    req["raw_req_b64"] = core::Utils::to_base64(std::span<const uint8_t>(
+        reinterpret_cast<const uint8_t*>(raw_http_request.data()), raw_http_request.size()));
+
+    if (!send_json(req)) return {};
+    auto resp_opt = recv_json(15000);
+    if (!resp_opt) return {};
+
+    const auto& resp = *resp_opt;
+    if (resp.value("status", "") != "ok") return {};
+    std::string b64 = resp.value("raw_resp_b64", "");
+    return core::Utils::from_base64(b64);
 }
 
 } // namespace slug::net

@@ -125,4 +125,18 @@ int ProcessUtils::run_process_with_env(const std::vector<std::string>& command_a
 #endif
 }
 
+bool ProcessUtils::is_process_alive(uint32_t pid) {
+    if (pid == 0) return false;
+#if defined(SLUG_PLATFORM_WINDOWS)
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!h) return false;
+    DWORD exit_code = 0;
+    BOOL ok = GetExitCodeProcess(h, &exit_code);
+    CloseHandle(h);
+    return (ok && exit_code == STILL_ACTIVE);
+#else
+    return (kill(static_cast<pid_t>(pid), 0) == 0);
+#endif
+}
+
 } // namespace slug::platform

@@ -14,6 +14,7 @@ struct ScanFinding {
     int line_number{0};
     std::string reason;
     std::string matched_snippet;
+    std::string detector{"Smart Regex Guard"};
 };
 
 class AiScanner {

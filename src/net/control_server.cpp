@@ -211,13 +211,14 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 break;
             }
 
-            // Check if incoming connection is an HTTP request
+            // Check if incoming connection is an HTTP request (Loopback only!)
             bool is_http = (hdr[0] == 'G' && hdr[1] == 'E' && hdr[2] == 'T' && hdr[3] == ' ') ||
                            (hdr[0] == 'H' && hdr[1] == 'E' && hdr[2] == 'A' && hdr[3] == 'D') ||
                            (hdr[0] == 'P' && hdr[1] == 'O' && hdr[2] == 'S' && hdr[3] == 'T');
 
             if (is_http) {
-                if (web_server_) {
+                bool is_loopback = (client.peer_endpoint().ip == "127.0.0.1" || client.peer_endpoint().ip == "::1");
+                if (is_loopback && web_server_) {
                     web_server_->handle_http_request(client, std::span<const uint8_t, 4>(hdr, 4));
                 }
                 break;
@@ -410,10 +411,10 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 break;
             }
 
-            auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_);
+            std::string manifest_str = get_or_build_manifest_json();
             json resp;
             resp["status"] = "ok";
-            resp["manifest"] = json::parse(manifest.to_json());
+            resp["manifest"] = json::parse(manifest_str);
             if (!send_packet(resp)) break;
 
         } else if (type == "get_chunk") {
@@ -502,10 +503,30 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             }
 
             audit_logger_.log(sess->identity, "FILE_UPLOAD", dest_path, "Uploaded " + core::Utils::format_size(data.size()));
+            invalidate_manifest_cache();
             json resp;
             resp["status"] = "ok";
             resp["path"] = dest_path;
             resp["bytes"] = data.size();
+            if (!send_packet(resp)) break;
+
+        } else if (type == "http_tunnel") {
+            touch_session(cur_session_id);
+            std::string raw_b64 = req.value("raw_req_b64", "");
+            auto raw_bytes = core::Utils::from_base64(raw_b64);
+            std::string raw_req(raw_bytes.begin(), raw_bytes.end());
+
+            std::vector<uint8_t> resp_bytes;
+            if (web_server_) {
+                resp_bytes = web_server_->handle_tunneled_http(raw_req, cur_session_id);
+            } else {
+                std::string err = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
+                resp_bytes.assign(err.begin(), err.end());
+            }
+
+            json resp;
+            resp["status"] = "ok";
+            resp["raw_resp_b64"] = core::Utils::to_base64(resp_bytes);
             if (!send_packet(resp)) break;
 
         } else {
@@ -515,6 +536,25 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             send_packet(err);
         }
     }
+}
+
+std::string ControlServer::get_or_build_manifest_json() {
+    std::lock_guard<std::mutex> lock(manifest_mutex_);
+    uint64_t now = core::Utils::current_timestamp();
+    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 10)) {
+        return cached_manifest_json_;
+    }
+
+    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_);
+    cached_manifest_json_ = manifest.to_json();
+    manifest_cached_at_ = now;
+    manifest_dirty_ = false;
+    return cached_manifest_json_;
+}
+
+void ControlServer::invalidate_manifest_cache() {
+    std::lock_guard<std::mutex> lock(manifest_mutex_);
+    manifest_dirty_ = true;
 }
 
 } // namespace slug::net

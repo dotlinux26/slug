@@ -44,6 +44,7 @@ public:
     bool is_running() const { return running_; }
 
     void handle_http_request(platform::TcpSocket& client, std::span<const uint8_t, 4> initial_bytes);
+    std::vector<uint8_t> handle_tunneled_http(const std::string& raw_request, uint32_t session_id);
 
     std::optional<WebSession> validate_session(const std::string& token);
     std::string create_session(const std::string& identity, core::Role role, uint64_t ttl_sec = 86400, const std::string& ticket = "");
@@ -63,6 +64,7 @@ private:
     void run_accept_loop();
     void handle_http_client(platform::TcpSocket client);
     void dispatch_http(platform::TcpSocket& client, const HttpRequest& req);
+    void dispatch_http_core(const HttpRequest& req, std::function<void(const std::string&)> send_raw, const std::string& peer_ip, uint32_t tunneled_session_id);
 
     std::string render_login_page(const std::string& error_msg = "", const std::string& redirect_target = "/drop");
     std::string render_directory_listing(const std::string& rel_subpath, const WebSession& session);

@@ -96,6 +96,116 @@ static std::string get_query_param(const std::string& query, const std::string& 
     return url_decode(val);
 }
 
+static uint32_t calculate_crc32(std::span<const uint8_t> data) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (uint8_t b : data) {
+        crc ^= b;
+        for (int i = 0; i < 8; ++i) {
+            crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+        }
+    }
+    return ~crc;
+}
+
+static std::vector<uint8_t> build_zip_archive(const std::vector<std::pair<std::string, std::vector<uint8_t>>>& files) {
+    std::vector<uint8_t> zip;
+    struct ZipMeta {
+        std::string filename;
+        uint32_t crc{0};
+        uint32_t size{0};
+        uint32_t local_hdr_offset{0};
+    };
+    std::vector<ZipMeta> meta_list;
+
+    for (const auto& [fname, data] : files) {
+        ZipMeta m;
+        m.filename = fname;
+        // Normalize slashes to forward slashes for cross-platform ZIP compatibility
+        std::replace(m.filename.begin(), m.filename.end(), '\\', '/');
+        while (!m.filename.empty() && m.filename.front() == '/') m.filename.erase(0, 1);
+
+        m.crc = calculate_crc32(data);
+        m.size = static_cast<uint32_t>(data.size());
+        m.local_hdr_offset = static_cast<uint32_t>(zip.size());
+
+        uint8_t lh[30] = {0};
+        lh[0] = 0x50; lh[1] = 0x4b; lh[2] = 0x03; lh[3] = 0x04; // PK\x03\x04
+        lh[4] = 20; lh[5] = 0; // version 2.0
+        lh[14] = static_cast<uint8_t>(m.crc & 0xFF);
+        lh[15] = static_cast<uint8_t>((m.crc >> 8) & 0xFF);
+        lh[16] = static_cast<uint8_t>((m.crc >> 16) & 0xFF);
+        lh[17] = static_cast<uint8_t>((m.crc >> 24) & 0xFF);
+
+        lh[18] = static_cast<uint8_t>(m.size & 0xFF);
+        lh[19] = static_cast<uint8_t>((m.size >> 8) & 0xFF);
+        lh[20] = static_cast<uint8_t>((m.size >> 16) & 0xFF);
+        lh[21] = static_cast<uint8_t>((m.size >> 24) & 0xFF);
+
+        lh[22] = lh[18]; lh[23] = lh[19]; lh[24] = lh[20]; lh[25] = lh[21]; // uncompressed = compressed (store mode)
+
+        uint16_t fn_len = static_cast<uint16_t>(m.filename.size());
+        lh[26] = static_cast<uint8_t>(fn_len & 0xFF);
+        lh[27] = static_cast<uint8_t>((fn_len >> 8) & 0xFF);
+
+        zip.insert(zip.end(), lh, lh + 30);
+        zip.insert(zip.end(), m.filename.begin(), m.filename.end());
+        zip.insert(zip.end(), data.begin(), data.end());
+
+        meta_list.push_back(m);
+    }
+
+    uint32_t cd_offset = static_cast<uint32_t>(zip.size());
+    for (const auto& m : meta_list) {
+        uint8_t cdh[46] = {0};
+        cdh[0] = 0x50; cdh[1] = 0x4b; cdh[2] = 0x01; cdh[3] = 0x02; // PK\x01\x02
+        cdh[4] = 20; cdh[5] = 0;
+        cdh[6] = 20; cdh[7] = 0;
+        cdh[16] = static_cast<uint8_t>(m.crc & 0xFF);
+        cdh[17] = static_cast<uint8_t>((m.crc >> 8) & 0xFF);
+        cdh[18] = static_cast<uint8_t>((m.crc >> 16) & 0xFF);
+        cdh[19] = static_cast<uint8_t>((m.crc >> 24) & 0xFF);
+
+        cdh[20] = static_cast<uint8_t>(m.size & 0xFF);
+        cdh[21] = static_cast<uint8_t>((m.size >> 8) & 0xFF);
+        cdh[22] = static_cast<uint8_t>((m.size >> 16) & 0xFF);
+        cdh[23] = static_cast<uint8_t>((m.size >> 24) & 0xFF);
+
+        cdh[24] = cdh[20]; cdh[25] = cdh[21]; cdh[26] = cdh[22]; cdh[27] = cdh[23];
+
+        uint16_t fn_len = static_cast<uint16_t>(m.filename.size());
+        cdh[28] = static_cast<uint8_t>(fn_len & 0xFF);
+        cdh[29] = static_cast<uint8_t>((fn_len >> 8) & 0xFF);
+
+        cdh[42] = static_cast<uint8_t>(m.local_hdr_offset & 0xFF);
+        cdh[43] = static_cast<uint8_t>((m.local_hdr_offset >> 8) & 0xFF);
+        cdh[44] = static_cast<uint8_t>((m.local_hdr_offset >> 16) & 0xFF);
+        cdh[45] = static_cast<uint8_t>((m.local_hdr_offset >> 24) & 0xFF);
+
+        zip.insert(zip.end(), cdh, cdh + 46);
+        zip.insert(zip.end(), m.filename.begin(), m.filename.end());
+    }
+
+    uint32_t cd_size = static_cast<uint32_t>(zip.size() - cd_offset);
+    uint16_t total_entries = static_cast<uint16_t>(meta_list.size());
+
+    uint8_t eocd[22] = {0};
+    eocd[0] = 0x50; eocd[1] = 0x4b; eocd[2] = 0x05; eocd[3] = 0x06; // PK\x05\x06
+    eocd[8] = static_cast<uint8_t>(total_entries & 0xFF);
+    eocd[9] = static_cast<uint8_t>((total_entries >> 8) & 0xFF);
+    eocd[10] = eocd[8]; eocd[11] = eocd[9];
+    eocd[12] = static_cast<uint8_t>(cd_size & 0xFF);
+    eocd[13] = static_cast<uint8_t>((cd_size >> 8) & 0xFF);
+    eocd[14] = static_cast<uint8_t>((cd_size >> 16) & 0xFF);
+    eocd[15] = static_cast<uint8_t>((cd_size >> 24) & 0xFF);
+    eocd[16] = static_cast<uint8_t>(cd_offset & 0xFF);
+    eocd[17] = static_cast<uint8_t>((cd_offset >> 8) & 0xFF);
+    eocd[18] = static_cast<uint8_t>((cd_offset >> 16) & 0xFF);
+    eocd[19] = static_cast<uint8_t>((cd_offset >> 24) & 0xFF);
+
+    zip.insert(zip.end(), eocd, eocd + 22);
+    return zip;
+}
+
 std::optional<WebSession> WebServer::validate_session(const std::string& token) {
     if (token.empty()) return std::nullopt;
     std::lock_guard<std::mutex> lock(session_mutex_);
@@ -189,6 +299,13 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
 }
 
 void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& req) {
+    auto send_raw = [&](const std::string& res) {
+        client.send_all(res);
+    };
+    dispatch_http_core(req, send_raw, client.peer_endpoint().ip, 0);
+}
+
+void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(const std::string&)> send_raw, const std::string& peer_ip, uint32_t tunneled_session_id) {
     std::string method = req.method;
     std::string path = req.path;
 
@@ -198,6 +315,19 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
     std::string new_session_token = "";
 
     std::optional<WebSession> current_session = validate_session(session_cookie);
+
+    if (!current_session && tunneled_session_id > 0) {
+        auto cs = control_server_.get_session(tunneled_session_id);
+        if (cs && !cs->is_revoked) {
+            WebSession ws;
+            ws.token = "tunneled_" + std::to_string(tunneled_session_id);
+            ws.identity = cs->identity;
+            ws.role = cs->role;
+            ws.expires_at = cs->expires_at;
+            ws.ticket = cs->web_ticket;
+            current_session = ws;
+        }
+    }
 
     if (!current_session && !ticket.empty()) {
         auto sess_opt = control_server_.find_session_by_ticket(ticket);
@@ -219,7 +349,7 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
             res += extra_headers;
         }
         res += "\r\n" + body;
-        client.send_all(res);
+        send_raw(res);
     };
 
     // Logout endpoint
@@ -233,7 +363,7 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
     }
 
     // Local loopback status query for host CLI (slug status, slug totp, slug web)
-    bool is_localhost = (client.peer_endpoint().ip == "127.0.0.1" || client.peer_endpoint().ip == "::1");
+    bool is_localhost = (peer_ip == "127.0.0.1" || peer_ip == "::1" || tunneled_session_id > 0);
     if (path == "/api/status" && is_localhost) {
         json j;
         j["port"] = control_server_.port();
@@ -618,6 +748,7 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
             ai::StatefulAuditIndex audit_idx(idx_file);
             if (audit_idx.allow_file(p, reason, current_session->identity)) {
                 control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW", p, "Whitelisted false positive: " + reason);
+                control_server_.invalidate_manifest_cache();
                 send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"File whitelisted successfully\"}");
             } else {
                 send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Failed to update audit index\"}");
@@ -625,6 +756,26 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
         } catch (...) {
             send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
         }
+        return;
+    }
+
+    if (path == "/api/admin/audit/allow-all" && method == "POST") {
+        if (current_session->identity != "host_admin") {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+        auto flagged = audit_idx.list_flagged_or_all(true);
+        int count = 0;
+        for (const auto& item : flagged) {
+            if (audit_idx.allow_file(item.file_path, "Admin batch whitelist", current_session->identity)) {
+                count++;
+            }
+        }
+        control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW_ALL", "all", "Whitelisted " + std::to_string(count) + " files");
+        control_server_.invalidate_manifest_cache();
+        send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"count\":" + std::to_string(count) + "}");
         return;
     }
 
@@ -651,6 +802,51 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
         std::string extra = "Content-Disposition: attachment; filename=\"" + fname + "\"\r\n";
         std::string body(reinterpret_cast<const char*>(data.data()), data.size());
         send_resp(200, "OK", "application/octet-stream", body, extra);
+        return;
+    }
+
+    if (path == "/download-folder") {
+        std::string rel_dir = get_query_param(req.query, "dir");
+        if (current_session->role == core::Role::WRITE_ONLY) {
+            send_resp(403, "Forbidden", "text/plain", "Permission Denied: Write-only role cannot download files.");
+            return;
+        }
+
+        std::string manifest_str = control_server_.get_or_build_manifest_json();
+        auto m_opt = sync::WorkspaceManifest::from_json(manifest_str);
+        if (!m_opt) {
+            send_resp(500, "Internal Server Error", "text/plain", "Failed to retrieve manifest for folder download.");
+            return;
+        }
+
+        std::string norm_dir = rel_dir;
+        std::replace(norm_dir.begin(), norm_dir.end(), '\\', '/');
+        while (!norm_dir.empty() && norm_dir.front() == '/') norm_dir.erase(0, 1);
+        while (!norm_dir.empty() && norm_dir.back() == '/') norm_dir.pop_back();
+
+        std::string prefix = norm_dir.empty() ? "" : (norm_dir + "/");
+        std::vector<std::pair<std::string, std::vector<uint8_t>>> files_to_zip;
+
+        for (const auto& f : m_opt->files) {
+            if (prefix.empty() || f.relative_path.rfind(prefix, 0) == 0 || f.relative_path == norm_dir) {
+                auto [vfs_st, file_data] = control_server_.vfs().read_file(f.relative_path, current_session->role);
+                if (vfs_st == core::VfsStatus::OK) {
+                    std::string in_zip_path = f.relative_path;
+                    if (!prefix.empty() && in_zip_path.rfind(prefix, 0) == 0) {
+                        in_zip_path = in_zip_path.substr(prefix.size());
+                    }
+                    files_to_zip.push_back({in_zip_path, std::move(file_data)});
+                }
+            }
+        }
+
+        auto zip_bytes = build_zip_archive(files_to_zip);
+        std::string zip_name = norm_dir.empty() ? control_server_.workspace_root().filename().string() : fs::path(norm_dir).filename().string();
+        if (zip_name.empty()) zip_name = "workspace";
+
+        std::string extra = "Content-Disposition: attachment; filename=\"" + zip_name + ".zip\"\r\n";
+        std::string body(reinterpret_cast<const char*>(zip_bytes.data()), zip_bytes.size());
+        send_resp(200, "OK", "application/zip", body, extra);
         return;
     }
 
@@ -686,6 +882,7 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
         }
 
         control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD", target_rel, "File uploaded successfully (" + std::to_string(bytes.size()) + " bytes)");
+        control_server_.invalidate_manifest_cache();
         send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"filename\":\"" + file_name + "\"}");
         return;
     }
@@ -781,6 +978,73 @@ void WebServer::handle_http_request(platform::TcpSocket& client, std::span<const
     if (parse_http_raw(client, req, initial_bytes.data())) {
         dispatch_http(client, req);
     }
+}
+
+static bool parse_http_from_string(const std::string& raw, HttpRequest& req) {
+    size_t header_end = raw.find("\r\n\r\n");
+    if (header_end == std::string::npos) return false;
+
+    std::string header_str = raw.substr(0, header_end);
+    std::istringstream h_stream(header_str);
+    std::string line;
+    if (!std::getline(h_stream, line)) return false;
+
+    std::istringstream req_line(line);
+    req_line >> req.method >> req.uri;
+    size_t qmark = req.uri.find('?');
+    if (qmark != std::string::npos) {
+        req.path = req.uri.substr(0, qmark);
+        req.query = req.uri.substr(qmark + 1);
+    } else {
+        req.path = req.uri;
+        req.query = "";
+    }
+
+    size_t content_length = 0;
+    while (std::getline(h_stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t colon = line.find(':');
+        if (colon != std::string::npos) {
+            std::string key = line.substr(0, colon);
+            std::string val = line.substr(colon + 1);
+            while (!val.empty() && val.front() == ' ') val.erase(0, 1);
+            std::string lower_k = key;
+            std::transform(lower_k.begin(), lower_k.end(), lower_k.begin(), ::tolower);
+            req.headers[lower_k] = val;
+            if (lower_k == "content-length") {
+                try { content_length = std::stoull(val); } catch (...) {}
+            } else if (lower_k == "cookie") {
+                size_t pos = val.find("slug_session=");
+                if (pos != std::string::npos) {
+                    size_t vstart = pos + 13;
+                    size_t vend = val.find(';', vstart);
+                    req.session_token = (vend == std::string::npos) ? val.substr(vstart) : val.substr(vstart, vend - vstart);
+                    while (!req.session_token.empty() && req.session_token.front() == ' ') req.session_token.erase(0, 1);
+                }
+            }
+        }
+    }
+
+    if (raw.size() > header_end + 4) {
+        req.body = raw.substr(header_end + 4);
+    }
+    return true;
+}
+
+std::vector<uint8_t> WebServer::handle_tunneled_http(const std::string& raw_request, uint32_t session_id) {
+    HttpRequest req;
+    if (!parse_http_from_string(raw_request, req)) {
+        std::string err = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        return std::vector<uint8_t>(err.begin(), err.end());
+    }
+
+    std::vector<uint8_t> response_buffer;
+    auto send_raw = [&](const std::string& res) {
+        response_buffer.insert(response_buffer.end(), res.begin(), res.end());
+    };
+
+    dispatch_http_core(req, send_raw, "127.0.0.1", session_id);
+    return response_buffer;
 }
 
 } // namespace slug::net

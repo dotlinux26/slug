@@ -34,9 +34,9 @@ inline std::string suite_to_short_name(SuiteID s) {
 }
 
 inline SuiteID suite_from_string(std::string_view name) {
-    if (name == "1" || name == "classical") return SuiteID::SUITE_1_CLASSICAL;
-    if (name == "2" || name == "modern") return SuiteID::SUITE_2_MODERN;
-    if (name == "3" || name == "pqc" || name == "pure-pqc") return SuiteID::SUITE_3_PURE_PQC;
+    if (name == "1" || name == "classical" || name == "sec1" || name == "sec 1") return SuiteID::SUITE_1_CLASSICAL;
+    if (name == "2" || name == "modern" || name == "sec2" || name == "sec 2") return SuiteID::SUITE_2_MODERN;
+    if (name == "3" || name == "pqc" || name == "pure-pqc" || name == "sec3" || name == "sec 3") return SuiteID::SUITE_3_PURE_PQC;
     return SuiteID::SUITE_3_PURE_PQC; // Default is PurePQC
 }
 
@@ -62,22 +62,24 @@ inline Role role_from_string(std::string_view r) {
 }
 
 enum class AuditStatus : uint8_t {
-    UNKNOWN       = 0,
-    CLEAN         = 1,
-    AI_FLAGGED    = 2,
-    STALE         = 3,
-    USER_ALLOWED  = 4,
-    RULE_BLOCKED  = 5
+    UNKNOWN              = 0,
+    CLEAN                = 1,
+    AI_FLAGGED           = 2,
+    STALE                = 3,
+    USER_ALLOWED         = 4,
+    RULE_BLOCKED         = 5,
+    SMART_FILTER_FLAGGED = 6
 };
 
 inline std::string audit_status_to_string(AuditStatus s) {
     switch (s) {
-        case AuditStatus::UNKNOWN:      return "UNKNOWN";
-        case AuditStatus::CLEAN:        return "CLEAN";
-        case AuditStatus::AI_FLAGGED:   return "AI_FLAGGED";
-        case AuditStatus::STALE:        return "STALE";
-        case AuditStatus::USER_ALLOWED: return "USER_ALLOWED";
-        case AuditStatus::RULE_BLOCKED: return "RULE_BLOCKED";
+        case AuditStatus::UNKNOWN:              return "UNKNOWN";
+        case AuditStatus::CLEAN:                return "CLEAN";
+        case AuditStatus::AI_FLAGGED:           return "AI_FLAGGED";
+        case AuditStatus::SMART_FILTER_FLAGGED: return "SMART_FILTER_FLAGGED";
+        case AuditStatus::STALE:                return "STALE";
+        case AuditStatus::USER_ALLOWED:         return "USER_ALLOWED";
+        case AuditStatus::RULE_BLOCKED:         return "RULE_BLOCKED";
     }
     return "UNKNOWN";
 }
@@ -85,6 +87,7 @@ inline std::string audit_status_to_string(AuditStatus s) {
 inline AuditStatus audit_status_from_string(std::string_view s) {
     if (s == "CLEAN") return AuditStatus::CLEAN;
     if (s == "AI_FLAGGED") return AuditStatus::AI_FLAGGED;
+    if (s == "SMART_FILTER_FLAGGED") return AuditStatus::SMART_FILTER_FLAGGED;
     if (s == "STALE") return AuditStatus::STALE;
     if (s == "USER_ALLOWED") return AuditStatus::USER_ALLOWED;
     if (s == "RULE_BLOCKED") return AuditStatus::RULE_BLOCKED;

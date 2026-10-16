@@ -92,18 +92,18 @@ VfsResolveResult SlugVFS::resolve_and_jail(std::string_view virtual_path, Role r
         return res;
     }
 
-    // 4. Resolve path against ServerRootPath
-    fs::path target = (rel.empty()) ? server_root_ : (server_root_ / rel);
-    std::error_code ec;
-    fs::path canonical_target = fs::weakly_canonical(target, ec);
-
-    // Verify canonical path starts with server_root_
-    std::string root_str = server_root_.string();
-    std::string target_str = canonical_target.string();
-    if (target_str != root_str && target_str.rfind(root_str + "/", 0) != 0) {
-        res.status = VfsStatus::PATH_TRAVERSAL;
-        res.error_message = "Resolved path escaped workspace root jail.";
-        return res;
+    // 4. Resolve path against ServerRootPath safely
+    fs::path canonical_target;
+    if (rel.empty()) {
+        canonical_target = server_root_;
+    } else {
+        auto safe_p = platform::PathUtils::resolve_safe_path(server_root_, rel);
+        if (!safe_p) {
+            res.status = VfsStatus::PATH_TRAVERSAL;
+            res.error_message = "Resolved path escaped workspace root jail.";
+            return res;
+        }
+        canonical_target = *safe_p;
     }
 
     // 5. Policy filter & AI check

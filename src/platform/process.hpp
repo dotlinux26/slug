@@ -13,6 +13,9 @@ public:
     // Blocks until completion and returns the process exit code.
     static int run_process_with_env(const std::vector<std::string>& command_and_args,
                                     const std::map<std::string, std::string>& injected_env);
+
+    // Checks if a process with the given PID is currently alive and active
+    static bool is_process_alive(uint32_t pid);
 };
 
 } // namespace slug::platform

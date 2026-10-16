@@ -65,6 +65,7 @@ static double calculate_entropy(std::string_view s) {
 
 ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_view content, bool deep) const {
     ScanFinding finding;
+    finding.detector = "Smart Regex Guard";
 
     std::string fname = std::filesystem::path(file_path).filename().string();
     for (auto& c : fname) c = static_cast<char>(std::tolower(c));
@@ -195,6 +196,7 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
                 if (res_obj.value("has_secret", false)) {
                     ScanFinding finding;
                     finding.has_secret = true;
+                    finding.detector = "AI Guard";
                     finding.line_number = res_obj.value("line", 1);
                     finding.reason = "Ollama Local Audit: " + res_obj.value("reason", "Secret detected by local model");
                     return finding;
@@ -297,6 +299,7 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
                     if (res_obj.value("has_secret", false)) {
                         ScanFinding finding;
                         finding.has_secret = true;
+                        finding.detector = "AI Guard";
                         finding.line_number = res_obj.value("line", 1);
                         finding.reason = "AI Cloud Audit: " + res_obj.value("reason", "Credential detected by LLM");
                         return finding;

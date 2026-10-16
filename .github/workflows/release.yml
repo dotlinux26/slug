@@ -146,3 +146,64 @@ jobs:
           }
 
           Write-Host "[+] All Windows release assets uploaded successfully to $TargetTag!"
+
+  build-linux:
+    name: Build Linux x64 Native Static Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Build Dependencies & OpenSSL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev pkg-config
+
+      - name: Compile Slug Static Binary
+        run: |
+          make static -j$(nproc)
+
+      - name: Verify Compiled Linux Binary
+        run: |
+          ./bin/slug-static version
+
+      - name: Package Linux Tarball and Debian Package
+        run: |
+          chmod +x scripts/package_linux.sh scripts/package_deb.sh scripts/install.sh
+          ./scripts/package_linux.sh
+          ./scripts/package_deb.sh
+
+      - name: Upload Linux Assets to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TargetTag="${{ github.event.inputs.tag }}"
+          if [ -z "$TargetTag" ]; then
+            if [[ "${{ github.ref_name }}" == v* ]]; then
+              TargetTag="${{ github.ref_name }}"
+            else
+              TargetTag="v1.0.0"
+            fi
+          fi
+          echo "[*] Target GitHub release tag: $TargetTag"
+
+          upload_assets=()
+          for f in dist/slug-1.0.0-linux-x86_64.tar.gz dist/slug_1.0.0_amd64.deb dist/slug-linux-x86_64 dist/install.sh dist/SHA256SUMS.linux; do
+            if [ -f "$f" ]; then
+              upload_assets+=("$f")
+            fi
+          done
+
+          if gh release view "$TargetTag" >/dev/null 2>&1; then
+            echo "[*] Uploading Linux assets to existing release $TargetTag..."
+            gh release upload "$TargetTag" "${upload_assets[@]}" --clobber
+          else
+            echo "[*] Creating release $TargetTag and uploading Linux assets..."
+            gh release create "$TargetTag" "${upload_assets[@]}" --title "Slug $TargetTag" --generate-notes
+          fi
+
+          echo "[+] All Linux release assets uploaded successfully to $TargetTag!"
+

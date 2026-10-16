@@ -11,6 +11,8 @@
 #include "src/bench/benchmark.hpp"
 #include "src/platform/platform.hpp"
 #include "src/platform/fs.hpp"
+#include "src/platform/socket.hpp"
+#include "src/net/web_assets.hpp"
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -93,6 +95,65 @@ static std::string get_host_lan_ip() {
 static bool is_terminal_interactive() {
     return isatty(STDIN_FILENO) != 0;
 }
+#elif defined(SLUG_PLATFORM_WINDOWS)
+static std::string read_hidden_password(const std::string& prompt) {
+    std::cout << prompt << std::flush;
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    if (GetConsoleMode(hStdin, &mode)) {
+        SetConsoleMode(hStdin, mode & (~ENABLE_ECHO_INPUT));
+        std::string pass;
+        std::getline(std::cin, pass);
+        SetConsoleMode(hStdin, mode);
+        std::cout << std::endl;
+        return pass;
+    }
+    std::string pass;
+    std::getline(std::cin, pass);
+    return pass;
+}
+
+static std::string read_confirmed_hidden_password(const std::string& prompt) {
+    while (true) {
+        std::string p1 = read_hidden_password(prompt);
+        if (p1.empty()) {
+            std::cerr << "[-] Password cannot be empty. Please try again." << std::endl;
+            continue;
+        }
+        std::string p2 = read_hidden_password("Retype password: ");
+        if (p1 == p2) {
+            return p1;
+        }
+        std::cerr << "[-] Passwords do not match. Please try again." << std::endl;
+    }
+}
+
+static std::string get_host_lan_ip() {
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) return "127.0.0.1";
+    sockaddr_in target{};
+    target.sin_family = AF_INET;
+    target.sin_addr.s_addr = inet_addr("8.8.8.8");
+    target.sin_port = htons(53);
+    if (connect(sock, reinterpret_cast<sockaddr*>(&target), sizeof(target)) == SOCKET_ERROR) {
+        closesocket(sock);
+        return "127.0.0.1";
+    }
+    sockaddr_in name{};
+    int namelen = sizeof(name);
+    if (getsockname(sock, reinterpret_cast<sockaddr*>(&name), &namelen) == SOCKET_ERROR) {
+        closesocket(sock);
+        return "127.0.0.1";
+    }
+    char buf[INET_ADDRSTRLEN];
+    const char* p = inet_ntop(AF_INET, &name.sin_addr, buf, sizeof(buf));
+    closesocket(sock);
+    return p ? std::string(p) : "127.0.0.1";
+}
+
+static bool is_terminal_interactive() {
+    return _isatty(_fileno(stdin)) != 0;
+}
 #else
 static std::string read_hidden_password(const std::string& prompt) {
     std::cout << prompt << std::flush;
@@ -115,11 +176,7 @@ static std::string read_confirmed_hidden_password(const std::string& prompt) {
 }
 static std::string get_host_lan_ip() { return "127.0.0.1"; }
 static bool is_terminal_interactive() {
-#if defined(_WIN32)
-    return _isatty(_fileno(stdin)) != 0;
-#else
     return true;
-#endif
 }
 #endif
 
@@ -164,6 +221,128 @@ struct TerminalCursorRestorer {
 
 using namespace slug;
 
+class SlugConfig {
+public:
+    static std::filesystem::path config_path() {
+        return platform::get_user_home() / ".slug" / "config.json";
+    }
+
+    static nlohmann::json load() {
+        auto p = config_path();
+        if (!std::filesystem::exists(p)) return nlohmann::json::object();
+        auto data = platform::PathUtils::read_binary_file(p.string());
+        if (!data || data->empty()) return nlohmann::json::object();
+        try {
+            return nlohmann::json::parse(std::string(data->begin(), data->end()));
+        } catch (...) {
+            return nlohmann::json::object();
+        }
+    }
+
+    static bool save(const nlohmann::json& j) {
+        auto p = config_path();
+        std::error_code ec;
+        std::filesystem::create_directories(p.parent_path(), ec);
+        std::string s = j.dump(2);
+        std::vector<uint8_t> bytes(s.begin(), s.end());
+        return platform::PathUtils::write_binary_file(p.string(), bytes);
+    }
+
+    static std::string get(const std::string& key, const std::string& default_val = "") {
+        auto j = load();
+        if (j.contains(key)) {
+            if (j[key].is_string()) return j[key].get<std::string>();
+            return j[key].dump();
+        }
+        return default_val;
+    }
+
+    static void set(const std::string& key, const std::string& val) {
+        auto j = load();
+        if (val == "true") j[key] = true;
+        else if (val == "false") j[key] = false;
+        else if (!val.empty() && std::all_of(val.begin(), val.end(), ::isdigit)) {
+            j[key] = std::stoull(val);
+        } else {
+            j[key] = val;
+        }
+        save(j);
+    }
+};
+
+int cmd_config(int argc, char* argv[]) {
+    if (argc < 3 || std::string(argv[2]) == "list") {
+        auto j = SlugConfig::load();
+        std::cout << "SLUG CONFIGURATION (~/.slug/config.json):\n" << std::endl;
+        std::cout << std::left << std::setw(24) << "[KEY]" << std::setw(40) << "[VALUE]" << std::endl;
+        std::cout << std::string(64, '-') << std::endl;
+        if (j.empty()) {
+            std::cout << "  (No custom settings. Using defaults: default_suite=SUITE_3_PURE_PQC, portal_port=8080)" << std::endl;
+        } else {
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                std::cout << std::left << std::setw(24) << it.key() << std::setw(40) << it.value().dump() << std::endl;
+            }
+        }
+        std::cout << "\nSet setting: slug config set <key> <val>" << std::endl;
+        std::cout << "Get setting: slug config get <key>" << std::endl;
+        return 0;
+    }
+
+    std::string sub = argv[2];
+    if (sub == "get" && argc >= 4) {
+        std::string key = argv[3];
+        std::string val = SlugConfig::get(key);
+        if (val.empty()) {
+            std::cout << "(not set)" << std::endl;
+        } else {
+            std::cout << val << std::endl;
+        }
+        return 0;
+    } else if (sub == "set" && argc >= 5) {
+        std::string key = argv[3];
+        std::string val = argv[4];
+        SlugConfig::set(key, val);
+        std::cout << "[+] Set " << key << " = " << val << " in ~/.slug/config.json" << std::endl;
+        return 0;
+    }
+
+    std::cerr << "Usage: slug config [list|get <key>|set <key> <val>]" << std::endl;
+    return 1;
+}
+
+int cmd_shortcut(int, char*[]) {
+#if defined(_WIN32)
+    std::string exe = get_current_executable_path();
+    if (exe.empty()) {
+        std::cerr << "[-] Failed to determine slug executable path." << std::endl;
+        return 1;
+    }
+    std::string ps = "powershell -NoProfile -NonInteractive -Command \""
+                     "$ws = New-Object -ComObject WScript.Shell; "
+                     "$desktop = [Environment]::GetFolderPath('Desktop'); "
+                     "$sc = $ws.CreateShortcut(\\\"$desktop\\Slug Workspace.lnk\\\"); "
+                     "$sc.TargetPath = \\\"" + exe + "\\\"; "
+                     "$sc.Arguments = \\\"portal\\\"; "
+                     "$sc.Description = \\\"Slug Post-Quantum Workspace Viewing Engine\\\"; "
+                     "$sc.IconLocation = \\\"" + exe + ",0\\\"; "
+                     "$sc.Save()\"";
+    int r = std::system(ps.c_str());
+    if (r == 0) {
+        std::cout << "[+] Created Desktop shortcut: Slug Workspace.lnk" << std::endl;
+        std::cout << "    Target:    " << exe << " portal" << std::endl;
+        std::cout << "    Double-click it anytime to open the Web Viewing Engine!" << std::endl;
+        return 0;
+    } else {
+        std::cerr << "[-] Failed to create Desktop shortcut." << std::endl;
+        return 1;
+    }
+#else
+    std::cout << "[*] Desktop shortcut creation is supported on Windows." << std::endl;
+    std::cout << "    On Linux/macOS, simply run 'slug' in terminal." << std::endl;
+    return 0;
+#endif
+}
+
 void print_banner() {
     std::cout << R"(
    _____ _             
@@ -183,6 +362,13 @@ void print_help() {
     print_banner();
     std::cout << R"(
 THE ESSENTIAL 9 - CORE COMMAND SUITE:
+
+  [CLIENT WORKSPACE & WEB VIEWING ENGINE]
+    portal [-p <port>]       Launch local loopback Web Viewing Engine (Default: http://127.0.0.1:8080)
+                             (Zero Remote HTTP - all remote traffic is tunneled via pure Post-Quantum frames)
+                             Aliases: slug (no arguments), slug web, slug ui
+    shortcut                 Create Windows Desktop shortcut ("Slug Workspace.lnk") for 1-click launch
+    config [list|get|set]    Manage preferences (~/.slug/config.json): default_suite, portal_port, etc.
 
   [HOST WORKSPACE]
     add <path>               Share folder with Post-Quantum protection (PurePQC default)
@@ -219,7 +405,8 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
     audit <list|scan|allow>  Stateful AI Secret Guard management
                              Subcommands: list              (View flagged files)
                                           scan <file>       (Deep semantic scan)
-                                          allow <file>      (Whitelist false positive)
+                                          allow <file|--all>(Whitelist false positive or unblock all)
+                                          clear             (Reset quarantine index)
                                           recheck [--all]   (Rescan modified files)
 
   [CLIENT WORKSPACE SYNC]
@@ -244,7 +431,6 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
     conn <list|use|prune|rm> Manage saved client connections (alias: connections)
     connect -i <ip> -p <port> Authenticate to remote workspace and save connection certificate
     serve [-p <port>] [-w]   Server inspection box; pass -w to open Web Admin Dashboard
-    web [conn_id] [-p port]  Open authenticated Web Dropbox in browser
     completion <bash|zsh>    Generate shell autocompletion script
     env <init|run>           RAM-only PQC secret injection (EnvShield)
     bench [--quick] [--json] Run cryptography & I/O performance benchmarks
@@ -269,10 +455,12 @@ int cmd_add(int argc, char* argv[]) {
     }
     std::string folder_path = resolved_path.string();
     uint16_t port = core::kDefaultPort;
-    core::SuiteID suite = core::SuiteID::SUITE_3_PURE_PQC;
+    std::string default_suite_name = SlugConfig::get("default_suite", "SUITE_3_PURE_PQC");
+    core::SuiteID suite = core::suite_from_string(default_suite_name);
     uint64_t ttl_sec = 86400;
     bool enable_ai = false;
     bool daemon = false;
+    bool is_internal_worker = false;
 
     for (int i = 3; i < argc; ++i) {
         std::string arg = argv[i];
@@ -286,6 +474,8 @@ int cmd_add(int argc, char* argv[]) {
             enable_ai = true;
         } else if (arg == "--daemon" || arg == "-d") {
             daemon = true;
+        } else if (arg == "--internal-worker") {
+            is_internal_worker = true;
         }
     }
 
@@ -320,6 +510,35 @@ int cmd_add(int argc, char* argv[]) {
         std::signal(SIGINT, signal_handler);
         std::signal(SIGTERM, signal_handler);
     }
+#elif defined(SLUG_PLATFORM_WINDOWS)
+    if (daemon && !is_internal_worker) {
+        std::string exe = get_current_executable_path();
+        std::string cmdline = "\"" + exe + "\" add \"" + folder_path + "\" -p " + std::to_string(port) +
+                              " -s " + core::suite_to_string(suite) +
+                              " -t " + std::to_string(ttl_sec) +
+                              (enable_ai ? " -a" : "") + " --internal-worker";
+        STARTUPINFOA si{};
+        PROCESS_INFORMATION pi{};
+        si.cb = sizeof(si);
+        std::vector<char> cmd_buf(cmdline.begin(), cmdline.end());
+        cmd_buf.push_back('\0');
+        BOOL ok = CreateProcessA(NULL, cmd_buf.data(), NULL, NULL, FALSE,
+                                 CREATE_NO_WINDOW | DETACHED_PROCESS, NULL, NULL, &si, &pi);
+        if (ok) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            std::cout << "[+] Server running in background (PID: " << pi.dwProcessId << ")." << std::endl;
+            std::cout << "    Workspace: " << folder_path << std::endl;
+            std::cout << "    Port:      " << port << std::endl;
+            std::cout << "    Crypto:    " << core::suite_to_string(suite) << std::endl;
+            return 0;
+        } else {
+            std::cerr << "[-] Failed to spawn background worker process (error " << GetLastError() << ")." << std::endl;
+            return 1;
+        }
+    }
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
 #else
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
@@ -393,9 +612,11 @@ int cmd_add(int argc, char* argv[]) {
         return 0;
     }
 #else
-    if (daemon) {
-        print_dynamic_panel(rem, totp_rw, totp_r, totp_w, false);
-        std::cout << "[+] Server running in background." << std::endl;
+    if (is_internal_worker) {
+        while (server->is_running() && !g_stop_signal_received) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
+        server->stop();
         return 0;
     }
 #endif
@@ -696,7 +917,13 @@ int cmd_status(int argc, char* argv[]) {
             std::cout << "  Role OTPs: [rw] " << live_rw << " | [r] " << live_r << " | [w] " << live_w << " (Rotates in " << rem << "s)" << std::endl;
         }
         if (!short_mode) {
-            std::cout << "  Connect:   slug connect -i 127.0.0.1 -p " << w.port << " -o " << live_rw << std::endl;
+            std::string lan_ip = get_host_lan_ip();
+            if (!live_rw.empty()) {
+                std::cout << "  Connect:   slug connect -i " << lan_ip << " -p " << w.port << " -o " << live_rw << std::endl;
+                std::cout << "  One-Shot:  slug get " << lan_ip << ":" << w.port << "?otp=" << live_rw << std::endl;
+            } else {
+                std::cout << "  Endpoint:  " << lan_ip << ":" << w.port << " (Server offline or query unreachable)" << std::endl;
+            }
         }
         std::cout << std::endl;
 
@@ -1979,56 +2206,324 @@ int cmd_push(int argc, char* argv[]) {
     return ok ? 0 : 1;
 }
 
-int cmd_web(int argc, char* argv[]) {
-    std::string explicit_id = "";
-    uint16_t port = 0;
+struct PortalSession {
+    std::mutex mtx;
+    std::unique_ptr<net::SlugClient> client;
+    std::string active_id;
+    std::string active_host;
+    uint16_t active_port{0};
+    core::SuiteID active_suite{core::SuiteID::SUITE_3_PURE_PQC};
+};
+static PortalSession g_portal;
 
-    for (int i = 2; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "-p" || arg == "--port") {
-            if (i + 1 < argc) port = static_cast<uint16_t>(std::stoi(argv[++i]));
-        } else if (arg.front() != '-') {
-            explicit_id = arg;
+static bool read_http_request_raw(platform::TcpSocket& sock, std::string& raw_out, std::string& method, std::string& path, std::string& query, std::string& body) {
+    std::vector<uint8_t> buffer;
+    std::vector<uint8_t> chunk(8192);
+    size_t header_end = std::string::npos;
+
+    while (buffer.size() < 64 * 1024) {
+        std::string s(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+        header_end = s.find("\r\n\r\n");
+        if (header_end != std::string::npos) break;
+        int n = sock.receive(chunk, 3000);
+        if (n <= 0) break;
+        buffer.insert(buffer.end(), chunk.begin(), chunk.begin() + n);
+    }
+    if (header_end == std::string::npos) return false;
+
+    std::string header_str(reinterpret_cast<const char*>(buffer.data()), header_end);
+    std::istringstream h_stream(header_str);
+    std::string line;
+    if (!std::getline(h_stream, line)) return false;
+
+    std::istringstream req_line(line);
+    std::string uri;
+    req_line >> method >> uri;
+    size_t qmark = uri.find('?');
+    if (qmark != std::string::npos) {
+        path = uri.substr(0, qmark);
+        query = uri.substr(qmark + 1);
+    } else {
+        path = uri;
+        query = "";
+    }
+
+    size_t content_length = 0;
+    while (std::getline(h_stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t colon = line.find(':');
+        if (colon != std::string::npos) {
+            std::string key = line.substr(0, colon);
+            std::string val = line.substr(colon + 1);
+            while (!val.empty() && val.front() == ' ') val.erase(0, 1);
+            std::string lower_k = key;
+            std::transform(lower_k.begin(), lower_k.end(), lower_k.begin(), ::tolower);
+            if (lower_k == "content-length") {
+                try { content_length = std::stoull(val); } catch (...) {}
+            }
         }
     }
 
-    auto conn_opt = core::ConnectionManager::instance().resolve_connection(explicit_id);
-    if (conn_opt && !explicit_id.empty()) {
-        std::string url = "http://" + conn_opt->host + ":" + std::to_string(conn_opt->port) + "/drop?ticket=" + conn_opt->ticket;
-        std::cout << "[*] Opening Web Dropbox for saved connection '" << conn_opt->id << "'..." << std::endl;
-        std::cout << "    URL: " << url << std::endl;
-        open_browser(url);
-        return 0;
+    size_t total_expected = header_end + 4 + content_length;
+    if (content_length > 100 * 1024 * 1024) return false;
+
+    while (buffer.size() < total_expected) {
+        size_t needed = total_expected - buffer.size();
+        size_t to_read = std::min(needed, chunk.size());
+        int n = sock.receive(std::span<uint8_t>(chunk.data(), to_read), 5000);
+        if (n <= 0) break;
+        buffer.insert(buffer.end(), chunk.begin(), chunk.begin() + n);
     }
 
-    if (port == 0) {
-        auto list = core::WorkspaceManager::load_registry();
-        if (!list.empty()) port = list[0].port;
-        else port = core::kDefaultPort;
+    raw_out.assign(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    if (buffer.size() > header_end + 4) {
+        body.assign(reinterpret_cast<const char*>(buffer.data() + header_end + 4), buffer.size() - (header_end + 4));
+    }
+    return true;
+}
+
+static void send_portal_http(platform::TcpSocket& sock, int code, const std::string& status_txt, const std::string& content_type, const std::string& body, const std::string& extra_headers = "") {
+    std::string resp = "HTTP/1.1 " + std::to_string(code) + " " + status_txt + "\r\n"
+                       "Content-Type: " + content_type + "\r\n"
+                       "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                       "Connection: close\r\n" +
+                       (extra_headers.empty() ? "" : (extra_headers + "\r\n")) +
+                       "\r\n" + body;
+    sock.send_all(resp);
+}
+
+int cmd_portal(int argc, char* argv[]) {
+    uint16_t start_port = 8080;
+    std::string cfg_port = SlugConfig::get("portal_port", "8080");
+    try { start_port = static_cast<uint16_t>(std::stoi(cfg_port)); } catch (...) {}
+
+    std::string auto_connect_id = "";
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
+            try { start_port = static_cast<uint16_t>(std::stoi(argv[++i])); } catch (...) {}
+        } else if (arg != "portal" && arg != "web" && arg != "ui" && arg.front() != '-') {
+            auto_connect_id = arg;
+        }
     }
 
-    auto st = query_workspace_api(port);
-    if (st.is_object() && st.contains("admin_ticket")) {
-        std::string ticket = st["admin_ticket"].get<std::string>();
-        std::string url = "http://127.0.0.1:" + std::to_string(port) + "/drop?ticket=" + ticket;
-        std::cout << "[*] Opening Host Web Workspace (Port " << port << ")..." << std::endl;
-        std::cout << "    URL: " << url << std::endl;
-        open_browser(url);
-        return 0;
+    // Try binding 127.0.0.1 starting from start_port, auto-incrementing if occupied (tự tịnh tiến cổng)
+    platform::TcpListener listener;
+    uint16_t actual_port = start_port;
+    bool bound = false;
+    for (int i = 0; i < 50; ++i) {
+        if (listener.bind_and_listen("127.0.0.1", actual_port, 32)) {
+            bound = true;
+            break;
+        }
+        actual_port++;
     }
 
-    if (conn_opt) {
-        std::string url = "http://" + conn_opt->host + ":" + std::to_string(conn_opt->port) + "/drop?ticket=" + conn_opt->ticket;
-        std::cout << "[*] Opening Web Dropbox for connection '" << conn_opt->id << "'..." << std::endl;
-        std::cout << "    URL: " << url << std::endl;
-        open_browser(url);
-        return 0;
+    if (!bound) {
+        std::cerr << "[-] Error: Failed to bind local viewing engine to 127.0.0.1 (ports " << start_port << "-" << actual_port << " occupied)." << std::endl;
+        return 1;
     }
 
-    std::cerr << "[-] No local running workspace on port " << port << " and no active client connections." << std::endl;
-    std::cerr << "    Host a workspace:  slug add <path>" << std::endl;
-    std::cerr << "    Connect to remote: slug connect -i <host> -p <port> -o <otp>" << std::endl;
-    return 1;
+    std::cout << "\n+----------------------------------------------------------------------------+" << std::endl;
+    std::cout << "| SLUG POST-QUANTUM VIEWING ENGINE (Local Loopback GUI)                       |" << std::endl;
+    std::cout << "+----------------------------------------------------------------------------+" << std::endl;
+    std::cout << "  Viewing Engine:  http://127.0.0.1:" << actual_port << "/" << std::endl;
+    std::cout << "  Loopback Port:   " << actual_port << " (Internal GUI engine only)" << std::endl;
+    std::cout << "  Architecture:    Zero Remote HTTP - Encrypted PQC Binary Frames (Kyber/Dilithium)" << std::endl;
+    std::cout << "  Status:          READY. Opening default browser..." << std::endl;
+    std::cout << "+----------------------------------------------------------------------------+" << std::endl;
+    std::cout << "[*] Press Ctrl+C to stop local viewing engine.\n" << std::endl;
+
+    std::string portal_url = "http://127.0.0.1:" + std::to_string(actual_port) + "/";
+    open_browser(portal_url);
+
+    // If an auto_connect_id was passed on command line, connect in background
+    if (!auto_connect_id.empty()) {
+        auto c_opt = core::ConnectionManager::instance().resolve_connection(auto_connect_id);
+        if (c_opt) {
+            std::lock_guard<std::mutex> lk(g_portal.mtx);
+            auto cl = std::make_unique<net::SlugClient>(c_opt->host, c_opt->port, c_opt->suite);
+            if (cl->authenticate_token(c_opt->ticket, 86400, false)) {
+                g_portal.client = std::move(cl);
+                g_portal.active_id = c_opt->id;
+                g_portal.active_host = c_opt->host;
+                g_portal.active_port = c_opt->port;
+                g_portal.active_suite = c_opt->suite;
+                std::cout << "[+] Auto-connected to saved workspace '" << c_opt->id << "' (" << c_opt->host << ":" << c_opt->port << ")" << std::endl;
+            }
+        }
+    }
+
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
+    while (!g_stop_signal_received) {
+        auto client_opt = listener.accept(500);
+        if (!client_opt) continue;
+
+        std::thread([sock = std::move(*client_opt), actual_port]() mutable {
+            std::string raw, method, path, query, body;
+            if (!read_http_request_raw(sock, raw, method, path, query, body)) {
+                return;
+            }
+
+            if (path == "/" || path == "/portal") {
+                auto conns = core::ConnectionManager::instance().list_connections();
+                std::string html = web::WebAssets::render_client_portal(conns, actual_port);
+                send_portal_http(sock, 200, "OK", "text/html; charset=utf-8", html);
+                return;
+            }
+
+            if (path == "/api/portal/connect" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string host = j.value("host", "127.0.0.1");
+                    uint16_t port = static_cast<uint16_t>(j.value("port", 9443));
+                    std::string suite_str = j.value("suite", "SUITE_3_PURE_PQC");
+                    std::string auth_type = j.value("auth_type", "otp");
+                    std::string token = j.value("token", "");
+                    std::string user = j.value("username", "");
+                    std::string pass = j.value("password", "");
+                    bool save = j.value("save", false);
+                    std::string id = j.value("id", "");
+
+                    core::SuiteID suite = core::suite_from_string(suite_str);
+                    auto client = std::make_unique<net::SlugClient>(host, port, suite);
+
+                    bool auth_ok = false;
+                    if (auth_type == "account") {
+                        auth_ok = client->authenticate_user(user, pass, 86400, false);
+                    } else {
+                        auth_ok = client->authenticate_token(token, 86400, false);
+                    }
+
+                    if (auth_ok) {
+                        if (save) {
+                            std::string cid = id.empty() ? (host + ":" + std::to_string(port)) : id;
+                            core::ConnectionInfo ci;
+                            ci.id = cid;
+                            ci.host = host;
+                            ci.port = port;
+                            ci.suite = suite;
+                            ci.ticket = client->session_ticket();
+                            ci.role = client->role();
+                            ci.created_at = core::Utils::current_timestamp();
+                            ci.last_active = ci.created_at;
+                            core::ConnectionManager::instance().add_connection(ci);
+                        }
+
+                        {
+                            std::lock_guard<std::mutex> lk(g_portal.mtx);
+                            g_portal.client = std::move(client);
+                            g_portal.active_id = id;
+                            g_portal.active_host = host;
+                            g_portal.active_port = port;
+                            g_portal.active_suite = suite;
+                        }
+
+                        nlohmann::json res;
+                        res["status"] = "ok";
+                        res["redirect"] = "/drop";
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                    } else {
+                        nlohmann::json res;
+                        res["status"] = "error";
+                        res["message"] = client->get_last_error().empty() ? "Authentication failed or server unreachable." : client->get_last_error();
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                    }
+                } catch (const std::exception& e) {
+                    nlohmann::json res;
+                    res["status"] = "error";
+                    res["message"] = e.what();
+                    send_portal_http(sock, 400, "Bad Request", "application/json", res.dump());
+                }
+                return;
+            }
+
+            if (path == "/api/portal/open" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string id = j.value("id", "");
+                    auto c_opt = core::ConnectionManager::instance().resolve_connection(id);
+                    if (!c_opt) {
+                        nlohmann::json res;
+                        res["status"] = "error";
+                        res["message"] = "Connection not found";
+                        send_portal_http(sock, 404, "Not Found", "application/json", res.dump());
+                        return;
+                    }
+
+                    auto client = std::make_unique<net::SlugClient>(c_opt->host, c_opt->port, c_opt->suite);
+                    if (client->authenticate_token(c_opt->ticket, 86400, false)) {
+                        {
+                            std::lock_guard<std::mutex> lk(g_portal.mtx);
+                            g_portal.client = std::move(client);
+                            g_portal.active_id = c_opt->id;
+                            g_portal.active_host = c_opt->host;
+                            g_portal.active_port = c_opt->port;
+                            g_portal.active_suite = c_opt->suite;
+                        }
+                        nlohmann::json res;
+                        res["status"] = "ok";
+                        res["redirect"] = "/drop";
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                    } else {
+                        nlohmann::json res;
+                        res["status"] = "error";
+                        res["message"] = client->get_last_error().empty() ? "Session ticket expired or host unreachable." : client->get_last_error();
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                    }
+                } catch (const std::exception& e) {
+                    nlohmann::json res;
+                    res["status"] = "error";
+                    res["message"] = e.what();
+                    send_portal_http(sock, 400, "Bad Request", "application/json", res.dump());
+                }
+                return;
+            }
+
+            if (path == "/api/portal/remove" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string id = j.value("id", "");
+                    core::ConnectionManager::instance().remove_connection(id);
+                    nlohmann::json res;
+                    res["status"] = "ok";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            }
+
+            // Tunnel file browsing, downloads, ZIP archives, uploads, and APIs through the encrypted PQC channel!
+            std::lock_guard<std::mutex> lk(g_portal.mtx);
+            if (!g_portal.client || !g_portal.client->is_connected()) {
+                if (path == "/drop" || path == "/browse") {
+                    send_portal_http(sock, 302, "Found", "text/plain", "Redirecting to portal...", "Location: /portal");
+                    return;
+                }
+                send_portal_http(sock, 401, "Unauthorized", "text/plain", "Error: Not connected to any Post-Quantum workspace. Go to /portal to connect.");
+                return;
+            }
+
+            // Tunnel the HTTP request over pure Post-Quantum frames
+            auto tunnel_resp = g_portal.client->tunnel_http(raw);
+            if (!tunnel_resp.empty()) {
+                sock.send_all(tunnel_resp);
+            } else {
+                send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Remote Post-Quantum workspace failed to respond.");
+            }
+        }).detach();
+    }
+
+    listener.close();
+    std::cout << "[*] Local viewing engine stopped." << std::endl;
+    return 0;
+}
+
+int cmd_web(int argc, char* argv[]) {
+    return cmd_portal(argc, argv);
 }
 
 int cmd_user(int argc, char* argv[]) {
@@ -2404,11 +2899,32 @@ int cmd_audit(int argc, char* argv[]) {
         for (int i = 4; i < argc; ++i) {
             if (std::string(argv[i]) == "--reason" && i + 1 < argc) reason = argv[++i];
         }
+        if (p == "--all" || p == "all") {
+            auto list = audit_idx.list_flagged_or_all(false);
+            int count = 0;
+            for (const auto& e : list) {
+                if (audit_idx.allow_file(e.file_path, reason, "admin")) {
+                    count++;
+                }
+            }
+            std::cout << "[+] Whitelisted all " << count << " quarantined file(s) (USER_ALLOWED)." << std::endl;
+            return 0;
+        }
         if (audit_idx.allow_file(p, reason, "admin")) {
             std::cout << "[+] Whitelisted: " << p << " (USER_ALLOWED)" << std::endl;
             return 0;
         }
         return 1;
+    } else if (sub == "clear" || sub == "reset") {
+        auto list = audit_idx.list_flagged_or_all(false);
+        int count = 0;
+        for (const auto& e : list) {
+            if (audit_idx.allow_file(e.file_path, "Audit quarantine cleared", "admin")) {
+                count++;
+            }
+        }
+        std::cout << "[+] Cleared quarantine for " << count << " file(s)." << std::endl;
+        return 0;
     }
     return 1;
 }
@@ -2642,12 +3158,14 @@ int main(int argc, char* argv[]) {
     platform::initialize_network();
 
     if (argc < 2) {
-        print_help();
-        return 0;
+        return cmd_portal(argc, argv);
     }
 
     std::string cmd = argv[1];
 
+    if (cmd == "portal" || cmd == "web" || cmd == "ui") return cmd_portal(argc, argv);
+    if (cmd == "config") return cmd_config(argc, argv);
+    if (cmd == "shortcut") return cmd_shortcut(argc, argv);
     if (cmd == "add") return cmd_add(argc, argv);
     if (cmd == "status") return cmd_status(argc, argv);
     if (cmd == "serve" || cmd == "server" || cmd == "inspect") return cmd_serve(argc, argv);
@@ -2657,7 +3175,6 @@ int main(int argc, char* argv[]) {
     if (cmd == "conn" || cmd == "connections") return cmd_conn(argc, argv);
     if (cmd == "set") return cmd_set(argc, argv);
     if (cmd == "list" || cmd == "ls") return cmd_list(argc, argv);
-    if (cmd == "web") return cmd_web(argc, argv);
     if (cmd == "pull") return cmd_pull(argc, argv);
     if (cmd == "push") return cmd_push(argc, argv);
     if (cmd == "user") return cmd_user(argc, argv);
