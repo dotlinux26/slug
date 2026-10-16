@@ -54,7 +54,19 @@ jobs:
       - name: Compile Slug Release Executable
         shell: pwsh
         run: |
-          cmake --build build --config Release --parallel
+          cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath "compile_output.log"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "================ COMPILATION ERROR LOG ================"
+            Get-Content "compile_output.log" | Select-String "error|fatal|fail" -Context 2,2 | Select-Object -First 50
+            
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -B build-logs
+            git add compile_output.log
+            git commit -m "chore: record build error"
+            git push origin build-logs --force
+            exit 1
+          }
 
       - name: Verify Compiled Windows Binary
         shell: pwsh
