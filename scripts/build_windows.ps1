@@ -4,7 +4,7 @@
 # ==============================================================================
 
 Write-Host "====================================================================" -ForegroundColor Cyan
-Write-Host "       Building Slug 1.0.0-rc1 Native Release for Windows (x64)     " -ForegroundColor Cyan
+Write-Host "       Building Slug 1.0.0 Native Release for Windows (x64)         " -ForegroundColor Cyan
 Write-Host "====================================================================" -ForegroundColor Cyan
 Write-Host ""
 

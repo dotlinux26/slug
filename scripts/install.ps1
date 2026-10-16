@@ -7,7 +7,7 @@
 [CmdletBinding()]
 param (
     [string]$InstallPath = "$env:LOCALAPPDATA\slug\bin",
-    [string]$Version = "1.0.0-rc1"
+    [string]$Version = "1.0.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,22 +43,43 @@ if (Test-Path "$scriptDir\slug.exe") {
     $sourceExe = ".\bin\slug.exe"
 } elseif (Test-Path ".\build\Release\slug.exe") {
     $sourceExe = ".\build\Release\slug.exe"
+} elseif (Test-Path ".\build_win\Release\slug.exe") {
+    $sourceExe = ".\build_win\Release\slug.exe"
 }
 
 if (-not $sourceExe) {
     Write-Info "No local slug.exe detected. Downloading latest release from GitHub..."
     $repo = if ($env:SLUG_REPO) { $env:SLUG_REPO } else { "dotlinux26/slug" }
-    $zipUrl = "https://github.com/$repo/releases/download/v$Version/slug-$Version-windows-x64.zip"
+    $urls = @(
+        "https://github.com/$repo/releases/download/v$Version/slug-$Version-windows-x86_64.zip",
+        "https://github.com/$repo/releases/download/v$Version/slug-$Version-windows-x64.zip",
+        "https://github.com/$repo/releases/latest/download/slug-$Version-windows-x86_64.zip",
+        "https://github.com/$repo/releases/latest/download/slug-$Version-windows-x64.zip"
+    )
     $tempZip = Join-Path $env:TEMP "slug-$Version-windows.zip"
     $tempExtract = Join-Path $env:TEMP "slug-extract-$Version"
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-        Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
-        Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
-        $sourceExe = Get-ChildItem -Path $tempExtract -Filter "slug.exe" -Recurse | Select-Object -ExpandProperty FullName -First 1
-    } catch {
-        Write-Warn "Automated download failed or release not yet uploaded: $($_.Exception.Message)"
+    $downloaded = $false
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    foreach ($url in $urls) {
+        try {
+            Write-Info "Attempting download from: $url"
+            Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing -TimeoutSec 30
+            if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
+            Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+            $found = Get-ChildItem -Path $tempExtract -Filter "slug.exe" -Recurse | Select-Object -ExpandProperty FullName -First 1
+            if ($found -and (Test-Path $found)) {
+                $sourceExe = $found
+                $downloaded = $true
+                break
+            }
+        } catch {
+            continue
+        }
+    }
+
+    if (-not $downloaded) {
+        Write-Warn "Automated download failed or release not yet uploaded."
         Write-Info "You can build slug.exe on Windows using: scripts\build_windows.bat"
         exit 1
     }

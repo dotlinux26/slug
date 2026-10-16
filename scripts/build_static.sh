@@ -15,7 +15,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 echo -e "\n${BOLD}${BLUE}====================================================================${NC}"
-echo -e "${BOLD}${BLUE}       Building Slug 1.0.0-rc1 Static Release for Linux (x86_64)   ${NC}"
+echo -e "${BOLD}${BLUE}       Building Slug 1.0.0 Static Release for Linux (x86_64)       ${NC}"
 echo -e "${BOLD}${BLUE}====================================================================${NC}\n"
 
 cd "$(dirname "$0")/.."

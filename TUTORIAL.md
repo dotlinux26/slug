@@ -84,18 +84,18 @@ For Debian, Ubuntu, Kali, and derivatives:
 ./scripts/package_deb.sh
 
 # Install via dpkg:
-sudo dpkg -i dist/slug_1.0.0-rc1_amd64.deb
+sudo dpkg -i dist/slug_1.0.0_amd64.deb
 
 # Or via apt:
-sudo apt install ./dist/slug_1.0.0-rc1_amd64.deb
+sudo apt install ./dist/slug_1.0.0_amd64.deb
 ```
 
 ### Method C: Standalone Static Binary (Zero Installation)
 
 Download the universal tarball, extract, and place `slug` in your `$PATH`:
 ```bash
-tar -xzf dist/slug-1.0.0-rc1-linux-x86_64.tar.gz
-cd slug-1.0.0-rc1-linux-x86_64/
+tar -xzf dist/slug-1.0.0-linux-x86_64.tar.gz
+cd slug-1.0.0-linux-x86_64/
 sudo mv slug /usr/local/bin/
 sudo chmod +x /usr/local/bin/slug
 ```

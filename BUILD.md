@@ -128,6 +128,12 @@ Slug fully supports Windows 10, Windows 11, and Windows Server (x64) with native
    ```
    The binary `slug.exe` is located at `bin\Release\slug.exe`.
 
+5. **Package Windows Distribution Archive**:
+   ```powershell
+   .\scripts\package_windows.ps1 -Version "1.0.0"
+   ```
+   Produces `dist\slug-1.0.0-windows-x86_64.zip`, `dist\slug.exe`, and `dist\SHA256SUMS.windows`.
+
 ---
 
 ### Option B: MSYS2 / MinGW-w64

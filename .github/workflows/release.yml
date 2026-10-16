@@ -1,0 +1,136 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to upload to (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Native Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Restore / Cache vcpkg OpenSSL
+        uses: actions/cache@v4
+        id: vcpkg-cache
+        with:
+          path: C:/vcpkg/installed
+          key: ${{ runner.os }}-vcpkg-openssl-x64-windows-static-v2
+
+      - name: Install static OpenSSL via vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Write-Host "[*] Installing OpenSSL:x64-windows-static via vcpkg..."
+          cd C:\vcpkg
+          .\vcpkg.exe install openssl:x64-windows-static
+
+      - name: Configure CMake with MSVC & static vcpkg
+        shell: pwsh
+        run: |
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Compile Slug Release Executable
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Verify Compiled Windows Binary
+        shell: pwsh
+        run: |
+          $exe = $null
+          $candidates = @("build/Release/slug.exe", "build/slug.exe", "bin/slug.exe")
+          foreach ($c in $candidates) {
+            if (Test-Path $c) { $exe = $c; break }
+          }
+          if (-not $exe) {
+            Write-Error "slug.exe binary was not produced!"
+            exit 1
+          }
+          Write-Host "[+] Found compiled binary at: $exe"
+          & $exe version
+
+      - name: Package Windows Release Distribution
+        shell: pwsh
+        run: |
+          .\scripts\package_windows.ps1 -Version "1.0.0" -Arch "x86_64"
+
+      - name: Upload Windows Assets to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $TargetTag = "${{ github.event.inputs.tag }}"
+          if (-not $TargetTag) {
+            if ("${{ github.ref_name }}".StartsWith("v")) {
+              $TargetTag = "${{ github.ref_name }}"
+            } else {
+              $TargetTag = "v1.0.0"
+            }
+          }
+          Write-Host "[*] Target GitHub release tag: $TargetTag"
+
+          # Attempt to merge existing SHA256SUMS from GitHub release
+          try {
+            gh release download $TargetTag -p "SHA256SUMS" --clobber
+            if (Test-Path "SHA256SUMS") {
+              $existing = Get-Content "SHA256SUMS"
+              $winHashes = Get-Content "dist/SHA256SUMS.windows"
+              $merged = @($existing; $winHashes) | Where-Object { $_.Trim() -ne "" } | Select-Object -Unique
+              $merged | Set-Content "dist/SHA256SUMS" -Encoding utf8
+            }
+          } catch {
+            Write-Host "[-] Note: Could not download or merge existing SHA256SUMS: $($_.Exception.Message)"
+          }
+
+          # Check if release exists; create or upload
+          $releaseExists = $false
+          try {
+            gh release view $TargetTag
+            $releaseExists = $true
+          } catch {
+            Write-Host "[*] Release $TargetTag does not exist yet. It will be created."
+          }
+
+          $uploadAssets = @(
+            "dist/slug-1.0.0-windows-x86_64.zip",
+            "dist/slug-1.0.0-windows-x64.zip",
+            "dist/slug-windows-x86_64.exe",
+            "dist/slug.exe",
+            "dist/install.ps1",
+            "dist/SHA256SUMS.windows"
+          )
+          if (Test-Path "dist/SHA256SUMS") {
+            $uploadAssets += "dist/SHA256SUMS"
+          }
+
+          if ($releaseExists) {
+            Write-Host "[*] Uploading assets to existing release $TargetTag..."
+            gh release upload $TargetTag @uploadAssets --clobber
+          } else {
+            Write-Host "[*] Creating new release $TargetTag..."
+            gh release create $TargetTag @uploadAssets --title "Slug $TargetTag" --generate-notes
+          }
+
+          Write-Host "[+] All Windows release assets uploaded successfully to $TargetTag!"

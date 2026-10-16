@@ -15,7 +15,7 @@
                   __/ |
                  |___/ 
   Slug: Secure, Ephemeral, Git-like Workspace Sharing & Synchronization
-  Version: 1.0.0-rc2 | Post-Quantum Cryptography & AI Guard (Apache-2.0)
+  Version: 1.0.0 | Post-Quantum Cryptography & AI Guard (Apache-2.0)
 ```
 
 > **Slug** là giải pháp chia sẻ và đồng bộ không gian làm việc (workspace) tức thì dành cho lập trình viên, kỹ sư bảo mật và chuyên gia DevOps. Kết hợp tốc độ chia sẻ một chạm tương tự AirDrop với nền tảng mật mã hậu lượng tử (Post-Quantum Cryptography), hệ thống phân quyền hạt nhân tự hủy và lá chắn bảo vệ bí mật khỏi các trợ lý AI.
@@ -157,16 +157,25 @@ slug env run -- npm start
 Slug được đóng gói dưới dạng binary tĩnh độc lập (100% Static Binary, ~8.4 MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy mượt mà trên mọi bản phân phối Linux (Ubuntu, Debian, Alpine, RHEL, CentOS, Arch, Kali).
 
 ### 5.1. Cài Đặt Nhanh Bằng Một Dòng Lệnh
+
+**Linux / macOS (Bash):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.sh | bash
 # hoặc chạy trực tiếp từ thư mục mã nguồn:
 ./scripts/install.sh
 ```
 
+**Microsoft Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.ps1 | iex
+# hoặc chạy trực tiếp từ thư mục mã nguồn:
+.\scripts\install.ps1
+```
+
 ### 5.2. Cài Đặt Gói Debian / Ubuntu (.deb)
 ```bash
 ./scripts/package_deb.sh
-sudo dpkg -i dist/slug_1.0.0-rc2_amd64.deb
+sudo dpkg -i dist/slug_1.0.0_amd64.deb
 ```
 
 ### 5.3. Bật Tính Năng Tự Động Gợi Ý Lệnh (Shell Autocompletion)
