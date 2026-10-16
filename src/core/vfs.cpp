@@ -109,6 +109,7 @@ VfsResolveResult SlugVFS::resolve_and_jail(std::string_view virtual_path, Role r
 
     // 5. Policy filter & AI check
     if (!rel.empty() && filter_mode_ != FilterMode::NONE) {
+        std::error_code ec;
         bool is_dir = fs::is_directory(canonical_target, ec);
         bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
         auto dec = policy_engine_.evaluate(rel, is_dir, {}, ignore_gi);

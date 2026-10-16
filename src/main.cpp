@@ -2650,10 +2650,9 @@ int cmd_portal(int argc, char* argv[]) {
                     }
                     return;
                 } else {
-                    if (std::filesystem::exists(ai_cfg_file)) {
-                        std::ifstream in(ai_cfg_file);
-                        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-                        send_portal_http(sock, 200, "OK", "application/json", content);
+                    auto content = platform::PathUtils::read_text_file(ai_cfg_file);
+                    if (content) {
+                        send_portal_http(sock, 200, "OK", "application/json", *content);
                     } else {
                         send_portal_http(sock, 200, "OK", "application/json", "{\"status\":\"empty\"}");
                     }

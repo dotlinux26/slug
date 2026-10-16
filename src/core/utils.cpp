@@ -4,6 +4,7 @@
 #include <random>
 #include <cctype>
 #include <algorithm>
+#include <ctime>
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
 
@@ -163,6 +164,20 @@ uint64_t Utils::current_timestamp() {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+std::string Utils::format_timestamp(uint64_t timestamp) {
+    if (timestamp == 0) return "N/A";
+    std::time_t t = static_cast<std::time_t>(timestamp);
+    std::tm tm_buf{};
+#if defined(_WIN32)
+    localtime_s(&tm_buf, &t);
+#else
+    localtime_r(&t, &tm_buf);
+#endif
+    char buf[32]{};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
+    return std::string(buf);
 }
 
 std::string Utils::trim(std::string_view s) {

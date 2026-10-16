@@ -40,6 +40,9 @@ public:
     // Current Unix timestamp in seconds
     static uint64_t current_timestamp();
 
+    // Format timestamp as "YYYY-MM-DD HH:MM:SS"
+    static std::string format_timestamp(uint64_t timestamp);
+
     // String utilities
     static std::string trim(std::string_view s);
     static std::vector<std::string> split(std::string_view s, char delim);
