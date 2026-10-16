@@ -1384,6 +1384,34 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(res_bytes)
             return
 
+        if path == "/favicon.ico":
+            ico_path = os.path.join(os.path.dirname(__file__), "..", "assets", "slug-icon.ico")
+            if os.path.exists(ico_path):
+                with open(ico_path, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/x-icon")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+
+        if path == "/api/config/system":
+            cfg_path = os.path.expanduser("~/.slug/config.json")
+            cfg = {"default_suite": "SUITE_2_MODERN_HYBRID", "portal_port": 8080}
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        cfg.update(json.load(f))
+                except Exception:
+                    pass
+            res_bytes = json.dumps(cfg).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(res_bytes)
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -1551,7 +1579,30 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             }).encode("utf-8"))
             return
 
+        if path == "/api/config/system":
+            cfg_path = os.path.expanduser("~/.slug/config.json")
+            os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+            cfg = {}
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                except Exception:
+                    pass
+            cfg["default_suite"] = req_data.get("default_suite", "SUITE_2_MODERN_HYBRID")
+            cfg["portal_port"] = req_data.get("portal_port", 8080)
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+            return
+
         if path == "/api/system/shortcut":
+            update_script = os.path.join(os.path.dirname(__file__), "update_icon.py")
+            if os.path.exists(update_script):
+                subprocess.run([sys.executable, update_script], capture_output=True)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

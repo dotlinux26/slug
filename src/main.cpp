@@ -657,7 +657,7 @@ int cmd_config(int argc, char* argv[]) {
         std::cout << std::left << std::setw(24) << "[KEY]" << std::setw(40) << "[VALUE]" << std::endl;
         std::cout << std::string(64, '-') << std::endl;
         if (j.empty()) {
-            std::cout << "  (No custom settings. Using defaults: default_suite=SUITE_3_PURE_PQC, portal_port=8080)" << std::endl;
+            std::cout << "  (No custom settings. Using defaults: default_suite=SUITE_2_MODERN_HYBRID, portal_port=8080)" << std::endl;
         } else {
             for (auto it = j.begin(); it != j.end(); ++it) {
                 std::cout << std::left << std::setw(24) << it.key() << std::setw(40) << it.value().dump() << std::endl;
@@ -710,6 +710,22 @@ int cmd_shortcut(int, char*[]) {
         vbs << "WshShell.Run \"\"\"" << exe << "\"\" portal\", 0, False\r\n";
     }
 
+    std::filesystem::path ico_dest = slug_dir / "slug-icon.ico";
+    std::filesystem::path exe_dir = std::filesystem::path(exe).parent_path();
+    std::vector<std::filesystem::path> candidate_icos = {
+        std::filesystem::current_path() / "assets" / "slug-icon.ico",
+        exe_dir / "assets" / "slug-icon.ico",
+        exe_dir / "slug-icon.ico",
+        std::filesystem::current_path() / "slug-icon.ico"
+    };
+    for (const auto& cp : candidate_icos) {
+        if (std::filesystem::exists(cp, ec)) {
+            std::filesystem::copy_file(cp, ico_dest, std::filesystem::copy_options::overwrite_existing, ec);
+            break;
+        }
+    }
+    std::string icon_loc = std::filesystem::exists(ico_dest, ec) ? (ico_dest.string() + ",0") : (exe + ",0");
+
     std::string ps = "powershell -NoProfile -NonInteractive -Command \""
                      "$ws = New-Object -ComObject WScript.Shell; "
                      "$desktop = [Environment]::GetFolderPath('Desktop'); "
@@ -718,12 +734,13 @@ int cmd_shortcut(int, char*[]) {
                      "$sc.Arguments = \\\"\"" + vbs_path.string() + "\"\\\"; "
                      "$sc.WorkingDirectory = \\\"" + slug_dir.string() + "\\\"; "
                      "$sc.Description = \\\"Slug Post-Quantum Workspace Viewing Engine (Stealth Launcher)\\\"; "
-                     "$sc.IconLocation = \\\"" + exe + ",0\\\"; "
+                     "$sc.IconLocation = \\\"" + icon_loc + "\\\"; "
                      "$sc.Save()\"";
     int r = std::system(ps.c_str());
     if (r == 0) {
         std::cout << "[+] Created Stealth Desktop shortcut: Slug Workspace.lnk" << std::endl;
         std::cout << "    Target:     wscript.exe \"" << vbs_path.string() << "\"" << std::endl;
+        std::cout << "    Icon:       " << icon_loc << std::endl;
         std::cout << "    Stealth:    WindowStyle=0 (SW_HIDE) - 100% Zero Terminal & Zero Taskbar Popup" << std::endl;
         std::cout << "    Engine:     " << exe << " portal" << std::endl;
         std::cout << "    Double-click it anytime to open the Web Viewing Engine!" << std::endl;
@@ -3000,6 +3017,48 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/favicon.ico") {
+                std::error_code ec;
+                std::filesystem::path ico_p = "assets/slug-icon.ico";
+                if (!std::filesystem::exists(ico_p, ec)) {
+                    ico_p = platform::get_user_home() / ".slug" / "slug-icon.ico";
+                }
+                auto data = platform::PathUtils::read_binary_file(ico_p);
+                if (data && !data->empty()) {
+                    send_portal_http(sock, 200, "OK", "image/x-icon", std::string(data->begin(), data->end()));
+                } else {
+                    send_portal_http(sock, 404, "Not Found", "text/plain", "");
+                }
+                return;
+            }
+
+            if (path == "/api/config/system") {
+                if (method == "POST") {
+                    try {
+                        auto j = nlohmann::json::parse(body);
+                        auto existing = SlugConfig::load();
+                        for (auto it = j.begin(); it != j.end(); ++it) {
+                            existing[it.key()] = it.value();
+                        }
+                        SlugConfig::save(existing);
+                        send_portal_http(sock, 200, "OK", "application/json", "{\"status\":\"ok\"}");
+                    } catch (...) {
+                        send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                    }
+                    return;
+                } else {
+                    auto j = SlugConfig::load();
+                    if (!j.contains("default_suite")) {
+                        j["default_suite"] = "SUITE_2_MODERN_HYBRID";
+                    }
+                    if (!j.contains("portal_port")) {
+                        j["portal_port"] = 8080;
+                    }
+                    send_portal_http(sock, 200, "OK", "application/json", j.dump());
+                    return;
+                }
+            }
+
             if (path == "/api/system/shortcut" && method == "POST") {
                 char* dummy[] = { nullptr };
                 cmd_shortcut(0, dummy);
@@ -3126,7 +3185,7 @@ int cmd_portal(int argc, char* argv[]) {
                     auto j = nlohmann::json::parse(body);
                     std::string wpath = j.value("path", "./");
                     uint16_t wport = static_cast<uint16_t>(j.value("port", 9443));
-                    std::string suite_str = j.value("suite", "3");
+                    std::string suite_str = j.value("suite", "2");
                     std::string filter_str = j.value("filter", "protected");
                     uint64_t wttl = j.value("ttl", 86400ULL);
 

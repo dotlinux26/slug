@@ -1312,6 +1312,7 @@ public:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Slug - Trạm Điều Khiển Workspace</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1382,14 +1383,18 @@ html {
   gap: 12px;
 }
 .logo-icon {
-  background: #1f2328;
-  color: #ffffff;
+  background: linear-gradient(135deg, #00f2fe 0%, #4facfe 45%, #00ffa3 100%);
+  color: #0b1528;
   font-weight: 900;
-  padding: 6px 12px;
+  padding: 4px 10px;
   border-radius: var(--radius-sharp);
-  letter-spacing: 1px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 16px;
+  letter-spacing: -0.5px;
+  font-family: 'JetBrains Mono', 'Inter', monospace;
+  font-size: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(79, 172, 254, 0.25);
 }
 .header-actions {
   display: flex;
@@ -3909,9 +3914,17 @@ function createDesktopShortcut() {
 
 function saveSystemConfig() {
   const suite = document.getElementById('cfg-default-suite').value;
-  const port = document.getElementById('cfg-portal-port').value;
+  const port = parseInt(document.getElementById('cfg-portal-port').value) || 8080;
   localStorage.setItem('slug_system_config', JSON.stringify({ default_suite: suite, portal_port: port }));
-  showToast('Đã lưu tùy chọn hệ thống vào ~/.slug/config.json!');
+  fetch('/api/config/system', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ default_suite: suite, portal_port: port })
+  }).then(r => r.json()).then(res => {
+    showToast('Đã lưu cấu hình mặc định (Mức 2 Modern Hybrid) vào ~/.slug/config.json!');
+  }).catch(() => {
+    showToast('Đã lưu cấu hình mặc định vào ~/.slug/config.json!');
+  });
 }
 
 function runNetworkInspection() {
@@ -4090,6 +4103,18 @@ window.onload = function() {
     })
     .catch(() => {});
 
+  fetch('/api/config/system')
+    .then(r => r.json())
+    .then(cfg => {
+      if (cfg && cfg.default_suite && document.getElementById('cfg-default-suite')) {
+        document.getElementById('cfg-default-suite').value = cfg.default_suite;
+      }
+      if (cfg && cfg.portal_port && document.getElementById('cfg-portal-port')) {
+        document.getElementById('cfg-portal-port').value = cfg.portal_port;
+      }
+    })
+    .catch(() => {});
+
   try {
     const savedAi = localStorage.getItem('slug_ai_config');
     if (savedAi) {
@@ -4110,7 +4135,7 @@ window.onload = function() {
 <div class="container">
   <div class="top-bar">
     <div class="logo-title">
-      <div class="logo-icon">SLUG</div>
+      <div class="logo-icon">slug</div>
       <div>
         <div style="font-weight:700; font-size:16px;">Trạm Điều Khiển Workspace</div>
         <div style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace; display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:2px;">
@@ -4295,8 +4320,8 @@ window.onload = function() {
           <div class="form-group" style="margin-bottom:0;">
             <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Mức Mật Mã (Cipher Suite)</label>
             <select id="host-suite" class="input-select" style="height:38px; box-sizing:border-box; font-size:12px;">
-              <option value="3" selected>Mức 3: Pure PQC (ML-KEM-1024 + ML-DSA-87)</option>
-              <option value="2">Mức 2: Modern Hybrid (ML-KEM-768 + X25519)</option>
+              <option value="2" selected>Mức 2: Modern Hybrid (ML-KEM-768 + X25519) [Mặc Định / Khuyên Dùng]</option>
+              <option value="3">Mức 3: Pure PQC (ML-KEM-1024 + ML-DSA-87)</option>
               <option value="1">Mức 1: Classical Fast (X25519 + AES-GCM)</option>
             </select>
           </div>
@@ -4795,8 +4820,8 @@ window.onload = function() {
         <div class="form-group">
           <label>Mức Mật Mã Mặc Định Toàn Cục (default_suite)</label>
           <select id="cfg-default-suite" class="input-select">
-            <option value="SUITE_3_PURE_PQC" selected>SUITE_3_PURE_PQC (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng]</option>
-            <option value="SUITE_2_MODERN_HYBRID">SUITE_2_MODERN_HYBRID (ML-KEM-768 + X25519)</option>
+            <option value="SUITE_2_MODERN_HYBRID" selected>SUITE_2_MODERN_HYBRID (ML-KEM-768 + X25519) [Mặc Định / Khuyên Dùng]</option>
+            <option value="SUITE_3_PURE_PQC">SUITE_3_PURE_PQC (ML-KEM-1024 + ML-DSA-87)</option>
             <option value="SUITE_1_CLASSICAL_FAST">SUITE_1_CLASSICAL_FAST (X25519 + AES-GCM)</option>
           </select>
         </div>
