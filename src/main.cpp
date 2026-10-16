@@ -29,6 +29,8 @@
 #include <set>
 #include <cmath>
 
+using namespace slug;
+
 static std::atomic<bool> g_stop_signal_received{false};
 static void signal_handler(int) {
     g_stop_signal_received = true;
@@ -140,7 +142,7 @@ static std::string get_host_lan_ip() {
     if (sock == INVALID_SOCKET) return "127.0.0.1";
     sockaddr_in target{};
     target.sin_family = AF_INET;
-    target.sin_addr.s_addr = inet_addr("8.8.8.8");
+    inet_pton(AF_INET, "8.8.8.8", &target.sin_addr);
     target.sin_port = htons(53);
     if (connect(sock, reinterpret_cast<sockaddr*>(&target), sizeof(target)) == SOCKET_ERROR) {
         closesocket(sock);
@@ -524,7 +526,7 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             if (excluded.size() < 250) {
                 uintmax_t sz = 0;
                 if (!is_dir) sz = it->file_size(ec);
-                excluded.push_back({
+                excluded.push_back(nlohmann::json{
                     {"name", rel + (is_dir ? "/" : "")},
                     {"size", is_dir ? "Directory" : core::Utils::format_size(sz)},
                     {"rule", excl_rule},
@@ -538,7 +540,7 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
 
         uintmax_t sz = it->file_size(ec);
         if (sz > 5 * 1024 * 1024) {
-            clean.push_back({
+            clean.push_back(nlohmann::json{
                 {"name", rel},
                 {"size", core::Utils::format_size(sz)},
                 {"status", "Large File"},
@@ -566,10 +568,10 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             ss << std::fixed << std::setprecision(2) << entropy;
             reason += " (Entropy: " + ss.str() + ")";
 
-            quarantined.push_back({
+            quarantined.push_back(nlohmann::json{
                 {"name", rel},
                 {"size", core::Utils::format_size(sz)},
-                {"tiers", {"Slug Regex", "Slug AI"}},
+                {"tiers", nlohmann::json::array({"Slug Regex", "Slug AI"})},
                 {"reason", reason},
                 {"unquarantined", allowed}
             });
@@ -577,7 +579,7 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             if (clean.size() < 250) {
                 std::ostringstream ss;
                 ss << std::fixed << std::setprecision(2) << entropy;
-                clean.push_back({
+                clean.push_back(nlohmann::json{
                     {"name", rel},
                     {"size", core::Utils::format_size(sz)},
                     {"status", "Clean"},
@@ -3339,10 +3341,11 @@ int cmd_portal(int argc, char* argv[]) {
                 res["status"] = "ok";
                 if (g_portal.client && g_portal.client->is_connected()) {
                     auto tunnel_resp = g_portal.client->tunnel_http("GET /api/status HTTP/1.1\r\nHost: workspace\r\nConnection: close\r\n\r\n");
-                    size_t bpos = tunnel_resp.find("\r\n\r\n");
+                    std::string resp_str(tunnel_resp.begin(), tunnel_resp.end());
+                    size_t bpos = resp_str.find("\r\n\r\n");
                     if (bpos != std::string::npos) {
                         try {
-                            auto st = nlohmann::json::parse(tunnel_resp.substr(bpos + 4));
+                            auto st = nlohmann::json::parse(resp_str.substr(bpos + 4));
                             res["workspace"] = st.value("workspace", "remote");
                         } catch (...) {}
                     }
