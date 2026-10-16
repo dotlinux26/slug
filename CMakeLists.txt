@@ -67,7 +67,7 @@ if(WIN32)
     if(MSVC)
         set_property(TARGET slug PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_compile_options(slug PRIVATE /utf-8 /W4)
+        target_compile_options(slug PRIVATE /utf-8 /W3 /EHsc)
     endif()
     # Find OpenSSL on Windows
     find_package(OpenSSL REQUIRED)

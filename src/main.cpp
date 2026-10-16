@@ -23,6 +23,11 @@
 #include <algorithm>
 #include <set>
 
+static std::atomic<bool> g_stop_signal_received{false};
+static void signal_handler(int) {
+    g_stop_signal_received = true;
+}
+
 #if defined(SLUG_PLATFORM_POSIX)
 #include <unistd.h>
 #include <fcntl.h>
@@ -31,11 +36,6 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-
-static std::atomic<bool> g_stop_signal_received{false};
-static void signal_handler(int) {
-    g_stop_signal_received = true;
-}
 
 static std::string read_hidden_password(const std::string& prompt) {
     std::cout << prompt << std::flush;
@@ -320,6 +320,9 @@ int cmd_add(int argc, char* argv[]) {
         std::signal(SIGINT, signal_handler);
         std::signal(SIGTERM, signal_handler);
     }
+#else
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
 #endif
 
     print_banner();
@@ -400,6 +403,8 @@ int cmd_add(int argc, char* argv[]) {
     bool is_terminal = false;
 #if defined(SLUG_PLATFORM_POSIX)
     is_terminal = (isatty(STDOUT_FILENO) != 0);
+#elif defined(SLUG_PLATFORM_WINDOWS)
+    is_terminal = (_isatty(_fileno(stdout)) != 0);
 #endif
 
     TerminalCursorRestorer cursor_guard(is_terminal);
