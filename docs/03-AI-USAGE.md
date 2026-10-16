@@ -118,3 +118,40 @@ Slug cung cấp module **PQC EnvShield** (`slug env`):
 * **Vậy giá trị bảo vệ thực tế của Slug là gì?**
   Các trợ lý AI là tác nhân hỗ trợ (cooperative assistants), chúng **không bao giờ chủ động tìm cách bypass hay viết mã exploit để trích xuất bộ nhớ RAM** (trừ phi lập trình viên cố tình viết prompt hướng dẫn AI làm điều đó).
 * **Kết luận:** Slug cung cấp một **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ ổ đĩa, đảm bảo secret không bao giờ bị rò rỉ vào context window của LLM trong quá trình làm việc hàng ngày. Đồng thời khi chia sẻ workspace giữa người với người, hệ thống lọc 4 tầng (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy Guard` -> `AI Semantic Guard`) đảm bảo không bao giờ bị chia sẻ thừa file rác hay gửi nhầm file bí mật.
+
+### 5.4. Centralized Env Vault & Nghệ Thuật Dạy AI (Agent Directive)
+
+#### A. Kho Lưu Trữ Trung Tâm Ngoài Workspace (`~/.slug/env_vault/`)
+Khi chạy `slug env init`:
+1. Slug tính mã băm định danh duy nhất của Workspace (BLAKE3 16-hex dựa trên canonical path).
+2. Tự động lưu bản sao `.env` ra ngoài workspace vào Central Vault của người dùng:
+   ```text
+   ~/.slug/env_vault/<workspace_hash>/
+   ├── meta.json                      # Lưu: workspace_path, timestamp, blake3 hash, size, version
+   ├── env_20261016_205000_v1.bak     # Bản backup v1
+   └── env_20261016_213000_v2.bak     # Bản backup v2 (nếu init lại)
+   ```
+3. Trong workspace: Tạo file mã hóa `.env.pqc` và xóa sạch `.env` cùng `.env.bak` khỏi workspace để AI không thể đọc trộm (trừ khi dùng cờ `slug env init --keep`).
+
+#### B. Khôi Phục 1 Chạm (`slug env restore`) & Lịch Sử (`slug env history`)
+* Khi developer cần khôi phục lại `.env` bản rõ trên đĩa:
+  ```bash
+  slug env restore
+  ```
+  Slug tự động lấy bản backup mới nhất từ Central Vault (hoặc giải mã trực tiếp từ `.env.pqc` nếu vault thất lạc) và dọn sạch `.env.pqc`.
+* Để kiểm tra các phiên bản backup đã lưu:
+  ```bash
+  slug env history
+  ```
+
+#### C. Nghệ Thuật Dạy AI (`slug env prompt`)
+Lệnh `slug env prompt` in ra chỉ dẫn chuẩn cho AI coding agents (đồng thời tự động tạo `.slug/ai-rule.md`):
+```markdown
+# SLUG ENVSHIELD AGENT DIRECTIVE
+- In this repository, sensitive environment variables are sealed in `.env.pqc`.
+- DO NOT attempt to create or read plaintext `.env` on disk.
+- ALWAYS execute runtime commands (npm start, pytest, python, cargo, etc.) through Slug EnvShield:
+    slug env run -- <command>
+- Slug will decrypt secrets directly in process memory (RAM).
+```
+Nhờ chỉ dẫn này, AI hiểu cách dùng công cụ để chạy lệnh test/start (`slug env run -- pytest`) thay vì đọc file trên đĩa hoặc tạo `.env` rác.

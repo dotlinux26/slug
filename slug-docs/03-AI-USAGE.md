@@ -194,3 +194,9 @@ Mục tiêu của Stateful AI Audit không phải “AI nhớ mãi file sạch�
 - **Tại sao cơ chế này vẫn an toàn?** Các trợ lý AI (Copilot, Cursor, Claude Code) là tác nhân hỗ trợ, chúng **không tự ý tìm cách bypass hay khai thác bộ nhớ RAM** (trừ phi người dùng cố tình viết prompt hướng dẫn AI làm điều đó).
 - **Giá trị thực tế:** Slug tạo ra **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ đĩa vào context window hay chat log của LLM. Kết hợp với bộ lọc 4 tầng (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy` -> `AI Semantic Guard`), Slug giúp chia sẻ workspace giữa người với người an toàn tuyệt đối.
 
+### 10.4. Centralized Vault & Chỉ Thị AI (Agent Directive)
+- **Central Vault (`~/.slug/env_vault/<workspace_hash>/`):** Khi `slug env init`, Slug băm định danh thư mục bằng BLAKE3 và lưu bản sao có timestamp + versioning (`env_YYYYMMDD_HHMMSS_v<seq>.bak`, `meta.json`) ra ngoài thư mục dự án, sau đó xóa sạch `.env` và `.env.bak` trong repo (trừ khi dùng `--keep`).
+- **Khôi phục 1 chạm (`slug env restore`):** Khôi phục lại `.env` bản rõ từ Vault bất cứ lúc nào và gỡ `.env.pqc`.
+- **Xem lịch sử backup (`slug env history`):** Liệt kê các phiên bản `.env` đã được niêm phong trong Central Vault.
+- **Dạy AI qua Directive (`slug env prompt`):** Tự động sinh `.slug/ai-rule.md` hướng dẫn AI luôn thực thi lệnh qua `slug env run -- <cmd>` để inject biến môi trường trực tiếp từ RAM, không cố tạo lại file `.env` rác trên đĩa.
+

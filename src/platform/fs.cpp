@@ -153,4 +153,11 @@ bool PathUtils::write_text_file_atomic(const fs::path& path, const std::string& 
     return write_binary_file_atomic(path, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(content.data()), content.size()));
 }
 
+fs::path PathUtils::get_user_home() {
+    const char* home = std::getenv("HOME");
+    if (!home) home = std::getenv("USERPROFILE");
+    if (home) return fs::path(home);
+    return fs::temp_directory_path();
+}
+
 } // namespace slug::platform

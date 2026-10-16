@@ -41,6 +41,13 @@ public:
 
     // Directory creation
     static bool ensure_directory(const fs::path& path);
+
+    // Returns current user's home directory (~ or %USERPROFILE%)
+    static fs::path get_user_home();
 };
+
+inline fs::path get_user_home() {
+    return PathUtils::get_user_home();
+}
 
 } // namespace slug::platform

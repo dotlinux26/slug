@@ -82,7 +82,7 @@ SLUG THE ESSENTIAL 9 CORE CLI
 [SYSTEM UTILITIES]
   slug serve -p <port> [-w]   Xem chi tiết server hoặc mở Web Dashboard quản trị
   slug conn                   Quản lý danh sách kết nối lưu trên máy client (list, use, prune)
-  slug env                    Bảo vệ biến môi trường nhạy cảm trong bộ nhớ RAM (init, run)
+  slug env                    Bảo vệ biến môi trường trong RAM & Central Vault (init, restore, history, prompt, run)
   slug completion <bash|zsh>  Sinh script tự động hoàn thành lệnh cho shell (Tab completion)
   slug bench                  Đo kiểm tốc độ truyền tải vi sai và hiệu năng thuật toán mật mã
   slug version                Hiển thị thông tin phiên bản, commit hash và giấy phép bản quyền
@@ -145,16 +145,25 @@ Khi chia sẻ với người dùng không cài đặt sẵn CLI:
 
 ### Kịch Bản 3: Bảo Vệ File `.env` Khỏi AI Coding Agents Với PQC EnvShield
 
-Để ngăn ngừa các công cụ AI (như Cursor hoặc Copilot) đọc lén file cấu hình chứa API key trên đĩa cứng:
+Để ngăn ngừa các công cụ AI (như Cursor, Copilot, Claude Code) đọc lén file cấu hình chứa API key trên đĩa cứng:
 
 ```bash
-# 1. Mã hóa .env thành .env.pqc và xóa hoàn toàn bản rõ khỏi ổ đĩa
+# 1. Mã hóa .env thành .env.pqc, lưu bản sao ra Central Vault (~/.slug/env_vault/) và dọn sạch plaintext trong repo
 slug env init
 
-# 2. Chạy ứng dụng: Slug giải mã duy nhất trong RAM và nạp biến môi trường cho tiến trình
+# 2. Xuất chỉ thị chuẩn để dạy AI luôn chạy lệnh qua công cụ (tự động tạo .slug/ai-rule.md)
+slug env prompt
+
+# 3. Chạy ứng dụng hoặc test: Slug giải mã duy nhất trong RAM và nạp biến môi trường cho tiến trình
 slug env run -- python3 app.py
 # hoặc
-slug env run -- npm start
+slug env run -- npm test
+
+# 4. Khi cần sửa file hoặc thoát chế độ AI: Khôi phục 1 chạm về nguyên trạng .env
+slug env restore
+
+# 5. Xem lịch sử các bản backup đã niêm phong trong Central Vault
+slug env history
 ```
 
 ---

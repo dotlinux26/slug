@@ -432,7 +432,12 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
     connect -i <ip> -p <port> Authenticate to remote workspace and save connection certificate
     serve [-p <port>] [-w]   Server inspection box; pass -w to open Web Admin Dashboard
     completion <bash|zsh>    Generate shell autocompletion script
-    env <init|run>           RAM-only PQC secret injection (EnvShield)
+    env <init|restore|history|prompt|run> Post-Quantum EnvShield & Central Vault
+                             init [--keep]           Seal .env into .env.pqc & Central Vault
+                             restore                 1-touch restore plaintext .env from Vault
+                             history                 Inspect versioned backups in Vault
+                             prompt                  Print directive instructions for AI agents
+                             run -- <cmd...>         Inject secrets in RAM & execute command
     bench [--quick] [--json] Run cryptography & I/O performance benchmarks
     version                  Display version and platform build details
 
@@ -2931,20 +2936,87 @@ int cmd_audit(int argc, char* argv[]) {
 
 int cmd_env(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: slug env [init|run] ..." << std::endl;
+        std::cerr << "Usage: slug env <init|restore|history|prompt|run> [options]" << std::endl;
+        std::cerr << "  slug env init [-s <suite>] [-k|--keep] : Seal .env into .env.pqc & Central Vault" << std::endl;
+        std::cerr << "  slug env restore                       : 1-touch restore plaintext .env from Vault" << std::endl;
+        std::cerr << "  slug env history                       : Inspect versioned backups in Central Vault" << std::endl;
+        std::cerr << "  slug env prompt                        : Print directive prompt for AI agents" << std::endl;
+        std::cerr << "  slug env run -- <command...>           : Decrypt secrets in RAM & run command" << std::endl;
         return 1;
     }
     std::string sub = argv[2];
 
     if (sub == "init") {
         core::SuiteID suite = core::SuiteID::SUITE_3_PURE_PQC;
+        bool keep = false;
         for (int i = 3; i < argc; ++i) {
-            if ((std::string(argv[i]) == "-s" || std::string(argv[i]) == "--suite") && i + 1 < argc) {
+            std::string arg = argv[i];
+            if (arg == "-k" || arg == "--keep") {
+                keep = true;
+            } else if ((arg == "-s" || arg == "--suite") && i + 1 < argc) {
                 suite = core::suite_from_string(argv[++i]);
             }
         }
-        bool ok = envshield::EnvShield::init(".", suite);
+        bool ok = envshield::EnvShield::init(".", suite, keep);
         return ok ? 0 : 1;
+
+    } else if (sub == "restore" || sub == "revert" || sub == "unshield") {
+        bool ok = envshield::EnvShield::restore(".");
+        return ok ? 0 : 1;
+
+    } else if (sub == "history" || sub == "list" || sub == "backups") {
+        auto list = envshield::EnvShield::history(".");
+        auto vault_dir = envshield::EnvShield::get_vault_dir(".");
+        auto hash = envshield::EnvShield::get_workspace_hash(".");
+
+        std::cout << "================================================================================" << std::endl;
+        std::cout << "SLUG CENTRAL ENV VAULT HISTORY" << std::endl;
+        std::cout << "Workspace Hash: " << hash << std::endl;
+        std::cout << "Vault Location: " << vault_dir.string() << std::endl;
+        std::cout << "================================================================================" << std::endl;
+        if (list.empty()) {
+            std::cout << "No backups found for this workspace in Central Vault." << std::endl;
+            return 0;
+        }
+
+        std::cout << std::left << std::setw(8) << "VERSION"
+                  << std::setw(22) << "TIMESTAMP"
+                  << std::setw(12) << "SIZE"
+                  << std::setw(18) << "BLAKE3"
+                  << "BACKUP FILE" << std::endl;
+        std::cout << std::string(80, '-') << std::endl;
+
+        for (const auto& item : list) {
+            std::string time_str = "-";
+            if (item.timestamp > 0) {
+                std::time_t t = static_cast<std::time_t>(item.timestamp);
+                std::tm tm_buf{};
+#if defined(SLUG_PLATFORM_WINDOWS)
+                localtime_s(&tm_buf, &t);
+#else
+                localtime_r(&t, &tm_buf);
+#endif
+                char buf[32];
+                std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
+                time_str = buf;
+            }
+            std::string hash_short = item.blake3_hash.size() >= 12 ? (item.blake3_hash.substr(0, 12) + "...") : item.blake3_hash;
+            std::string size_str = std::to_string(item.size_bytes) + " B";
+            std::cout << std::left << std::setw(8) << ("v" + std::to_string(item.version))
+                      << std::setw(22) << time_str
+                      << std::setw(12) << size_str
+                      << std::setw(18) << hash_short
+                      << item.filename << std::endl;
+        }
+        std::cout << "================================================================================" << std::endl;
+        std::cout << "Run 'slug env restore' to revert the workspace to the latest version." << std::endl;
+        return 0;
+
+    } else if (sub == "prompt" || sub == "directive") {
+        std::cout << envshield::EnvShield::agent_prompt(".") << std::endl;
+        std::cout << "[*] AI rule file has also been saved to .slug/ai-rule.md" << std::endl;
+        std::cout << "[*] You can copy the above directive into your Cursor Rules (.cursorrules), Claude instructions, or Copilot prompts." << std::endl;
+        return 0;
 
     } else if (sub == "run") {
         // Collect command after "--"
@@ -2966,6 +3038,8 @@ int cmd_env(int argc, char* argv[]) {
 
         return envshield::EnvShield::run(".", cmd);
     }
+
+    std::cerr << "Unknown slug env subcommand: " << sub << ". Run 'slug help' for usage." << std::endl;
     return 1;
 }
 
