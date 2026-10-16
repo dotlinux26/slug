@@ -60,6 +60,8 @@ static std::vector<ConnectionInfo> list_connections_unlocked(const fs::path& p) 
                 c.ticket = obj.value("ticket", "");
                 c.created_at = obj.value("created_at", 0ULL);
                 c.expires_at = obj.value("expires_at", 0ULL);
+                c.suite = suite_from_string(obj.value("suite", "classical"));
+                c.last_active = obj.value("last_active", c.created_at);
                 out.push_back(c);
             }
         }
@@ -81,6 +83,8 @@ static void write_connections_unlocked(const fs::path& p, const std::vector<Conn
         obj["ticket"] = c.ticket;
         obj["created_at"] = c.created_at;
         obj["expires_at"] = c.expires_at;
+        obj["suite"] = suite_to_short_name(c.suite);
+        obj["last_active"] = c.last_active;
         arr.push_back(obj);
     }
     platform::PathUtils::write_text_file_atomic(p, arr.dump(2));

@@ -1,84 +1,70 @@
-# 01. Đặt vấn đề và nhu cầu thực tế
+# 01. Đặt vấn đề thực tế: Bài toán chia sẻ dữ liệu trong phòng máy trường học
 
-> **Trạng thái tài liệu:** Hồ sơ đề xuất kỹ thuật cho SICT Innovation Challenge 2026. Các tính năng, số liệu hiệu năng và tuyên bố bảo mật trong tài liệu này là mục tiêu thiết kế cho đến khi được hiện thực hóa, kiểm thử và đo đạc trên bản phát hành cụ thể.
+> **Đơn vị dự thi:** Đội thi SICT Innovation Challenge 2026 — Track: Tech Your Solutions (Đại học Công nghiệp Hà Nội)  
+> **Lĩnh vực giải pháp:** Mạng (Kết nối LAN trực tiếp, Băng thông, Bảo mật kênh truyền) & Phần mềm (Thao tác người dùng, Lọc dữ liệu, Bảo vệ bí mật mã nguồn)
 
-## 1. Bối cảnh
+---
 
-Sinh viên, nhóm nghiên cứu và lập trình viên thường xuyên chia sẻ mã nguồn, tệp nhị phân, tài liệu đồ án và dữ liệu thử nghiệm giữa các máy tính trong phòng lab, ký túc xá, mạng LAN hoặc qua Internet. Việc chia sẻ cần đủ nhanh để dùng hằng ngày, nhưng cũng cần kiểm soát được danh tính người nhận, quyền đọc/ghi, phạm vi thư mục và các tệp không nên gửi ra ngoài.
+## 1. Một tình huống rất "đời" trong môi trường học tập
 
-Nhiều công cụ truyền tệp giải quyết tốt một phần nhu cầu nhưng không phải lúc nào cũng kết hợp được thao tác đơn giản, lọc dữ liệu nhạy cảm, quyền truy cập có thời hạn và đồng bộ tăng dần trong cùng một workflow.
+Hãy hình dung một tình huống diễn ra hàng ngày tại các phòng máy thực hành CNTT, phòng lab nghiên cứu hoặc khu ký túc xá:
 
-## 2. Các vấn đề cần giải quyết
+> **Sinh viên ngồi tại Máy A muốn gửi nhanh một thư mục bài tập lớn, đồ án môn học hoặc dữ liệu thử nghiệm cho bạn ngồi tại Máy B (hoặc gửi cho thầy cô/mentor để nhờ kiểm tra lỗi).**
 
-### 2.1. Chia sẻ nhanh nhưng thiếu lớp bảo vệ phù hợp
+Các máy tính trong phòng máy được nối với nhau qua switch theo **mô hình mạng hình sao (Star Topology)**. Về mặt vật lý, hai máy chỉ cách nhau vài mét cáp mạng LAN hoặc cùng một sóng Wi-Fi phòng lab. Tuy nhiên, để chuyển được thư mục mã nguồn sang máy bên cạnh, sinh viên gặp phải hàng loạt rào cản:
 
-Một HTTP server tĩnh khởi chạy nhanh có thể phù hợp với dữ liệu công khai trong mạng tin cậy. Tuy nhiên, nếu dùng HTTP không mã hóa trên mạng không đáng tin cậy, nội dung truyền tải và một số thông tin điều khiển có thể bị quan sát hoặc sửa đổi trên đường truyền. Các server tối giản thường không có sẵn cơ chế quản lý người dùng, phân quyền theo workspace hoặc thu hồi phiên.
+```text
+               [MÔ HÌNH THỰC TẾ TRONG PHÒNG MÁY TRƯỜNG HỌC]
 
-Slug không giả định rằng mọi công cụ hiện có đều không an toàn; mục tiêu là cung cấp một lựa chọn tiện dụng hơn khi thư mục được chia sẻ chứa mã nguồn riêng tư hoặc dữ liệu cần giới hạn quyền.
+                      +-----------------------+
+                      |   INTERNET / CLOUD    |
+                      | (Zalo / Drive / Zipp) |
+                      +-----------------------+
+                             ^         |
+              Vòng qua đám mây:        | Tải xuống lại:
+              Tốn băng thông Internet  | Nghẽn mạng phòng máy!
+              và lộ dữ liệu riêng tư!  |
+                             |         v
+  [MÁY A - SINH VIÊN 1] <==================> [MÁY B - SINH VIÊN 2]
+                     KẾT NỐI LAN TRỰC TIẾP QUA SWITCH
+                     - Tốc độ Gigabit nội bộ cực nhanh!
+                     - Nhưng thiếu công cụ:
+                       + Không thạo FTP / SSH / Cấu hình server.
+                       + Gửi qua HTTP thuần thì không mã hóa.
+                       + Vô tình gửi cả thư mục rác node_modules/.
+                       + Vô tình để lộ API key, token cá nhân!
+```
 
-### 2.2. Chia sẻ nhầm tệp nhạy cảm
+---
 
-Workspace phát triển thường chứa `.env`, khóa riêng tư, token truy cập, cơ sở dữ liệu cục bộ, bản dump hoặc dữ liệu thử nghiệm. Một lệnh chia sẻ toàn thư mục có thể vô tình đưa các tệp này cho người nhận. Bộ lọc chỉ dựa trên tên hoặc phần mở rộng có thể bỏ sót secret được hard-code trong mã nguồn; ngược lại, bộ lọc quá cứng có thể gây false positive và làm trải nghiệm tải thư mục khó hiểu.
+## 2. Năm rào cản lớn khi chia sẻ dữ liệu giữa các máy tính
 
-Slug cần kết hợp quy tắc tĩnh dễ dự đoán với một AI Guard tùy chọn, đồng thời cung cấp danh sách cảnh báo, lý do, cơ chế quét lại và quyết định ngoại lệ có lưu vết.
+### 2.1. Rào cản công cụ: Sinh viên không phải ai cũng biết dựng FTP/SSH
+- Các công cụ truyền thống như FTP, SFTP, SCP đòi hỏi kiến thức quản trị mạng: phải cài đặt daemon máy chủ (`sshd`, `vsftpd`), cấu hình cổng, cấp tài khoản hệ điều hành (user/password của Windows/Linux) và cấu hình tường lửa.
+- Việc này quá phức tạp cho nhu cầu gửi nhanh một thư mục trong tiết học 45 phút, dễ dẫn đến việc cấp thừa quyền hoặc để lại tài khoản mồ côi (orphaned accounts) trên máy thực hành.
 
-### 2.3. Quyền truy cập tồn tại lâu hơn nhu cầu
+### 2.2. Lãng phí băng thông: Vòng qua Internet đám mây không cần thiết
+- Khi không có công cụ nội bộ, sinh viên thường nén file ZIP rồi gửi qua Zalo, Messenger, Discord hoặc tải lên Google Drive.
+- Hai máy tính ngồi cạnh nhau trong cùng mạng LAN nhưng dữ liệu phải tải ngược lên máy chủ đám mây rồi tải ngược trở về. Tại các phòng máy trường học có hàng trăm sinh viên cùng thực hành, đường truyền Internet ra ngoài thường xuyên bị quá tải, nghẽn mạng, khiến việc gửi một file đồ án mất hàng chục phút.
 
-Khi công việc nhóm kết thúc, tài khoản hoặc quyền chia sẻ đôi khi vẫn còn hiệu lực vì người quản trị quên thu hồi. Tài khoản hệ thống dùng chung cũng có thể khiến phạm vi quyền rộng hơn nhu cầu thực tế.
+### 2.3. Gửi thừa dữ liệu: Thư mục dự án chứa đầy file rác
+- Một dự án lập trình hiện đại (Node.js, React, Python, Rust, Java) chứa các thư mục phụ thuộc và file tạm cực kỳ nặng nề: `node_modules/` (hàng trăm MB đến hàng GB), `build/`, `dist/`, `.venv/`, `target/`.
+- Khi nén cả thư mục để gửi, sinh viên làm lãng phí dung lượng ổ đĩa của bạn bè và lãng phí thời gian truyền tải những file mà máy người nhận hoàn toàn có thể tự tái tạo lại (`npm install`).
 
-Slug hướng tới quyền theo từng workspace, vai trò tối thiểu `r`, `w`, `rw` và thời hạn hết hiệu lực (`--ttl`). Hết hạn phải được kiểm tra ở phía server khi thực hiện từng thao tác được bảo vệ, không chỉ dựa vào đồng hồ hoặc trạng thái hiển thị trên GUI.
+### 2.4. Rủi ro riêng tư: Vô tình gửi nhầm API key và cấu hình bí mật
+- Trong quá trình làm đồ án có sử dụng AI (OpenAI, Gemini) hoặc kết nối cơ sở dữ liệu, sinh viên lưu khóa bí mật trong file `.env` hoặc file cấu hình cá nhân.
+- Khi gửi nhanh cả thư mục cho bạn hoặc đẩy lên GitHub công khai (theo yêu cầu nộp bài của trường hoặc thể lệ cuộc thi), sinh viên rất dễ quên xóa `.env`. Hậu quả: tài khoản đám mây bị bot quét tự động vét sạch, gây mất tiền oan hoặc rò rỉ dữ liệu thử nghiệm.
 
-### 2.4. Độ trễ và chi phí khi quét lại toàn bộ Workspace
+### 2.5. Lo ngại an toàn đường truyền: Mạng Wi-Fi công cộng thiếu mã hóa
+- Nếu sinh viên dùng lệnh chia sẻ nhanh quen thuộc `python -m http.server 8000`:
+  - Dữ liệu truyền hoàn toàn bằng văn bản rõ (Plaintext HTTP). Bất kỳ ai trong cùng mạng Wi-Fi trường học đều có thể bắt gói tin (sniffing qua Wireshark) và lấy cắp toàn bộ mã nguồn bài thi/đồ án.
+  - Không có bất kỳ cơ chế xác thực danh tính: ai biết IP và cổng đều tải được mọi file trong máy.
 
-Nếu AI phân tích lại tất cả tệp mỗi lần bật server, thời gian chờ và chi phí gọi mô hình có thể tăng nhanh theo kích thước dự án. Tương tự, nếu mỗi lần cập nhật phải tải lại toàn bộ thư mục, việc đổi một vài tệp trong workspace lớn sẽ lãng phí băng thông.
+---
 
-Slug đề xuất một chỉ mục trạng thái theo nội dung, lưu dấu vân tay BLAKE3 và trạng thái kiểm tra; cùng một giao thức manifest/diff để client chỉ lấy tệp hoặc các khối dữ liệu cần cập nhật.
+## 3. Khoảng trống cần giải quyết
 
-### 2.5. Bảo vệ secret khi lưu trữ cục bộ
+Sinh viên và lập trình viên không cần một hệ thống quản trị mạng phức tạp của doanh nghiệp. Họ cần:
+> **Một công cụ chuyển file và thư mục dự án trực tiếp giữa các máy tính trong mạng nội bộ: Cực kỳ đơn giản (chỉ cần nhập IP, Port và mã OTP), tốc độ LAN tối đa, tự động lọc sạch file rác và chặn hoàn toàn việc gửi nhầm dữ liệu nhạy cảm trước khi rời máy.**
 
-Tệp `.env` dạng văn bản rõ có thể bị vô tình đọc bởi công cụ lập chỉ mục, backup, đồng bộ đám mây hoặc AI coding agent có quyền truy cập workspace. Mã hóa tệp khi lưu trữ giúp giảm rủi ro đọc trộm ở trạng thái nghỉ, nhưng không loại bỏ mọi rủi ro trong lúc ứng dụng sử dụng secret. Khi secret được đưa vào biến môi trường của tiến trình, tiến trình đó và các chủ thể có đủ quyền hệ điều hành vẫn có thể truy cập chúng.
-
-Slug đề xuất lệnh `slug env` để mã hóa tệp cấu hình nhạy cảm và cung cấp secret cho một tiến trình khi chạy, với giới hạn bảo mật được công bố rõ.
-
-## 3. Mục tiêu của Slug
-
-Slug là một công cụ dòng lệnh đa nền tảng, hướng đến việc chia sẻ và đồng bộ workspace trực tiếp giữa máy chủ lưu trữ và client, với các đặc tính:
-
-- Thiết lập workspace chia sẻ độc lập, có quy tắc và ACL riêng.
-- Ba bộ cấu hình mật mã nhằm cân bằng tính tương thích, hiệu năng băm và khả năng chống lại các đối thủ có máy tính lượng tử đủ mạnh.
-- Xác thực nhanh bằng mã 8 chữ số dùng một lần, cùng tài khoản phân quyền có thời hạn.
-- Bộ lọc phân tầng dựa trên `.gitignore`, quy tắc bảo mật riêng và AI Guard tùy chọn.
-- Đồng bộ vi sai dựa trên manifest và hash tệp/khối, kèm chế độ xem trước và chọn lọc.
-- Công cụ mã hóa secret lưu trữ cục bộ, với giới hạn rõ ràng về môi trường thực thi.
-
-## 4. Phạm vi và ngoài phạm vi
-
-**Trong phạm vi đề xuất:** chia sẻ trực tiếp host–client khi mạng cho phép; xác thực và phân quyền; lọc tệp; truyền tệp/thư mục; đồng bộ tăng dần; kiểm tra secret; quản lý trạng thái và audit.
-
-**Ngoài phạm vi mặc định:** thay thế Git để quản lý lịch sử phiên bản, cung cấp một dịch vụ relay công cộng, bảo đảm ẩn danh mạng, hoặc tuyên bố rằng mọi cuộc tấn công MITM/relay đều bị ngăn chặn. Khả năng đi qua NAT/firewall sẽ phụ thuộc môi trường mạng và cần được thiết kế, kiểm thử riêng nếu bổ sung.
-
-## 5. Người dùng và tình huống sử dụng
-
-- **Sinh viên/nhóm đồ án:** gửi mã nguồn hoặc nhận bài tập từ thành viên khác mà không phải nén thủ công.
-- **Nhóm nghiên cứu:** chia sẻ thư mục dữ liệu có giới hạn quyền và thời gian truy cập.
-- **Kỹ sư phần mềm:** đồng bộ workspace lớn, chỉ kéo các tệp hoặc khối nội dung thay đổi.
-- **Chủ workspace:** rà soát secret trước khi chia sẻ và chủ động quyết định cách xử lý cảnh báo.
-- **Người phát triển ứng dụng cục bộ:** lưu secret ở dạng được mã hóa khi không sử dụng và cấp chúng cho đúng tiến trình khi chạy.
-
-## 6. Tiêu chí đánh giá đề xuất
-
-Các chỉ tiêu cần được xác minh bằng bản triển khai và benchmark có thể lặp lại:
-
-1. **Tính đúng đắn:** ACL, TTL, quy tắc lọc và quyết định AI được thực thi nhất quán ở CLI, GUI và giao thức.
-2. **An toàn giao thức:** kiểm thử replay, giả mạo header, sai transcript, hết hạn phiên, rollback manifest và truyền dữ liệu sai thứ tự.
-3. **Hiệu năng:** thời gian khởi động, thời gian tạo manifest, tốc độ truyền, tỷ lệ byte tiết kiệm khi đồng bộ vi sai và chi phí gọi AI.
-4. **Khả năng sử dụng:** dry-run, báo cáo file bị bỏ qua, lý do chặn rõ ràng, thao tác recheck và xử lý false positive có kiểm soát.
-5. **Quyền riêng tư:** phân biệt rõ chế độ AI local và cloud; mặc định không gửi nội dung mã nguồn tới nhà cung cấp bên ngoài.
-
-## 7. Tuyên bố trung thực về mức độ hoàn thiện
-
-Các cụm từ như “khởi động dưới 0,5 giây”, “AI Fast-Scan dưới 10 giây” hoặc “chỉ truyền các chunk thay đổi” phải được coi là **mục tiêu kiểm thử**, không phải kết quả đã đạt, trừ khi báo cáo benchmark ghi rõ commit, cấu hình máy, kích thước dữ liệu, số lần chạy và phương pháp đo. Tương tự, khả năng chống tấn công phải được diễn đạt theo mô hình đe dọa, không dùng các khẳng định tuyệt đối như “an toàn tuyệt đối” hay “triệt tiêu 100%”.
-
-## 8. Tóm tắt
-
-Slug nhắm đến khoảng trống giữa lệnh chia sẻ tệp tức thời và hệ thống đồng bộ có kiểm soát: giữ trải nghiệm dòng lệnh gọn nhẹ nhưng bổ sung quyền theo workspace, thời hạn truy cập, kiểm tra secret, delta sync và một giao thức truyền tải được thiết kế có chủ đích.
+Đó chính là sứ mệnh thực tế của **Slug**.

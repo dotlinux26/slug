@@ -12,6 +12,11 @@ using json = nlohmann::json;
 
 SlugClient::SlugClient() = default;
 
+SlugClient::SlugClient(const std::string& host, uint16_t port, core::SuiteID suite_id) {
+    suite_id_ = suite_id;
+    connect(host, port);
+}
+
 SlugClient::~SlugClient() {
     disconnect();
 }
@@ -19,6 +24,7 @@ SlugClient::~SlugClient() {
 void SlugClient::disconnect() {
     socket_.close();
     session_id_ = 0;
+    session_ticket_.clear();
     is_encrypted_ = false;
     tx_seq_ = 1;
 }
@@ -168,6 +174,7 @@ ClientAuthResult SlugClient::authenticate_totp(const std::string& totp_code) {
 
         session_id_ = res.session_id;
         role_ = res.role;
+        session_ticket_ = res.web_ticket;
     } else {
         res.success = false;
         res.message = resp.value("message", "Authentication failed");
@@ -210,6 +217,7 @@ ClientAuthResult SlugClient::authenticate_user(const std::string& username, cons
 
         session_id_ = res.session_id;
         role_ = res.role;
+        session_ticket_ = res.web_ticket;
     } else {
         res.success = false;
         res.message = resp.value("message", "Authentication failed");
@@ -250,11 +258,45 @@ ClientAuthResult SlugClient::authenticate_ticket(const std::string& ticket) {
 
         session_id_ = res.session_id;
         role_ = res.role;
+        session_ticket_ = res.web_ticket;
     } else {
         res.success = false;
         res.message = resp.value("message", "Ticket authentication failed");
     }
     return res;
+}
+
+bool SlugClient::authenticate_user(const std::string& username, const std::string& password, uint64_t ttl, bool save) {
+    (void)ttl;
+    (void)save;
+    auto r = authenticate_user(username, password, "rw");
+    if (r.success) {
+        session_ticket_ = r.web_ticket;
+        return true;
+    }
+    last_error_ = r.message;
+    return false;
+}
+
+bool SlugClient::authenticate_token(const std::string& token_or_ticket, uint64_t ttl, bool save) {
+    (void)ttl;
+    (void)save;
+    if (token_or_ticket.size() == 8 && std::all_of(token_or_ticket.begin(), token_or_ticket.end(), ::isdigit)) {
+        auto r = authenticate_totp(token_or_ticket);
+        if (r.success) {
+            session_ticket_ = r.web_ticket;
+            return true;
+        }
+        last_error_ = r.message;
+        return false;
+    }
+    auto r = authenticate_ticket(token_or_ticket);
+    if (r.success) {
+        session_ticket_ = r.web_ticket;
+        return true;
+    }
+    last_error_ = r.message;
+    return false;
 }
 
 std::optional<sync::WorkspaceManifest> SlugClient::fetch_manifest() {

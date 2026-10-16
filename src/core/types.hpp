@@ -33,11 +33,13 @@ inline std::string suite_to_short_name(SuiteID s) {
     return "unknown";
 }
 
+inline constexpr SuiteID kDefaultSuite = SuiteID::SUITE_1_CLASSICAL;
+
 inline SuiteID suite_from_string(std::string_view name) {
     if (name == "1" || name == "classical" || name == "sec1" || name == "sec 1") return SuiteID::SUITE_1_CLASSICAL;
     if (name == "2" || name == "modern" || name == "sec2" || name == "sec 2") return SuiteID::SUITE_2_MODERN;
     if (name == "3" || name == "pqc" || name == "pure-pqc" || name == "sec3" || name == "sec 3") return SuiteID::SUITE_3_PURE_PQC;
-    return SuiteID::SUITE_3_PURE_PQC; // Default is PurePQC
+    return SuiteID::SUITE_1_CLASSICAL; // Default is Suite 1 (Classical Fast)
 }
 
 enum class Role : uint8_t {

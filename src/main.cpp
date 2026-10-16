@@ -244,8 +244,7 @@ public:
         std::error_code ec;
         std::filesystem::create_directories(p.parent_path(), ec);
         std::string s = j.dump(2);
-        std::vector<uint8_t> bytes(s.begin(), s.end());
-        return platform::PathUtils::write_binary_file(p.string(), bytes);
+        return platform::PathUtils::write_text_file_atomic(p, s);
     }
 
     static std::string get(const std::string& key, const std::string& default_val = "") {
@@ -528,27 +527,31 @@ int cmd_add(int argc, char* argv[]) {
 #elif defined(SLUG_PLATFORM_WINDOWS)
     if (daemon && !is_internal_worker) {
         std::string exe = get_current_executable_path();
-        std::string cmdline = "\"" + exe + "\" add \"" + folder_path + "\" -p " + std::to_string(port) +
-                              " -s " + core::suite_to_string(suite) +
+        std::string abs_folder = std::filesystem::absolute(folder_path).string();
+        std::string suite_arg = core::suite_to_short_name(suite);
+        std::string filter_arg = core::filter_mode_to_string(filter_mode);
+        std::string cmdline = "\"" + exe + "\" add \"" + abs_folder + "\" -p " + std::to_string(port) +
+                              " -s " + suite_arg +
                               " -t " + std::to_string(ttl_sec) +
                               (enable_ai ? " -a" : "") +
-                              " --filter-mode " + core::filter_mode_to_string(filter_mode) +
+                              " --filter-mode " + filter_arg +
                               " --internal-worker";
         STARTUPINFOA si{};
         PROCESS_INFORMATION pi{};
         si.cb = sizeof(si);
         std::vector<char> cmd_buf(cmdline.begin(), cmdline.end());
         cmd_buf.push_back('\0');
+        std::string cwd = std::filesystem::current_path().string();
         BOOL ok = CreateProcessA(NULL, cmd_buf.data(), NULL, NULL, FALSE,
-                                 CREATE_NO_WINDOW | DETACHED_PROCESS, NULL, NULL, &si, &pi);
+                                 CREATE_NO_WINDOW | DETACHED_PROCESS, NULL, cwd.c_str(), &si, &pi);
         if (ok) {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
             std::cout << "[+] Server running in background (PID: " << pi.dwProcessId << ")." << std::endl;
-            std::cout << "    Workspace: " << folder_path << std::endl;
+            std::cout << "    Workspace: " << abs_folder << std::endl;
             std::cout << "    Port:      " << port << std::endl;
             std::cout << "    Crypto:    " << core::suite_to_string(suite) << std::endl;
-            std::cout << "    Filter:    " << core::filter_mode_to_string(filter_mode) << std::endl;
+            std::cout << "    Filter:    " << filter_arg << std::endl;
             return 0;
         } else {
             std::cerr << "[-] Failed to spawn background worker process (error " << GetLastError() << ")." << std::endl;
@@ -2396,7 +2399,7 @@ int cmd_portal(int argc, char* argv[]) {
 
             if (path == "/" || path == "/portal") {
                 auto conns = core::ConnectionManager::instance().list_connections();
-                std::string html = web::WebAssets::render_client_portal(conns, actual_port);
+                std::string html = net::WebAssets::render_client_portal(conns, actual_port);
                 send_portal_http(sock, 200, "OK", "text/html; charset=utf-8", html);
                 return;
             }
@@ -2406,12 +2409,12 @@ int cmd_portal(int argc, char* argv[]) {
                     auto j = nlohmann::json::parse(body);
                     std::string host = j.value("host", "127.0.0.1");
                     uint16_t port = static_cast<uint16_t>(j.value("port", 9443));
-                    std::string suite_str = j.value("suite", "SUITE_3_PURE_PQC");
-                    std::string auth_type = j.value("auth_type", "otp");
-                    std::string token = j.value("token", "");
+                    std::string suite_str = j.contains("suite") ? (j["suite"].is_string() ? j["suite"].get<std::string>() : std::to_string(j["suite"].get<int>())) : "classical";
+                    std::string auth_type = j.contains("auth_type") ? j["auth_type"].get<std::string>() : j.value("auth_mode", "otp");
+                    std::string token = j.contains("token") ? j["token"].get<std::string>() : j.value("otp", "");
                     std::string user = j.value("username", "");
                     std::string pass = j.value("password", "");
-                    bool save = j.value("save", false);
+                    bool save = j.value("save", true);
                     std::string id = j.value("id", "");
 
                     core::SuiteID suite = core::suite_from_string(suite_str);
@@ -2520,6 +2523,50 @@ int cmd_portal(int argc, char* argv[]) {
                 } catch (...) {
                     send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
                 }
+                return;
+            }
+
+            if (path == "/api/portal/prune" && method == "POST") {
+                size_t p_exp = core::ConnectionManager::instance().prune_expired_connections();
+                size_t p_dead = core::ConnectionManager::instance().prune_dead_connections(400);
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["pruned_expired"] = p_exp;
+                res["pruned_dead"] = p_dead;
+                res["total_pruned"] = p_exp + p_dead;
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/portal/connections" && (method == "GET" || method == "POST")) {
+                auto conns = core::ConnectionManager::instance().list_connections(true);
+                nlohmann::json arr = nlohmann::json::array();
+                for (const auto& c : conns) {
+                    nlohmann::json obj;
+                    obj["id"] = c.id;
+                    obj["workspace"] = c.workspace;
+                    obj["host"] = c.host;
+                    obj["port"] = c.port;
+                    obj["role"] = core::role_to_string(c.role);
+                    obj["suite"] = core::suite_to_short_name(c.suite);
+                    obj["expires_at"] = c.expires_at;
+                    obj["is_expired"] = c.is_expired();
+                    obj["is_alive"] = core::ConnectionManager::ping_connection(c, 250);
+                    arr.push_back(obj);
+                }
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["connections"] = arr;
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/portal/quit" && method == "POST") {
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["message"] = "Stopping Slug Engine...";
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                g_stop_signal_received = 1;
                 return;
             }
 

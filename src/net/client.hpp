@@ -29,20 +29,24 @@ struct ClientAuthResult {
 class SlugClient {
 public:
     SlugClient();
+    SlugClient(const std::string& host, uint16_t port, core::SuiteID suite_id = core::SuiteID::SUITE_1_CLASSICAL);
     ~SlugClient();
 
     // Connects to server, performs handshake and negotiates suite
     bool connect(const std::string& host, uint16_t port, int timeout_ms = 5000);
     void disconnect();
+    bool is_connected() const { return socket_.is_valid() && is_encrypted_; }
 
     // Authenticate via single-use 8-digit TOTP
     ClientAuthResult authenticate_totp(const std::string& totp_code);
 
     // Authenticate via username / password / requested role
     ClientAuthResult authenticate_user(const std::string& username, const std::string& password, const std::string& role = "r");
+    bool authenticate_user(const std::string& username, const std::string& password, uint64_t ttl, bool save);
 
     // Authenticate via session ticket / certificate
     ClientAuthResult authenticate_ticket(const std::string& ticket);
+    bool authenticate_token(const std::string& token_or_ticket, uint64_t ttl = 86400, bool save = false);
 
     // Fetches remote workspace manifest
     std::optional<sync::WorkspaceManifest> fetch_manifest();
@@ -71,11 +75,14 @@ public:
     uint32_t session_id() const { return session_id_; }
     core::Role role() const { return role_; }
     const std::string& last_error() const { return last_error_; }
+    const std::string& get_last_error() const { return last_error_; }
+    const std::string& session_ticket() const { return session_ticket_; }
 
 private:
     platform::TcpSocket socket_;
     std::string last_error_;
-    core::SuiteID suite_id_{core::SuiteID::SUITE_3_PURE_PQC};
+    std::string session_ticket_;
+    core::SuiteID suite_id_{core::SuiteID::SUITE_1_CLASSICAL};
     std::string suite_name_;
     std::unique_ptr<crypto::ICryptoSuite> suite_;
     uint32_t session_id_{0};

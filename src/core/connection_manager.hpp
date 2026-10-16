@@ -18,6 +18,8 @@ struct ConnectionInfo {
     std::string ticket;
     uint64_t created_at{0};
     uint64_t expires_at{0};
+    SuiteID suite{SuiteID::SUITE_1_CLASSICAL};
+    uint64_t last_active{0};
 
     bool is_expired() const;
 };
@@ -27,6 +29,7 @@ public:
     static ConnectionManager& instance();
 
     void save_connection(const ConnectionInfo& conn);
+    void add_connection(const ConnectionInfo& conn) { save_connection(conn); }
     std::vector<ConnectionInfo> list_connections(bool prune_expired = true);
     size_t prune_expired_connections();
     static bool ping_connection(const ConnectionInfo& c, int timeout_ms = 400);

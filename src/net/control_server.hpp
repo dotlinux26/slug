@@ -48,7 +48,7 @@ class ControlServer {
 public:
     ControlServer(std::filesystem::path workspace_root,
                   uint16_t port = core::kDefaultPort,
-                  core::SuiteID suite_id = core::SuiteID::SUITE_3_PURE_PQC,
+                  core::SuiteID suite_id = core::SuiteID::SUITE_1_CLASSICAL,
                   uint64_t cert_ttl = 86400,
                   bool enable_ai = false,
                   core::FilterMode filter_mode = core::FilterMode::PROTECTED);
