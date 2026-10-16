@@ -58,6 +58,18 @@ set(SLUG_SOURCES
     src/bench/benchmark.cpp
 )
 
+# Embed Windows icon and version info via resource compiler (MSVC only)
+if(WIN32 AND MSVC)
+    # slug.rc references assets/slug-icon.ico relative to project root
+    set(SLUG_RC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/slug.rc")
+    if(EXISTS "${SLUG_RC_FILE}")
+        list(APPEND SLUG_SOURCES "${SLUG_RC_FILE}")
+        message(STATUS "[slug] Embedding Windows resource: ${SLUG_RC_FILE}")
+    else()
+        message(WARNING "[slug] slug.rc not found — icon will NOT be embedded in slug.exe")
+    endif()
+endif()
+
 add_executable(slug ${SLUG_SOURCES})
 
 # Platform-specific link libraries & configuration

@@ -141,21 +141,62 @@ try {
     return
 }
 
-# 5. Create Desktop Shortcut for Web Viewing Portal
+
+# 5. Create Desktop & Start Menu Shortcuts for Web Viewing Portal
 try {
+    $wscriptShell = New-Object -ComObject WScript.Shell
+
+    # Resolve icon path: prefer bundled .ico beside install.ps1, then exe
+    $iconIco = ""
+    $candidateIconPaths = @(
+        (Join-Path $InstallPath "slug-icon.ico"),
+        (Join-Path (Split-Path $targetExe) "slug-icon.ico"),
+        (Join-Path $env:LOCALAPPDATA "slug\slug-icon.ico")
+    )
+    if ($scriptDir) {
+        $candidateIconPaths = @((Join-Path $scriptDir "slug-icon.ico")) + $candidateIconPaths
+    }
+    foreach ($p in $candidateIconPaths) {
+        if (Test-Path $p) {
+            $iconIco = $p
+            break
+        }
+    }
+
+    # Copy .ico to install dir for persistent access
+    if ($iconIco -and ($iconIco -ne (Join-Path $InstallPath "slug-icon.ico"))) {
+        Copy-Item -Path $iconIco -Destination (Join-Path $InstallPath "slug-icon.ico") -Force -ErrorAction SilentlyContinue
+        $iconIco = Join-Path $InstallPath "slug-icon.ico"
+    }
+
+    $iconLocation = if ($iconIco -and (Test-Path $iconIco)) { "$iconIco,0" } else { "$targetExe,0" }
+    Write-Info "Using icon: $iconLocation"
+
+    function New-SlugShortcut($path, $label) {
+        $sc = $wscriptShell.CreateShortcut($path)
+        $sc.TargetPath    = $targetExe
+        $sc.Arguments     = "portal"
+        $sc.Description   = "Slug — P2P Secure Workspace Sharing"
+        $sc.IconLocation  = $iconLocation
+        $sc.WorkingDirectory = $InstallPath
+        $sc.Save()
+        Write-Success "Created $label : $path"
+    }
+
+    # Desktop shortcut
     $desktopPath = [Environment]::GetFolderPath('Desktop')
     if (Test-Path $desktopPath) {
-        $shortcutFile = Join-Path $desktopPath "Slug Workspace.lnk"
-        $wscriptShell = New-Object -ComObject WScript.Shell
-        $shortcut = $wscriptShell.CreateShortcut($shortcutFile)
-        $shortcut.TargetPath = $targetExe
-        $shortcut.Arguments = "portal"
-        $shortcut.Description = "Slug Post-Quantum Workspace Viewing Engine"
-        $shortcut.IconLocation = "$targetExe,0"
-        $shortcut.Save()
-        Write-Success "Created Desktop Shortcut: $shortcutFile"
+        New-SlugShortcut (Join-Path $desktopPath "Slug Workspace.lnk") "Desktop Shortcut"
     }
+
+    # Start Menu shortcut
+    $startMenu = Join-Path ([Environment]::GetFolderPath('StartMenu')) "Programs\Slug"
+    if (-not (Test-Path $startMenu)) {
+        New-Item -ItemType Directory -Path $startMenu -Force | Out-Null
+    }
+    New-SlugShortcut (Join-Path $startMenu "Slug Workspace.lnk") "Start Menu Shortcut"
+
 } catch {
-    Write-Warn "Could not create Desktop shortcut automatically: $($_.Exception.Message)"
+    Write-Warn "Could not create shortcuts automatically: $($_.Exception.Message)"
 }
 

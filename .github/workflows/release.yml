@@ -131,6 +131,7 @@ jobs:
             "dist/slug-windows-x86_64.exe",
             "dist/slug.exe",
             "dist/install.ps1",
+            "dist/slug-icon.ico",
             "dist/SHA256SUMS.windows"
           )
           if (Test-Path "dist/SHA256SUMS") {

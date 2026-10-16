@@ -1,0 +1,40 @@
+// slug.rc — Windows Resource Script
+// Embeds the Slug application icon and version information into slug.exe.
+// This file is compiled by MSVC's resource compiler (rc.exe) and linked in.
+
+#include <windows.h>
+
+// ─── Application Icon ────────────────────────────────────────────────────────
+// IDI_APPICON (101) is the primary icon shown in Explorer, taskbar, and Alt+Tab.
+#define IDI_APPICON 101
+IDI_APPICON ICON "assets/slug-icon.ico"
+
+// ─── Version Information ──────────────────────────────────────────────────────
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1, 0, 0, 0
+PRODUCTVERSION  1, 0, 0, 0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "Slug Project"
+            VALUE "FileDescription",  "Slug — P2P Secure Workspace Sharing"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "InternalName",     "slug"
+            VALUE "LegalCopyright",   "Copyright (C) 2024-2026 Slug Contributors. Apache-2.0."
+            VALUE "OriginalFilename", "slug.exe"
+            VALUE "ProductName",      "Slug"
+            VALUE "ProductVersion",   "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

@@ -56,6 +56,12 @@ Copy-Item -Path "$ProjectRoot\LICENSE" -Destination "$TargetDir\LICENSE" -Force
 if (Test-Path "$ProjectRoot\TUTORIAL.md") {
     Copy-Item -Path "$ProjectRoot\TUTORIAL.md" -Destination "$TargetDir\TUTORIAL.md" -Force
 }
+# Bundle icon file for use by install.ps1 (fallback when .exe doesn't embed icon)
+$IconSrc = "$ProjectRoot\assets\slug-icon.ico"
+if (Test-Path $IconSrc) {
+    Copy-Item -Path $IconSrc -Destination "$TargetDir\slug-icon.ico" -Force
+    Write-Host "[*] Bundled slug-icon.ico into package." -ForegroundColor Cyan
+}
 
 # 4. Create ZIP
 Compress-Archive -Path "$TargetDir\*" -DestinationPath $ZipPath -Force
@@ -65,6 +71,9 @@ Copy-Item -Path $ZipPath -Destination $ZipCompatPath -Force
 Copy-Item -Path $SourceExe -Destination "$DistDir\slug-windows-x86_64.exe" -Force
 Copy-Item -Path $SourceExe -Destination "$DistDir\slug.exe" -Force
 Copy-Item -Path "$ProjectRoot\scripts\install.ps1" -Destination "$DistDir\install.ps1" -Force
+if (Test-Path $IconSrc) {
+    Copy-Item -Path $IconSrc -Destination "$DistDir\slug-icon.ico" -Force
+}
 
 # 6. Generate SHA256 checksums
 Set-Location $DistDir
@@ -73,7 +82,8 @@ $releaseFiles = @(
     "slug-$Version-windows-x64.zip",
     "slug-windows-x86_64.exe",
     "slug.exe",
-    "install.ps1"
+    "install.ps1",
+    "slug-icon.ico"
 )
 $hashes = foreach ($f in $releaseFiles) {
     if (Test-Path $f) {
