@@ -20,7 +20,7 @@ class EnvShield {
 public:
     // Encrypts .env into .env.pqc using Post-Quantum suite, backs up to Central Vault, removes plaintext (unless keep_plaintext)
     static bool init(const std::filesystem::path& workspace_root,
-                     core::SuiteID suite_id = core::SuiteID::SUITE_3_PURE_PQC,
+                     core::SuiteID suite_id = core::SuiteID::SUITE_2_MODERN,
                      bool keep_plaintext = false);
 
     // Restores original .env plaintext from Central Vault (or decrypts .env.pqc) and removes .env.pqc

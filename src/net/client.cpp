@@ -363,12 +363,26 @@ bool SlugClient::pull(const fs::path& local_target_dir,
         log("--- Delta Sync Dry-Run Summary ---");
         log("Remote files total: " + std::to_string(plan.total_files_remote));
         log("Unchanged (0 bytes sent): " + std::to_string(plan.count_unchanged));
-        log("New files: " + std::to_string(plan.count_new));
-        log("Modified files: " + std::to_string(plan.count_modified));
+        for (const auto& delta : plan.file_deltas) {
+            if (delta.is_unchanged) {
+                log("  [CACHE HIT] " + delta.relative_path + " (" + core::Utils::format_size(delta.total_size) + ", 0 bytes transferred)");
+            }
+        }
+        log("New / Modified files to transfer: " + std::to_string(plan.count_new + plan.count_modified));
+        for (const auto& delta : plan.file_deltas) {
+            if (delta.is_new) {
+                log("  [PULL NEW] " + delta.relative_path + " (" + core::Utils::format_size(delta.total_size) + ", " + std::to_string(delta.needed_chunk_indices.size()) + " chunks)");
+            } else if (delta.is_modified) {
+                log("  [PULL MODIFIED] " + delta.relative_path + " (" + core::Utils::format_size(delta.total_size) + ", " + std::to_string(delta.needed_chunk_indices.size()) + " chunks)");
+            }
+        }
         log("Bytes to transfer: " + core::Utils::format_size(plan.bytes_to_transfer));
         log("Bytes saved: " + core::Utils::format_size(plan.bytes_saved));
         if (options.prune) {
             log("Files to prune: " + std::to_string(plan.files_to_prune.size()));
+            for (const auto& p : plan.files_to_prune) {
+                log("  [PRUNE] " + p);
+            }
         }
         if (!plan.skipped_by_remote.empty()) {
             log("Skipped by remote policy/AI: " + std::to_string(plan.skipped_by_remote.size()) + " files");

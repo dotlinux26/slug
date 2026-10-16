@@ -15,7 +15,7 @@ namespace slug::core {
 struct WorkspaceInfo {
     uint16_t port{0};
     std::filesystem::path path;
-    SuiteID suite{SuiteID::SUITE_3_PURE_PQC};
+    SuiteID suite{SuiteID::SUITE_2_MODERN};
     bool ai_enabled{false};
     FilterMode filter_mode{FilterMode::PROTECTED};
     uint64_t ttl_seconds{86400};
@@ -31,7 +31,7 @@ public:
     // Initializes or adds a workspace server
     bool add_workspace(const std::filesystem::path& folder_path,
                        uint16_t port = kDefaultPort,
-                       SuiteID suite = SuiteID::SUITE_3_PURE_PQC,
+                       SuiteID suite = SuiteID::SUITE_2_MODERN,
                        uint64_t ttl_seconds = 86400,
                        bool enable_ai = false,
                        FilterMode filter_mode = FilterMode::PROTECTED);
