@@ -32,10 +32,16 @@ Write-Info "Slug Universal Windows Installer v$Version"
 Write-Info "Target Architecture: x86_64 / x64"
 
 # 1. Determine Source Binary
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = $null
+if ($MyInvocation.MyCommand -and $MyInvocation.MyCommand.Path) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+} elseif ($PSScriptRoot) {
+    $scriptDir = $PSScriptRoot
+}
+
 $sourceExe = ""
 
-if (Test-Path "$scriptDir\slug.exe") {
+if ($scriptDir -and (Test-Path "$scriptDir\slug.exe")) {
     $sourceExe = "$scriptDir\slug.exe"
 } elseif (Test-Path ".\slug.exe") {
     $sourceExe = ".\slug.exe"
@@ -60,7 +66,12 @@ if (-not $sourceExe) {
     $tempExtract = Join-Path $env:TEMP "slug-extract-$Version"
 
     $downloaded = $false
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {}
+
     foreach ($url in $urls) {
         try {
             Write-Info "Attempting download from: $url"
@@ -77,17 +88,18 @@ if (-not $sourceExe) {
             continue
         }
     }
+    $ProgressPreference = $prevProgress
 
     if (-not $downloaded) {
         Write-Warn "Automated download failed or release not yet uploaded."
-        Write-Info "You can build slug.exe on Windows using: scripts\build_windows.bat"
-        exit 1
+        Write-Info "You can download slug.exe directly from: https://github.com/$repo/releases/tag/v$Version"
+        return
     }
 }
 
 if (-not (Test-Path $sourceExe)) {
     Write-Err "Source executable not found at: $sourceExe"
-    exit 1
+    return
 }
 
 # 2. Create Target Directory & Copy Binary
@@ -125,5 +137,5 @@ try {
     Write-Host "  slug help"
 } catch {
     Write-Err "Verification failed: $($_.Exception.Message)"
-    exit 1
+    return
 }
