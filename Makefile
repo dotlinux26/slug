@@ -2,10 +2,10 @@ CXX ?= g++
 CC ?= gcc
 CXXFLAGS ?= -std=c++20 -O2 -Wall -Wextra -pthread -I. -I./third_party -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512
 CFLAGS ?= -O2 -I. -I./third_party -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512
-LDFLAGS ?= -pthread -lssl -lcrypto
+LDFLAGS ?= -pthread -lssl -lcrypto -ldl
 
 STATIC_FLAGS = -static -static-libgcc -static-libstdc++
-STATIC_LDFLAGS = -pthread -lssl -lcrypto -lzstd -lz
+STATIC_LDFLAGS = -pthread -lssl -lcrypto -lzstd -lz -ldl
 
 TARGET = bin/slug
 TARGET_STATIC = bin/slug-static

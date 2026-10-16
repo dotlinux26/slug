@@ -168,7 +168,19 @@ jobs:
 
       - name: Compile Slug Static Binary
         run: |
-          make static -j$(nproc)
+          set -o pipefail
+          make static -j$(nproc) 2>&1 | tee linux_compile.log
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "================ LINUX COMPILATION ERROR LOG ================"
+            cat linux_compile.log
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -B build-logs-linux
+            git add linux_compile.log
+            git commit -m "chore: record linux build error"
+            git push origin build-logs-linux --force
+            exit 2
+          fi
 
       - name: Verify Compiled Linux Binary
         run: |
@@ -222,4 +234,5 @@ jobs:
           fi
 
           echo "[+] All Linux release assets uploaded successfully to $TargetTag!"
+          git push origin --delete build-logs-linux 2>/dev/null || true
 
