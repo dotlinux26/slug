@@ -238,13 +238,13 @@ slug audit recheck tests/mock_token.ts
    # hoặc
    slug env run -- npm start
    ```
-   Slug giải mã secret vào bộ nhớ RAM của tiến trình, tiêm biến môi trường cho ứng dụng con và xóa sạch vùng nhớ ngay lập tức (zeroize). Secret không bao giờ ghi xuống ổ cứng.
+   Slug giải mã secret vào bộ nhớ RAM của tiến trình, tiêm biến môi trường cho ứng dụng con và xóa sạch vùng nhớ ngay lập tức (zeroize). Secret không ghi xuống ổ cứng.
 
 ---
 
 ## 10. Bộ đo đạc hiệu năng (Benchmark Suite)
 
-Slug tích hợp sẵn công cụ đo đạc chuẩn xác tốc độ mật mã và thông lượng:
+Slug tích hợp sẵn công cụ đo đạc hiệu năng tính toán mật mã cục bộ (PQC, BLAKE3, ChaCha20), phân mảnh vi sai In-Memory và tốc độ I/O đĩa cứng (không bao gồm độ trễ mạng ngoại vi vốn phụ thuộc vào hạ tầng hai đầu):
 
 ### Chạy từ Terminal:
 ```bash

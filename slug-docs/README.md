@@ -1,13 +1,103 @@
-# Slug — Bộ Tài liệu Kỹ thuật & Hồ sơ Dự thi SICT Innovation Challenge 2026
+# Slug — Hệ Thống Tài Liệu Kỹ Thuật & Hồ Sơ Giải Pháp Dự Thi
 
-Bộ tài liệu kỹ thuật hoàn chỉnh của dự án **Slug** được chuẩn hóa theo các tiêu chuẩn kỹ thuật nghiêm ngặt và barem chấm điểm của cuộc thi **SICT Innovation Challenge 2026 (Track: Tech Your Solutions — Đại học Công nghiệp Hà Nội)**:
+> **Cuộc thi:** SICT Innovation Challenge 2026 — Track: Tech Your Solutions  
+> **Đơn vị tổ chức:** Trường Công nghệ Thông tin và Truyền thông — Đại học Công nghiệp Hà Nội  
+> **Lĩnh vực đề tài:** Phần mềm (Quy trình làm việc & Quản lý dữ liệu) & Mạng (Chia sẻ cục bộ P2P & Bảo vệ biên dữ liệu)  
+> **Mã nguồn mở chính thức:** [https://github.com/dotlinux26/slug](https://github.com/dotlinux26/slug) (Apache License 2.0)
 
-1. **[SICT_INNOVATION_CHALLENGE_PROPOSAL.md](SICT_INNOVATION_CHALLENGE_PROPOSAL.md)**: **Báo cáo Giải pháp Dự thi Chính thức** — Trình bày toàn diện 7 mục: Đặt vấn đề thực tế, Tính khả thi, Tính sáng tạo, Ứng dụng AI, Phản biện kỹ thuật khoa học, Kịch bản thực nghiệm & Demo 3 phút, Cam kết mã nguồn mở.
-2. **[01-PROBLEM.md](01-PROBLEM.md)**: **Đặt Vấn đề & Nhu cầu Thực tế** — Phân tích chi tiết bài toán bảo vệ mã nguồn của sinh viên và kỹ sư phần mềm khi làm việc với AI Coding Agent và chia sẻ qua mạng nội bộ.
-3. **[02-SOLUTION.md](02-SOLUTION.md)**: **Giải pháp & Quy trình 3 Bước** — Quy trình tối giản: 1. Kiểm tra mã nguồn (`slug audit`) $\rightarrow$ 2. Cất bí mật và chạy test trong RAM (`slug env`) $\rightarrow$ 3. Chia sẻ P2P có kiểm soát (`slug add` & `slug get`).
-4. **[03-AI-USAGE.md](03-AI-USAGE.md)**: **Ứng dụng Trí tuệ Nhân tạo (AI)** — Trợ lý AI phân tích ngữ cảnh, giải thích rủi ro bằng tiếng Việt, Stateful Cache BLAKE3 tiết kiệm chi phí, và chỉ thị dạy AI Agent (`.slug/ai-rule.md`).
-5. **[04-ARCHITECTURE.md](04-ARCHITECTURE.md)**: **Kiến trúc Hệ thống & Ranh giới Bảo mật** — C++20 single-binary, cơ chế nạp biến môi trường vào RAM tiến trình con, VFS Jail closed-loop gating, 3 filter modes, và bắt tay P2P hậu lượng tử (NIST FIPS 203 ML-KEM-768) kèm TOTP 8 số tự hủy.
-6. **[TUTORIAL_VI.md](TUTORIAL_VI.md)**: **Hướng dẫn Sử dụng Thực tế từ A-Z** — Cẩm nang dòng lệnh, kịch bản thực chiến và các câu lệnh hữu ích hàng ngày.
+---
 
-- **Mã nguồn mở chính thức:** [https://github.com/dotlinux26/slug](https://github.com/dotlinux26/slug)
-- **Giấy phép:** Apache License 2.0
+## 1. Lời Mở Đầu & Mục Đích Tài Liệu
+
+Tài liệu này được biên soạn như một **lớp tổng hợp toàn diện** nhằm hỗ trợ **Hội đồng Ban giám khảo, các chuyên gia phản biện và cộng đồng lập trình viên** nhanh chóng nắm bắt bản chất vấn đề, kiến trúc kỹ thuật, tính khả thi và giá trị thực tiễn của giải pháp **Slug**.
+
+Slug không chạy theo các khẩu hiệu quảng bá hoa mỹ hay thần thánh hóa công nghệ. Dự án kiên định với phương châm **"Nói đúng - Nói đủ - Trung thực về kỹ thuật (No-Overclaim)"**, tập trung giải quyết triệt để các bài toán thường nhật phát sinh trong môi trường trường học, phòng thực hành (lab), văn phòng công ty và quy trình phát triển phần mềm hiện đại.
+
+---
+
+## 2. Bản Đồ Hệ Thống Tài Liệu (Documentation Map)
+
+Hệ thống tài liệu trong thư mục `docs/` được phân tách khoa học theo từng khía cạnh kỹ thuật, giúp người đọc dễ dàng tra cứu chi tiết:
+
+```text
+docs/
+├── README.md              <-- (Tài liệu hiện tại) Tổng quan kiến trúc & Cẩm nang thẩm định giải pháp
+├── 01-PROBLEM.md          <-- Đặt vấn đề thực tế: Bối cảnh LAN văn phòng, thu bài phòng lab & lỗ hổng của công cụ cũ
+├── 02-SOLUTION.md         <-- Giải pháp kỹ thuật, Quy trình 3 bước & 4 kịch bản đời thường, so sánh đa chiều
+├── 03-AI-USAGE.md         <-- Vai trò thực tế của AI: Cố vấn ngữ cảnh (Advisory), Entropy Scanner & PQC EnvShield
+├── 04-ARCHITECTURE.md     <-- Đặc tả kiến trúc 5 tầng, Web Proxy cục bộ (Kiến trúc A), Giao thức Directional AEAD
+└── MODULE-MAP.md          <-- Bản đồ phân rã mã nguồn C++20 và hệ thống các chốt chặn kiểm duyệt (Gatekeepers)
+```
+
+| Tài liệu | Nội dung trọng tâm | Nhóm người đọc khuyến nghị |
+| :--- | :--- | :--- |
+| **[01-PROBLEM.md](01-PROBLEM.md)** | Phân tích thực trạng chuyển tệp LAN bị lãng phí băng thông WAN; bài toán thu bài tập phòng máy; lỗ hổng Plaintext của `python -m http.server`; sự cồng kềnh của FTP/SFTP; và rủi ro lộ API key khi dùng trợ lý AI. | Giám khảo, Trưởng nhóm kỹ thuật, Quản trị mạng |
+| **[02-SOLUTION.md](02-SOLUTION.md)** | Quy trình 3 bước tinh gọn; chi tiết 4 kịch bản đời thường (chuyển tệp nội bộ, thu bài sinh viên một chiều Write-Only, chia sẻ workspace sạch, bảo vệ bí mật với EnvShield); bảng so sánh toàn diện với các công cụ hiện hữu. | Giám khảo, Lập trình viên, Giảng viên |
+| **[03-AI-USAGE.md](03-AI-USAGE.md)** | Định vị chính xác vai trò của AI là Cố vấn phân tích ngữ cảnh (Contextual Advisor), không thần thánh hóa; bộ phân tích Shannon Entropy; cơ chế cache băm BLAKE3 (`index.db`) tiết kiệm tài nguyên; kỹ thuật nạp biến môi trường vào RAM. | Chuyên gia AI, Chuyên gia An toàn thông tin |
+| **[04-ARCHITECTURE.md](04-ARCHITECTURE.md)** | Đặc tả kiến trúc 5 tầng nghiêm ngặt; Mô hình Web UI Localhost Proxy (Kiến trúc A) đảm bảo 100% dữ liệu bay trên mạng là PQC AEAD; cơ chế dẫn xuất muối độc lập phân hướng (Directional Salts) chống Nonce-Reuse; giải pháp xuyên NAT. | Kỹ sư Hệ thống, Kiến trúc sư Phần mềm |
+| **[MODULE-MAP.md](MODULE-MAP.md)** | Bản đồ liên kết mã nguồn C++20 (`src/`), phân tích các chốt chặn kiểm duyệt dữ liệu tại tầng giao vận, tầng hệ thống tệp ảo (`SlugVFS Jail`) và tầng chính sách RBAC. | Lập trình viên thẩm định mã nguồn (Code Review) |
+
+---
+
+## 3. Các Bài Toán Đời Thường & Lời Giải Của Slug
+
+### 3.1. Chuyển tệp lớn qua mạng LAN (Văn phòng / Trường học)
+- **Thực trạng:** Khi hai máy tính trong cùng phòng làm việc muốn gửi cho nhau một file lớn vài GB, thói quen thông thường là tải lên Google Drive, gửi qua Zalo, Telegram... Điều này gây lãng phí băng thông Internet quốc tế (WAN), phụ thuộc vào máy chủ trung gian của bên thứ ba và bị bóp tốc độ.
+- **Lời giải Slug:** Thiết lập kết nối P2P trực tiếp qua LAN, đạt trần tốc độ đường truyền phần cứng (Gigabit LAN = ~125 MB/s), 0 byte băng thông WAN, bảo mật hai đầu bằng mật mã Hậu Lượng Tử (PQC ML-KEM-768).
+
+### 3.2. Thu bài thi / bài tập sinh viên phòng máy một chạm (Blind Drop)
+- **Thực trạng:** Giảng viên cần thu bài 40–50 sinh viên nhanh chóng, không bị nghẽn mạng WAN như Google Drive, không phức tạp như tạo tài khoản FTP/Domain, và **đặc biệt phải chống nhìn trộm / chép bài của bạn khác**. `python -m http.server` không hỗ trợ tính năng này (ai cũng xem và tải được file người khác vừa nộp).
+- **Lời giải Slug:** Giảng viên khởi tạo workspace với quyền Ghi **Write-Only (`[w]`)**. Sinh viên kéo thả bài vào trình duyệt Web Dropbox hoặc gõ `slug push`. Tầng `SlugVFS Jail` cưỡng chế chặn lệnh đọc (`read_file`) và liệt kê (`list_dir`) đối với máy khách, đảm bảo sinh viên chỉ nộp được bài mà không thể xem bài của bạn khác. Zero-setup, chạy offline hoàn toàn.
+
+### 3.3. Chia sẻ mã nguồn nhóm có kiểm soát (Selective Staging)
+- **Thực trạng:** Lập trình viên muốn gửi nhanh thư mục code cho bạn cùng nhóm để gỡ lỗi. Các công cụ FTP hay HTTP Server chỉ là "đường ống thụ động" — gặp gì gửi nấy, dẫn đến việc gửi thừa hàng trăm MB rác build (`node_modules/`, `build/`) và lỡ tay chia sẻ nhầm file `.env` chứa token/khóa bí mật.
+- **Lời giải Slug:** Hệ thống **Slug Guard** đa cơ chế tự động đọc `.gitignore` để loại bỏ rác build; đồng thời bộ quét Heuristic & Shannon Entropy rà soát các chuỗi khóa bí mật nghi vấn, kết hợp AI Semantic Guard hỗ trợ cảnh báo trước khi truyền dữ liệu.
+
+### 3.4. Phòng vệ bí mật trước các trợ lý AI lập trình (EnvShield)
+- **Thực trạng:** Khi lập trình với Cursor, Copilot hay Claude Code, các trợ lý AI tự động đọc các file văn bản rõ (plaintext `.env`) trên ổ đĩa để nạp vào Context Window gửi lên cloud, làm rò rỉ API key.
+- **Lời giải Slug:** Lệnh `slug env init` cất file `.env` vào Kho trung tâm ngoài workspace (`~/.slug/env_vault/`), mã hóa thành `.env.pqc` trong repo và xóa sạch plaintext trên đĩa. Khi chạy ứng dụng, `slug env run -- <lệnh>` giải mã trực tiếp trong RAM và nạp biến môi trường cho tiến trình, không để plaintext trên ổ đĩa cho AI đọc lén.
+
+---
+
+## 4. Bảng Tổng Hợp Đối Chiếu Hỗ Trợ Hội Đồng Ban Giám Khảo
+
+Nhằm hỗ trợ Hội đồng Giám khảo nhanh chóng đối chiếu thông tin sản phẩm theo các định hướng đánh giá của cuộc thi **SICT Innovation Challenge**:
+
+| Khía cạnh đánh giá | Thực trạng & Cách tiếp cận của Slug | Minh chứng kỹ thuật & Vị trí tra cứu |
+| :--- | :--- | :--- |
+| **1. Mức độ cần thiết & Tính thực tế** | Giải quyết trực diện các nỗi đau thường nhật:<br>• Chuyển tệp nội bộ gigabit, tiết kiệm 100% băng thông WAN.<br>• Thu bài phòng máy một chiều chống chép bài.<br>• Ngăn chặn nguy cơ mất tiền do lộ API key khi làm việc với AI hoặc push repo công khai. | • [01-PROBLEM.md](01-PROBLEM.md)<br>• Bảng phân tích lỗ hổng của `python -m http.server`, FTP/SFTP và Cloud Drive ở Mục 2. |
+| **2. Tính khả thi & Mức độ hoàn thiện** | • Đóng gói thành **1 file thực thi nhị phân duy nhất (~8MB)**, zero-dependency, không cần cài đặt Python, Node.js hay DB.<br>• Đã hiện thực hóa 100% bằng C++20, chạy mượt mà trên cả Linux và Windows.<br>• Cung cấp cả CLI POSIX chuẩn mực lẫn Web Portal trực quan (`127.0.0.1:8080/drop`). | • [02-SOLUTION.md](02-SOLUTION.md)<br>• [BUILD.md](../BUILD.md)<br>• CI/CD tự động build binary đa nền tảng trong `.github/workflows/`. |
+| **3. Tính sáng tạo & Điểm khác biệt** | • **Khắc phục nhược điểm của `python http.server`:** Thay đường truyền plain HTTP bằng kênh PQC AEAD; bổ sung phân quyền OTP 3 vai trò (`[rw]`, `[r]`, `[w]`).<br>• **Khác biệt so với FTP/SFTP:** Khả năng kiểm soát nội dung chủ động (Selective Staging) tự động lọc rác build theo `.gitignore`.<br>• **Sáng tạo với EnvShield:** Nạp biến môi trường vào RAM lúc chạy, ngăn chặn AI đọc trộm secret trên đĩa. | • [04-ARCHITECTURE.md](04-ARCHITECTURE.md)<br>• [MODULE-MAP.md](MODULE-MAP.md)<br>• Kiến trúc đóng khung Directional AEAD và VFS Jail. |
+| **4. Ứng dụng AI & Giá trị thực tế** | • Không lạm dụng AI làm bình phong, AI đóng vai trò là **Cố vấn ngữ cảnh (Contextual Advisor)**: đọc các chuỗi có entropy cao nghi vấn, giải thích bằng tiếng Việt đâu là mock key trong test và đâu là live key của cloud.<br>• Tối ưu hiệu năng bằng bộ nhớ đệm trạng thái BLAKE3 (`index.db`), không quét lại file cũ.<br>• Chỉ dẫn AI agent cách dùng công cụ an toàn (`.slug/ai-rule.md`). | • [03-AI-USAGE.md](03-AI-USAGE.md)<br>• Mã nguồn module `src/ai/stateful_audit.hpp` và `src/ai/scanner.cpp`. |
+
+---
+
+## 5. Hướng Dẫn Trải Nghiệm Nhanh (3-Minute Demo Walkthrough)
+
+Ban giám khảo hoặc người dùng có thể kiểm chứng toàn bộ quy trình của Slug trong vòng 3 phút qua 3 bước cốt lõi:
+
+```bash
+# Bước 1: Quét kiểm tra mã nguồn (Heuristic + Shannon Entropy + AI Advisor)
+slug audit scan .
+
+# Bước 2: Niêm phong file .env vào Vault và chạy ứng dụng từ RAM
+slug env init
+slug env run -- npm test      # (hoặc pytest, python main.py)
+# -> Kiểm tra thư mục: File .env bản rõ đã biến mất, tiến trình vẫn chạy pass 100%!
+
+# Bước 3: Mở trạm chia sẻ P2P mã hóa với bộ lọc rác tự động
+slug add . -p 9443
+# -> Terminal hiển thị liên kết một chạm kèm mã OTP phân quyền.
+# Máy bạn bè hoặc sinh viên chỉ cần gõ:
+slug get "<IP_SERVER>:9443?otp=<OTP>" ./tai_ve
+# Hoặc mở trực tiếp trên trình duyệt Web Explorer: http://127.0.0.1:8080/drop
+```
+
+---
+
+## 6. Cam Kết Trung Thực Kỹ Thuật (No-Overclaim Commitment)
+
+Nhóm phát triển Slug cam kết tuân thủ các chuẩn mực đạo đức khoa học và kỹ thuật:
+1. **Về ranh giới bộ nhớ RAM:** Slug EnvShield bảo vệ secret khỏi sự đọc trộm thụ động của các trợ lý AI từ đĩa cứng. Khi ứng dụng thực thi, biến môi trường tồn tại trong RAM; nếu người dùng cố tình viết code `printenv` để trích xuất thì dữ liệu vẫn sẽ hiển thị.
+2. **Về đo lường hiệu năng:** Lệnh `slug bench` chỉ đo lường năng lực tính toán CPU mật mã (ML-KEM, BLAKE3, ChaCha20), tốc độ phân mảnh vi sai In-Memory và tốc độ I/O đĩa cứng vật lý cục bộ. Tốc độ truyền tải mạng thực tế phụ thuộc hoàn toàn vào hạ tầng kết nối vật lý giữa hai máy.
+3. **Về vai trò của AI:** AI trong Slug không tự ý quyết định thay con người và không thay thế các quy tắc toán học xác định. AI là một công cụ hỗ trợ phân tích ngữ cảnh, quyền quyết định kiểm soát dữ liệu tối thượng luôn thuộc về chủ máy (Host Admin).

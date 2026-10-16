@@ -1,122 +1,132 @@
-# 04. Kiến trúc Hệ thống, Cơ chế Thực thi và Ranh giới Bảo mật
+# KIẾN TRÚC HỆ THỐNG VÀ BẢO MẬT GIAO THỨC TRUYỀN DẪN SLUG
 
-> **Trọng tâm kỹ thuật:** Cách Slug hiện thực hóa các cam kết bảo mật ở tầng lõi hệ điều hành, hệ thống tệp ảo (VFS) và giao thức mạng P2P, đảm bảo tính khả thi và ổn định cao trên 1 file nhị phân C++20 độc lập.
+## 1. Mô Hình Phân Lớp Toàn Diện (Strict Layered Architecture)
 
----
-
-## 1. Mô hình kiến trúc phân lớp (System Architecture)
-
-Slug được thiết kế theo cấu trúc mô-đun hóa đơn hướng nghiêm ngặt bằng C++20, biên dịch tĩnh 100% không phụ thuộc thư viện ngoài (zero-runtime dependency):
+Slug được xây dựng theo nguyên tắc phân lớp đơn hướng nghiêm ngặt, đảm bảo tính mô-đun hóa cao và đóng gói thành một file nhị phân độc lập (~10 MB, zero external dependencies):
 
 ```text
 +-----------------------------------------------------------------------------------+
-| TẦNG 1: GIAO DIỆN & ĐIỀU PHỐI (CLI DISPATCHER & LOCAL WEB EXPLORER)               |
-|  - Phân tích tham số POSIX/GNU (src/main.cpp), bảng màu ANSI Terminal            |
-|  - Localhost Web Explorer (Engine viewing nội bộ trên 127.0.0.1:8080)             |
-+-----------------------------------------------------------------------------------+
+| TẦNG 1: TRÌNH DIỄN & GIAO DIỆN (PRESENTATION & UX LAYER)                          |
+|  ├── CLI Dispatcher (src/main.cpp)      : Parse POSIX args, ANSI Terminal Table   |
+|  └── Web Assets (src/net/web_assets.hpp): Light Theme, 2px border-radius Explorer |
++-----------------------------------------+-----------------------------------------+
                                           |
                                           v
 +-----------------------------------------------------------------------------------+
-| TẦNG 2: QUẢN LÝ BIẾN MÔI TRƯỜNG & KHO TRUNG TÂM (ENVSHIELD CORE)                  |
-|  - Centralized Vault: ~/.slug/env_vault/<workspace_hash>/                         |
-|  - Nạp RAM tiến trình con: Windows (CreateProcessW), Linux (execve)               |
-|  - Mã hóa Envelope: ML-KEM-768 + AES-256-GCM (.env.pqc)                           |
-+-----------------------------------------------------------------------------------+
+| TẦNG 2: GIAO VẬN MÃ HÓA & TRẠM GÁC (TRANSPORT & WIRE ENCRYPTION)                  |
+|  ├── PQC Handshake Engine               : NIST FIPS 203/204 (ML-KEM-768, ML-DSA)  |
+|  ├── Directional AEAD Wire Protocol     : XChaCha20-Poly1305, 64-bit Anti-Replay  |
+|  │                                        Muối độc lập: ClientToServer / ServerToClient
+|  ├── Localhost Web Proxy (Kiến trúc A)  : Trình duyệt giao tiếp qua loopback 127.0.0.1
+|  └── Multi-Tier NAT Traversal           : IPv6 Direct -> STUN Punch -> TURN Relay |
++-----------------------------------------+-----------------------------------------+
                                           |
                                           v
 +-----------------------------------------------------------------------------------+
-| TẦNG 3: HỆ THỐNG TỆP ẢO & TRẠM KIỂM SOÁT BIÊN (SLUG VFS & JAIL GATEWAY)          |
-|  - Virtual File System Jail: Chống vượt ngục ../ và bẫy Symlink (resolve_safe_path)|
-|  - Cổng kiểm soát đọc (Closed-Loop Gating): vfs_.read_file() ép qua Audit Index   |
-|  - Chế độ lọc 3 mức: protected (mặc định), include-ignored, none                  |
-+-----------------------------------------------------------------------------------+
+| TẦNG 3: NGHIỆP VỤ LÕI & VFS JAIL (WORKSPACE CORE & VFS JAIL)                      |
+|  ├── SlugVFS (src/core/vfs.hpp)         : Virtual path '/', Chống vượt ngục (Jail)|
+|  │                                        Thực thi quyền (r/w/rw) ở tầng filesystem|
+|  ├── DeltaSyncEngine (src/sync/*)       : Phân khối 64 KiB, Manifest so khớp BLAKE3|
+|  └── Protocol Path Normalizer           : Chuẩn hóa '/' xuyên suốt Linux & Windows|
++-----------------------------------------+-----------------------------------------+
                                           |
                                           v
 +-----------------------------------------------------------------------------------+
-| TẦNG 4: CHÍNH SÁCH BẢO MẬT & KIỂM DUYỆT (POLICY & AUDIT ENGINE)                   |
-|  - Bộ phân tích phân tầng .gitignore và chính sách máy chủ .slug/rules.conf       |
-|  - Stateful Audit Index (.slug/index.db) băm BLAKE3, phát hiện sửa đổi STALE      |
-|  - Heuristic Scanner + Shannon Entropy Analyzer + Trợ lý AI ngữ nghĩa             |
-+-----------------------------------------------------------------------------------+
+| TẦNG 4: CHÍNH SÁCH BẢO MẬT & KIỂM DUYỆT (POLICY, RBAC & AI AUDIT ENGINE)          |
+|  ├── ACL & TotpManager (src/core/acl*)  : 3-Role TOTP (rw/r/w), Single-Use Burn   |
+|  ├── PolicyEngine (src/policy/*)        : .gitignore phân tầng + .slug/rules.conf |
+|  └── Stateful AI Guard (src/ai/*)       : Heuristic + Shannon Entropy + index.db  |
++-----------------------------------------+-----------------------------------------+
                                           |
                                           v
 +-----------------------------------------------------------------------------------+
-| TẦNG 5: MẬT MÃ & GIAO VẬN MẠNG P2P (CRYPTO PRIMITIVES & WIRE TRANSPORT)           |
-|  - Bắt tay hậu lượng tử: NIST FIPS 203 (ML-KEM-768), NIST FIPS 204 (ML-DSA-65)    |
-|  - Xác thực nhanh: Mã OTP 8 chữ số (RFC 6238 TOTP), tiêu thụ 1 lần chống replay    |
-|  - Mã hóa kênh truyền: AES-256-GCM / XChaCha20-Poly1305 với phân tách khóa 2 chiều|
+| TẦNG 5: MẬT MÃ CẤP THẤP (CRYPTO PRIMITIVES)                                       |
+|  ├── NIST FIPS 203 & 204                : ML-KEM-768, ML-DSA-65 (Post-Quantum)    |
+|  ├── BLAKE3 & BLAKE3-KDF                : Băm siêu tốc & Phái sinh khóa chuẩn     |
+|  └── XChaCha20-Poly1305                 : Mã hóa xác thực khối 256-bit AEAD       |
 +-----------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 2. Cơ chế EnvShield: Cấp biến môi trường từ RAM cho tiến trình con
+## 2. Kiến Trúc Web UI & Mô Hình Bảo Mật Đường Truyền (Kiến Trúc A)
 
-### 2.1. Bản chất cách hệ điều hành kế thừa môi trường
-Khi sinh viên hoặc AI Agent chạy một lệnh kiểm thử hoặc khởi động ứng dụng (ví dụ `pytest`, `npm test`, `python app.py`):
-- Mọi ngôn ngữ lập trình và framework (Node.js `process.env`, Python `os.environ`, Go/Rust/C++ `getenv()`) đều ưu tiên đọc giá trị từ **Khối môi trường (Environment Block) trên bộ nhớ RAM** của chính tiến trình đó trước khi nghĩ đến việc tìm file `.env` trên đĩa.
-- `slug env run -- <lệnh>` tận dụng nguyên lý này:
-  1. Đọc và giải mã `.env.pqc` trực tiếp vào một cấu trúc dữ liệu tạm thời trong RAM của Slug.
-  2. Nạp khối môi trường này vào tiến trình con thông qua syscall cấp thấp của hệ điều hành:
-     - Trên Windows: Sử dụng `CreateProcessW` với khối Unicode Environment Block (`lpEnvironment`).
-     - Trên Linux: Sử dụng `fork` và `execve` với mảng `envp`.
-  3. Xóa sạch vùng nhớ chứa secret trong tiến trình cha ngay sau khi tiến trình con khởi tạo thành công (`memset_s` / secure memory wipe).
+### 2.1. Vấn Đề Khi Trình Duyệt Giao Tiếp Trực Tiếp Qua Mạng
+Khi máy chủ host mở port và trình duyệt của máy khách truy cập trực tiếp qua địa chỉ `http://<remote_ip>:<port>/drop?ticket=<ticket>`:
+* Trình duyệt web tiêu chuẩn (Chrome, Firefox) không hỗ trợ giao thức mật mã hậu lượng tử tùy biến (ML-KEM-768) qua HTTP thuần.
+* Mặc dù tầng `SlugVFS` trên máy chủ vẫn kiểm tra quyền hạn, chặn path traversal và chặn file AI-flagged rất nghiêm ngặt, nhưng **kênh truyền dẫn vật lý (wire transport) giữa trình duyệt và máy chủ lại là HTTP bản rõ (plaintext)**.
+* Kẻ tấn công bắt gói tin trên cùng mạng Wi-Fi (Wireshark / ARP Spoofing) có thể nhìn thấy nội dung file tải về và ticket xác thực.
 
-### 2.2. Điểm ma sát thực tế và cách Slug giải quyết
-- **Trường hợp ứng dụng tương thích môi trường chuẩn (Đa số):** Ứng dụng nhận đủ biến môi trường ngay từ RAM, chạy hoàn hảo mà không cần có bất kỳ file `.env` nào trên đĩa cứng.
-- **Trường hợp công cụ bị hardcode bắt buộc đọc file đĩa:** Một số công cụ hoặc thư viện đặc thù có thể được lập trình cứng bắt buộc phải `fopen("./.env")`, nếu không thấy file sẽ báo lỗi `FileNotFound`.
-  - **Cách xử lý của Slug:** Người dùng chỉ cần gõ `slug env restore` để lấy lại file `.env` từ Central Vault (`~/.slug/env_vault/<hash>/`) trong 1 giây. Khi làm việc xong, chỉ cần gõ `slug env init` để xóa lại file đĩa.
+### 2.2. Lựa Chọn Kiến Trúc A: Web UI Là Localhost Proxy Của Slug Client
+Để đảm bảo **100% dữ liệu bay trên dây mạng LAN/Internet đều là PQC AEAD Ciphertext**, Slug áp dụng **Kiến trúc A (Localhost Client Proxy)** tương tự mô hình của `kubectl proxy`, Tor Browser hoặc SSH Dynamic SOCKS:
 
----
+```text
+[MÁY KHÁCH - CLIENT MACHINE]                                    [MÁY CHỦ - HOST MACHINE]
++--------------------------+
+| Trình Duyệt (Browser)    |
+| Giao diện Web Explorer   |
++------------+-------------+
+             | HTTP nội bộ (Loopback)
+             | http://127.0.0.1:<random_port>
+             v
++------------+-------------+                                    +-----------------------+
+| Slug CLI Client          |     KÊNH TRUYỀN DẪN VẬT LÝ         | Slug Server Engine    |
+| (Localhost Proxy Engine) | =================================> | (PQC Listener + VFS)  |
+| - Nhận lệnh từ browser   |   100% PQC AEAD CIPHERTEXT         | - SlugVFS Jail        |
+| - Đóng gói PQC Chunks    |   - ML-KEM-768 Shared Secret       | - RBAC Enforcement    |
+| - Giải mã an toàn        |   - XChaCha20-Poly1305             | - Stateful AI Guard   |
++--------------------------+   - Directional Salts              +-----------------------+
+                               (Không ai ngửi được trên Wi-Fi!)
+```
 
-## 3. Hệ thống tệp ảo (SlugVFS) & Cổng kiểm soát đọc (Closed-Loop Gating)
-
-### 3.1. Điểm khác biệt giữa công cụ quét rời rạc và Slug VFS
-- Với công cụ rời rạc (`gitleaks` + `http.server`): Công cụ quét chỉ in ra màn hình. Nếu người dùng quên quét hoặc cố tình mở cổng truyền file, toàn bộ dữ liệu nhạy cảm vẫn bị gửi đi bình thường.
-- Với **Slug**: Việc kiểm duyệt được gắn trực tiếp vào **đường đọc dữ liệu của hệ thống tệp ảo** (`vfs_.read_file()`):
-  ```cpp
-  // Mã thực tế trong src/core/vfs.cpp
-  if (filter_mode != FilterMode::NONE) {
-      if (!is_file_allowed(rel_path)) {
-          return VFSResult::err(VFSError::PERMISSION_DENIED);
-      }
-  }
-  ```
-  Ngay cả khi một client gửi yêu cầu tải trực tiếp một chunk dữ liệu nhằm né tránh danh sách manifest, hàm đọc của máy chủ sẽ từ chối ngay lập tức tại ranh giới filesystem.
-
-### 3.2. Ba chế độ chia sẻ (Configurable Filter Modes)
-Người dùng có toàn quyền điều khiển mức độ lọc khi chia sẻ workspace thông qua lệnh `slug add`:
-1. **`protected` (Mặc định):** Kích hoạt toàn bộ bộ lọc `.gitignore`, luật cấm `.slug/rules.conf`, quét secret và cách ly tự động.
-2. **`include-ignored` (`--include-ignored`):** Cho phép chia sẻ cả các file build/artifact thường bị ignore, nhưng **vẫn giữ nguyên rào chắn chặn secret và file nhạy cảm**.
-3. **`none` (`--no-filter`):** Chia sẻ thô toàn bộ thư mục cho các đồng đội tin cậy trong mạng nội bộ.
-   - **Bảo chứng an toàn bất biến (Security Invariant):** Kể cả khi chạy ở chế độ `none`, Slug **tuyệt đối không bao giờ cho phép** đọc vượt ngục ra khỏi thư mục gốc (`resolve_safe_path`), không bao giờ chia sẻ thư mục khóa nội bộ `.slug/`, và luôn yêu cầu mã xác thực OTP 8 số trước khi bắt tay.
+* **Nguyên lý hoạt động:**
+  1. Người dùng chạy lệnh `slug web` trên máy khách.
+  2. Slug CLI thiết lập kết nối socket PQC tới máy chủ từ xa, thương lượng khóa ML-KEM-768 và thiết lập kênh mã hóa AEAD.
+  3. Slug CLI khởi tạo một máy chủ web nội bộ chỉ lắng nghe trên giao diện loopback `127.0.0.1` của chính máy khách.
+  4. Trình duyệt mở giao diện tại `http://127.0.0.1:<random_port>`. Mọi thao tác tải file hoặc duyệt thư mục từ trình duyệt chỉ truyền nội bộ trong RAM/loopback của máy khách.
+  5. Slug CLI nhận request từ trình duyệt, kéo các khối 64 KiB qua kênh mạng PQC từ máy chủ, giải mã an toàn trên máy khách, rồi mới stream nội bộ trả về cho trình duyệt.
+  6. **Kết quả:** Kẻ tấn công đứng giữa mạng chỉ nhìn thấy các gói tin nhị phân ngẫu nhiên có entropy cao của giao thức PQC, hoàn toàn không có bất kỳ byte HTTP hay plaintext nào trên đường truyền.
 
 ---
 
-## 4. Giao thức P2P: Bắt tay hậu lượng tử và Xác thực OTP 8 số
+## 3. Giao Thức Đóng Khung Dữ Liệu Phân Hướng (Directional AEAD Wire Protocol)
 
-### 4.1. Mã OTP 8 chữ số tự hủy (One-Time Ephemeral TOTP)
-- Để kết nối nhanh giữa 2 máy sinh viên trong mạng LAN mà không cần tạo tài khoản hay trao đổi mật khẩu dài dòng:
-  - Máy Host tạo ra một mã 8 chữ số ngẫu nhiên có thời gian sống ngắn (dựa trên RFC 6238 TOTP).
-  - Phía máy Host áp dụng **cơ chế tiêu thụ trạng thái nguyên tử (Atomic Single-Use)**: Ngay khi máy khách xác thực thành công, mã OTP lập tức bị đốt cháy (burned). Mọi nỗ lực kết nối lại bằng mã cũ đều bị từ chối, triệt tiêu nguy cơ tấn công phát lại (Replay Attack).
+Trong kết nối TCP song công (Full-Duplex), việc tái sử dụng Nonce (Nonce Reuse) là lỗi chí mạng đối với họ mật mã ChaCha20, dẫn đến việc mất tính bảo mật của luồng mã hóa. Slug triệt tiêu hoàn toàn nguy cơ này bằng cơ chế phân hướng muối phái sinh (`src/net/aead_frame.hpp`):
 
-### 4.2. Mật mã hậu lượng tử (Post-Quantum Cryptography)
-- Slug ứng dụng các tiêu chuẩn mật mã học mới nhất do Viện Tiêu chuẩn và Công nghệ Quốc gia Hoa Kỳ (NIST) ban hành (tháng 8/2024):
-  - **NIST FIPS 203 (ML-KEM-768):** Cơ chế đóng gói khóa mạng tinh thể (Module-Lattice KEM) để thiết lập khóa phiên bí mật dùng chung an toàn trước cả máy tính lượng tử tương lai.
-  - **NIST FIPS 204 (ML-DSA-65):** Chữ ký số mạng tinh thể xác thực danh tính máy chủ.
-  - **Mã hóa dữ liệu AEAD (AES-256-GCM / XChaCha20-Poly1305):** Đảm bảo tính bảo mật và toàn vẹn dữ liệu cho từng khối (chunk) truyền qua mạng.
+### 3.1. Phái Sinh Khóa Phân Hướng Qua BLAKE3-KDF
+Từ `SharedSecret` (32 bytes) sinh ra sau bước bắt tay ML-KEM-768, hai đầu độc lập tính toán:
+
+$$\text{SessionKey} = \text{BLAKE3-KDF}(\text{SharedSecret}, \text{"SLUG_AEAD_SESSION_KEY_V1"})$$
+$$\text{ClientToServer\_Salt} = \text{BLAKE3-KDF}(\text{SharedSecret}, \text{"SLUG_C2S_NONCE_SALT_V1"})[0..15]$$
+$$\text{ServerToClient\_Salt} = \text{BLAKE3-KDF}(\text{SharedSecret}, \text{"SLUG_S2C_NONCE_SALT_V1"})[0..15]$$
+
+### 3.2. Cấu Trúc Khung Tin AEAD
+```text
++-------------------+--------------------+------------------------+-------------------+
+| Length (4 bytes)  | SeqNum (8 bytes)   | Encrypted Payload      | Tag (16 bytes)    |
+| Big-Endian uint32 | Big-Endian uint64  | (Variable Length)      | Poly1305 MAC      |
++-------------------+--------------------+------------------------+-------------------+
+|<------- Associated Data (AAD) -------->|
+```
+
+1. **Khởi Tạo Nonce Phân Hướng (24 bytes):**
+   * Chiều Client -> Server: $\text{Nonce}_{\text{c2s}} = \text{ClientToServer\_Salt}\ (16\text{ bytes}) \parallel \text{SeqNum}_{\text{tx}}\ (8\text{ bytes})$
+   * Chiều Server -> Client: $\text{Nonce}_{\text{s2c}} = \text{ServerToClient\_Salt}\ (16\text{ bytes}) \parallel \text{SeqNum}_{\text{tx}}\ (8\text{ bytes})$
+   * Nhờ tách biệt 2 salt độc lập, hai chiều gửi đồng thời gói tin `SeqNum = 1` sẽ có hai Nonce hoàn toàn khác biệt, không bao giờ đụng độ.
+2. **Associated Data (AAD) Chống Sửa Đổi Header:** Toàn bộ 12 bytes đầu `[Length || SeqNum]` được gắn vào trường AAD, đảm bảo kẻ tấn công không thể sửa độ dài hoặc cắt ghép thứ tự gói tin.
+3. **Cửa Sổ Trượt Chống Phát Lại (64-Bit Anti-Replay Sliding Window):** Ngăn chặn kẻ tấn công ghi lại gói tin cũ và phát lại trên đường truyền.
 
 ---
 
-## 5. Bảng ma trận ranh giới an toàn (Threat Model & Boundaries)
+## 4. Tương Thích Đa Nền Tảng (Windows & Linux Path Engine)
 
-Để đảm bảo tính trung thực và minh bạch khoa học, Slug công bố rõ ràng ranh giới bảo vệ:
+Hệ thống chia sẻ workspace phải đảm bảo việc một host chạy Linux gửi dữ liệu cho client chạy Windows (hoặc ngược lại) diễn ra thông suốt mà không gặp lỗi phân cách đường dẫn:
 
-| Tình huống nguy cơ | Mức độ Slug bảo vệ | Cơ chế thực hiện |
-| :--- | :---: | :--- |
-| **Vô tình push `.env` lên GitHub public** | **Ngăn chặn triệt để** | `slug env init` đã xóa file `.env` khỏi đĩa, chỉ còn file mã hóa `.env.pqc`. |
-| **AI Agent đọc lén secret từ ổ cứng** | **Ngăn chặn triệt để** | Ổ cứng không có plaintext; AI được hướng dẫn qua `.slug/ai-rule.md`. |
-| **Chạy lén lệnh in bộ nhớ / printenv trong code** | *Ngoài phạm vi* | Tiến trình con có quyền đọc biến trên RAM của chính nó để thực thi code. |
-| **Sniffing bắt gói tin trong mạng Wi-Fi công cộng** | **Bảo vệ tuyệt đối** | Kênh P2P mã hóa bằng AEAD 256-bit, không có byte HTTP lộ thiên trên mạng. |
-| **Gửi nhầm file chứa API key cho bạn qua mạng** | **Tự động cách ly** | AI Guard và Heuristic phát hiện và VFS Jail chặn tại hàm đọc chunk. |
-| **Tấn công đường dẫn thư mục `../../etc/passwd`** | **Ngăn chặn triệt để** | `PathUtils::resolve_safe_path` ép mọi đường dẫn nằm gọn trong root workspace. |
+1. **Chuẩn Hóa Giao Thức (Protocol Path):**
+   * Mọi đường dẫn lưu trong Manifest JSON, trong gói tin PQC và trong `.slug/rules.conf` luôn sử dụng định dạng tương đối với dấu **`/`** (ví dụ: `src/core/main.cpp`).
+   * Không bao giờ lưu đường dẫn tuyệt đối của hệ điều hành (`/home/...` hay `C:\...`).
+2. **Bộ Chuyển Đổi Biên Giới (Boundary Translation):**
+   * Trên Windows, nếu người dùng nhập `src\main.cpp` trên dòng lệnh, Slug CLI tự động chuyển đổi tất cả dấu `\` thành `/` trước khi gửi truy vấn.
+   * Khi ghi xuống đĩa, Slug sử dụng `std::filesystem::path::preferred_separator` để ánh xạ chính xác sang cấu trúc thư mục bản địa của hệ điều hành.
+3. **Cơ Chế Khóa VFS (Path Jailing):**
+   * Hàm `resolve_safe_path` thực hiện chuẩn hóa `weakly_canonical` và kiểm tra tiền tố thư mục gốc, lập tức từ chối mọi thủ thuật vượt ngục thư mục như `../../etc/passwd` hoặc `..\..\Windows\System32`.

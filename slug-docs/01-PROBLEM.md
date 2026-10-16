@@ -1,70 +1,86 @@
-# 01. Đặt vấn đề thực tế: Bài toán chia sẻ dữ liệu trong phòng máy trường học
+# 01. Đặt vấn đề và Nhu cầu thực tế
 
-> **Đơn vị dự thi:** Đội thi SICT Innovation Challenge 2026 — Track: Tech Your Solutions (Đại học Công nghiệp Hà Nội)  
-> **Lĩnh vực giải pháp:** Mạng (Kết nối LAN trực tiếp, Băng thông, Bảo mật kênh truyền) & Phần mềm (Thao tác người dùng, Lọc dữ liệu, Bảo vệ bí mật mã nguồn)
+> **Đơn vị dự thi:** Đội thi SICT Innovation Challenge 2026 — Track: Tech Your Solutions (Trường CNTT&TT — Đại học Công nghiệp Hà Nội)  
+> **Lĩnh vực giải pháp:** Phần mềm (Quy trình làm việc & Quản lý dữ liệu) & Mạng (Chia sẻ cục bộ P2P & Bảo vệ biên dữ liệu)
 
 ---
 
-## 1. Một tình huống rất "đời" trong môi trường học tập
+## 1. Bối cảnh: Các kịch bản đời thường trong học tập, văn phòng và phát triển phần mềm
 
-Hãy hình dung một tình huống diễn ra hàng ngày tại các phòng máy thực hành CNTT, phòng lab nghiên cứu hoặc khu ký túc xá:
+Trong sinh hoạt công nghệ hàng ngày tại trường học, phòng thực hành máy tính (lab) và môi trường văn phòng công ty, nhu cầu trao đổi tệp tin và mã nguồn diễn ra liên tục với các kịch bản rất đỗi quen thuộc:
 
-> **Sinh viên ngồi tại Máy A muốn gửi nhanh một thư mục bài tập lớn, đồ án môn học hoặc dữ liệu thử nghiệm cho bạn ngồi tại Máy B (hoặc gửi cho thầy cô/mentor để nhờ kiểm tra lỗi).**
+1. **Chuyển tệp tin và dữ liệu lớn qua mạng LAN nội bộ:**
+   - Trong cùng một phòng lab, giảng đường hoặc văn phòng công ty, hạ tầng mạng nội bộ (LAN/Wi-Fi) thường đạt tốc độ rất cao (1 Gbps = ~125 MB/s). Tuy nhiên, khi cần chuyển một tệp dữ liệu lớn, một video tài liệu hay một thư mục dự án, người dùng thường có thói quen tải lên Google Drive, gửi qua Zalo, Telegram hoặc WeTransfer.
+   - **Hậu quả:** Lãng phí băng thông đường truyền quốc tế (WAN) của đơn vị; tắc nghẽn mạng chung; bị giới hạn dung lượng tải tệp; và đặc biệt là dữ liệu nội bộ bị lưu chuyển qua máy chủ trung gian của bên thứ ba.
+2. **Bài toán thu bài thi và bài tập sinh viên trong phòng máy thực hành:**
+   - Trong một buổi thi thực hành hoặc kết thúc giờ làm bài tập lớn, giảng viên cần thu bài của 40–50 sinh viên cùng lúc một cách nhanh gọn, công bằng.
+   - Nếu bắt sinh viên nộp qua Google Form/Email: Mạng phòng máy dễ bị nghẽn đường truyền WAN khi hàng chục máy cùng tải lên tệp nén hàng chục MB; sinh viên tốn thời gian đăng nhập tài khoản cá nhân trên máy tính công cộng của trường.
+   - Nếu giáo viên chia sẻ thư mục qua mạng LAN: Rất khó để kiểm soát việc sinh viên nhìn thấy bài của nhau hoặc sao chép bài của bạn trước khi nộp.
+3. **Lập trình viên làm việc cùng các trợ lý AI và làm việc nhóm:**
+   - Sinh viên và kỹ sư phần mềm thường xuyên dùng các trợ lý AI (GitHub Copilot, Cursor, Claude Code) để code. Quá trình này đòi hỏi phải tạo các API key, token (`OPENAI_API_KEY`, `GEMINI_API_KEY`, Stripe, DB Connection String) lưu trong file `.env` hoặc file cấu hình cục bộ.
+   - Khi làm việc nhóm, việc nén nhanh cả thư mục đang code dở để gửi cho bạn bè gỡ lỗi (debug) rất dễ kéo theo cả các file bí mật hoặc hàng trăm MB thư mục rác build (`node_modules/`, `target/`, `build/`).
+4. **Yêu cầu công khai mã nguồn (Public Repository):**
+   - Khi nộp đồ án môn học hoặc tham gia các cuộc thi công nghệ (như chính quy chế SICT Innovation Challenge yêu cầu mọi đội thi phải mở repository công khai trên GitHub của Ban tổ chức), việc sơ suất commit nhầm một file cấu hình nhạy cảm sẽ khiến toàn bộ khóa API bị lộ ra toàn thế giới.
 
-Các máy tính trong phòng máy được nối với nhau qua switch theo **mô hình mạng hình sao (Star Topology)**. Về mặt vật lý, hai máy chỉ cách nhau vài mét cáp mạng LAN hoặc cùng một sóng Wi-Fi phòng lab. Tuy nhiên, để chuyển được thư mục mã nguồn sang máy bên cạnh, sinh viên gặp phải hàng loạt rào cản:
+---
+
+## 2. Điểm nghẽn của các giải pháp truyền thống
+
+| Phương thức truyền thống | Điểm nghẽn thực tế & Rủi ro |
+| :--- | :--- |
+| **`python -m http.server 8000`** | - **Không mã hóa (Plaintext):** Bất kỳ ai trong cùng mạng Wi-Fi trường học/văn phòng đều có thể bắt gói tin (sniffing) và lấy toàn bộ nội dung.<br>- **Không phân quyền:** Ai có địa chỉ IP và cổng đều tải được mọi thứ.<br>- **Không hỗ trợ nộp bài (Blind Drop):** Chỉ hỗ trợ tải xuống (download). Nếu viết thêm script upload thì ai cũng xem và tải được file người khác vừa nộp.<br>- **Không kiểm duyệt:** Mở từ thư mục nào là phơi bày toàn bộ file ẩn, `.env` hoặc file nhạy cảm trong thư mục đó. |
+| **SFTP / FTP / SMB (Windows Share)** | - **Cấu hình cồng kềnh:** Đòi hỏi quyền quản trị viên (Admin/Root), tạo tài khoản người dùng hệ thống (User Accounts), mở port tường lửa phức tạp.<br>- **Thiếu cơ động (Ephemeral):** Thích hợp cho hạ tầng cố định, không phù hợp cho nhu cầu chia sẻ nhanh vài phút giữa hai máy tính cá nhân.<br>- **Không có khả năng kiểm soát nội dung chủ động:** Chỉ đóng vai trò "đường ống truyền dẫn thô", không hiểu cấu trúc dự án (`.gitignore`) và không có cơ chế cảnh báo file bí mật. |
+| **Cloud trung gian (Google Drive, Zalo, OneDrive)** | - **Lãng phí băng thông WAN:** Hai máy tính ngồi cạnh nhau trong cùng 1 phòng nhưng tệp tin phải đi vòng ra ngoài Internet tới máy chủ bên thứ ba rồi mới tải về lại.<br>- **Rủi ro lộ bí mật và chính sách riêng tư:** Dữ liệu nội bộ, khóa bí mật công ty bị đẩy lên server của bên thứ ba.<br>- **Giới hạn tốc độ & dung lượng:** Bị bóp băng thông, giới hạn file nén lớn. |
+
+---
+
+## 3. Các vấn đề cốt lõi mà Slug tập trung giải quyết
+
+### 3.1. Rủi ro lộ lọt khóa bí mật và credential (Secret Leakage)
+- **Thực trạng:** Tệp `.env`, file private key, token xác thực thử nghiệm rất dễ bị bỏ quên trong thư mục dự án. Sinh viên hoặc lập trình viên chỉ cần một lần gõ `git add .` rồi `git push`, hoặc nén nhầm cả thư mục thành file ZIP gửi cho người khác, là toàn bộ khóa API đã bị lộ ra ngoài.
+- **Hậu quả:** Khóa API bị bot quét tự động vét sạch trong vòng vài chục giây sau khi lên GitHub public; tài khoản đám mây bị trừ tiền ngoài ý muốn (hóa đơn hàng triệu đến hàng chục triệu đồng), tài khoản bị khóa, hoặc dữ liệu thử nghiệm bị rò rỉ.
+
+### 3.2. Trợ lý AI tự động đọc trộm file cấu hình nhạy cảm trên đĩa cứng
+- Khi lập trình viên mở workspace trong các IDE tích hợp AI, AI agent tự động quét và lập chỉ mục (index) toàn bộ các file văn bản trong thư mục để nạp ngữ cảnh vào Context Window gửi lên cloud.
+- Nếu file `.env` nằm dạng văn bản rõ (plaintext) trên đĩa cứng, AI sẽ vô tình đọc trọn vẹn các secret này và gửi kèm trong các request gửi về máy chủ AI cloud, tạo ra nguy cơ rò rỉ thông tin cấu hình nội bộ.
+
+### 3.3. Rác build và ô nhiễm đường truyền khi chia sẻ thư mục
+- Một dự án web hoặc phần mềm hiện đại thường đi kèm các thư mục build cực kỳ nặng nề: `node_modules/` (hàng trăm MB đến vài GB), `build/`, `dist/`, `target/`, `.venv/`.
+- Khi người dùng nén cả thư mục hoặc bật HTTP server để gửi cho người khác, họ lãng phí băng thông và thời gian để truyền đi hàng chục nghìn file rác mà máy người nhận hoàn toàn có thể tự tạo lại (`npm install`).
+
+### 3.4. Thiếu một cơ chế thu nộp dữ liệu gọn nhẹ, an toàn trong mạng nội bộ
+- Giảng viên trong phòng lab hoặc trưởng nhóm trong văn phòng cần một công cụ **thu bài / nhận tệp một chiều (Write-Only / Blind Drop)**: Người nộp chỉ có quyền đẩy tệp lên, không có quyền duyệt cây thư mục hoặc tải bài của người khác về.
+
+---
+
+## 4. Định vị của Slug trong SICT Innovation Challenge
+
+Slug không cố gắng phát minh lại các nguyên lý mã hóa hay công cụ quét mã độc quy mô lớn. **Slug là một giải pháp kỹ thuật thực tế, tinh gọn (~8MB, 1 file nhị phân tĩnh duy nhất, zero-dependency), hỗ trợ sinh viên, giảng viên và kỹ sư phần mềm giải quyết trọn vẹn các nhu cầu thường nhật:**
 
 ```text
-               [MÔ HÌNH THỰC TẾ TRONG PHÒNG MÁY TRƯỜNG HỌC]
-
-                      +-----------------------+
-                      |   INTERNET / CLOUD    |
-                      | (Zalo / Drive / Zipp) |
-                      +-----------------------+
-                             ^         |
-              Vòng qua đám mây:        | Tải xuống lại:
-              Tốn băng thông Internet  | Nghẽn mạng phòng máy!
-              và lộ dữ liệu riêng tư!  |
-                             |         v
-  [MÁY A - SINH VIÊN 1] <==================> [MÁY B - SINH VIÊN 2]
-                     KẾT NỐI LAN TRỰC TIẾP QUA SWITCH
-                     - Tốc độ Gigabit nội bộ cực nhanh!
-                     - Nhưng thiếu công cụ:
-                       + Không thạo FTP / SSH / Cấu hình server.
-                       + Gửi qua HTTP thuần thì không mã hóa.
-                       + Vô tình gửi cả thư mục rác node_modules/.
-                       + Vô tình để lộ API key, token cá nhân!
++-----------------------------------------------------------------------------------+
+| SLUG — CÔNG CỤ CHIA SẺ VÀ BẢO VỆ DỮ LIỆU CỤC BỘ TRONG KỶ NGUYÊN AI                |
++-----------------------------------------------------------------------------------+
+                                          |
+        +---------------------------------+---------------------------------+
+        v                                 v                                 v
+[1. CHIA SẺ P2P LAN AN TOÀN]     [2. KIỂM SOÁT NỘI DUNG CHỦ ĐỘNG] [3. LÁ CHẮN AI ENVSHIELD]
+Truyền file nội bộ gigabit,      Tự lọc bỏ rác build (.gitignore), Niêm phong .env vào Vault,
+mã hóa Hậu Lượng Tử (PQC),       rà soát secret entropy cao &      nạp biến vào RAM lúc chạy,
+OTP 1 lần, hỗ trợ phân quyền     AI Semantic Guard cảnh báo        không để plaintext trên đĩa
+Write-Only để thu bài gọn nhẹ.   trước khi gửi nhầm ra ngoài.      cho AI đọc trộm.
 ```
 
 ---
 
-## 2. Năm rào cản lớn khi chia sẻ dữ liệu giữa các máy tính
+## 5. Bảng Tổng Hợp Thông Tin Hỗ Trợ Hội Đồng Giám Khảo Rà Soát
 
-### 2.1. Rào cản công cụ: Sinh viên không phải ai cũng biết dựng FTP/SSH
-- Các công cụ truyền thống như FTP, SFTP, SCP đòi hỏi kiến thức quản trị mạng: phải cài đặt daemon máy chủ (`sshd`, `vsftpd`), cấu hình cổng, cấp tài khoản hệ điều hành (user/password của Windows/Linux) và cấu hình tường lửa.
-- Việc này quá phức tạp cho nhu cầu gửi nhanh một thư mục trong tiết học 45 phút, dễ dẫn đến việc cấp thừa quyền hoặc để lại tài khoản mồ côi (orphaned accounts) trên máy thực hành.
+Nhằm hỗ trợ Hội đồng Ban giám khảo cuộc thi **SICT Innovation Challenge (“Tech Your Solutions” — Trường CNTT&TT, Đại học Công nghiệp Hà Nội)** thuận tiện trong quá trình thẩm định và đối chiếu giải pháp, nhóm dự thi tổng hợp các luận điểm kỹ thuật tương ứng với 4 khía cạnh đánh giá của vòng sơ khảo:
 
-### 2.2. Lãng phí băng thông: Vòng qua Internet đám mây không cần thiết
-- Khi không có công cụ nội bộ, sinh viên thường nén file ZIP rồi gửi qua Zalo, Messenger, Discord hoặc tải lên Google Drive.
-- Hai máy tính ngồi cạnh nhau trong cùng mạng LAN nhưng dữ liệu phải tải ngược lên máy chủ đám mây rồi tải ngược trở về. Tại các phòng máy trường học có hàng trăm sinh viên cùng thực hành, đường truyền Internet ra ngoài thường xuyên bị quá tải, nghẽn mạng, khiến việc gửi một file đồ án mất hàng chục phút.
+| Khía cạnh đánh giá | Thực trạng & Cách tiếp cận của Slug | Minh chứng kỹ thuật & File tài liệu liên quan |
+| :--- | :--- | :--- |
+| **1. Mức độ cần thiết & Thực tế của vấn đề** | Giải quyết trực tiếp các nhu cầu phát sinh hàng ngày trong môi trường trường học và văn phòng:<br>• Chuyển tệp nội bộ gigabit, tiết kiệm 100% băng thông WAN, không qua máy chủ bên thứ ba.<br>• Thu bài tập sinh viên phòng máy một chạm, chống nhìn trộm bài chép.<br>• Ngăn chặn nguy cơ lộ API key/token khi làm việc với AI hoặc đưa repo lên GitHub. | • [01-PROBLEM.md](01-PROBLEM.md)<br>• Bảng phân tích lỗ hổng của `python -m http.server`, FTP/SFTP và Cloud Drive ở Mục 2. |
+| **2. Tính khả thi của ý tưởng & mức độ hoàn thiện** | • Đóng gói thành **1 file thực thi nhị phân duy nhất (~8MB)**, zero-dependency, không cần cài đặt Python, Node.js hay database.<br>• Chạy thực tế mượt mà trên cả Linux và Windows.<br>• Hỗ trợ cả giao diện dòng lệnh POSIX lẫn Web Portal cục bộ (`127.0.0.1:8080/drop`). | • [02-SOLUTION.md](02-SOLUTION.md)<br>• [BUILD.md](../BUILD.md)<br>• Bản phát hành nhị phân có sẵn trong Releases. |
+| **3. Tính sáng tạo & Điểm khác biệt** | • **Khắc phục triệt để nhược điểm của `python http.server`:** Thay thế đường truyền plain HTTP bằng kênh PQC AEAD nhị phân; bổ sung phân quyền OTP 3 vai trò (`[rw]`, `[r]`, `[w]`).<br>• **Khác biệt so với FTP/SFTP:** Có khả năng kiểm soát nội dung chủ động (Selective Staging) tự động lọc rác build theo `.gitignore`.<br>• **Sáng tạo với PQC EnvShield:** Nạp biến môi trường vào RAM lúc chạy test/start, không để plaintext trên đĩa cho AI đọc trộm. | • [04-ARCHITECTURE.md](04-ARCHITECTURE.md)<br>• [MODULE-MAP.md](MODULE-MAP.md)<br>• Kiến trúc đóng khung Directional AEAD và VFS Jail. |
+| **4. Ứng dụng AI & Giá trị thực tế mang lại** | • Không lạm dụng AI làm bình phong, AI đóng vai trò là **Cố vấn ngữ cảnh (Contextual Advisor)**: đọc các chuỗi có entropy cao nghi vấn, giải thích bằng tiếng Việt đâu là mock key trong file test và đâu là live key của cloud.<br>• Tối ưu hiệu năng bằng bộ nhớ đệm trạng thái BLAKE3 (`index.db`), không quét lại file cũ.<br>• Dạy AI coding agent cách thực thi lệnh qua công cụ (`slug env run`). | • [03-AI-USAGE.md](03-AI-USAGE.md)<br>• Module `src/ai/stateful_audit.hpp` và `src/ai/scanner.cpp`. |
 
-### 2.3. Gửi thừa dữ liệu: Thư mục dự án chứa đầy file rác
-- Một dự án lập trình hiện đại (Node.js, React, Python, Rust, Java) chứa các thư mục phụ thuộc và file tạm cực kỳ nặng nề: `node_modules/` (hàng trăm MB đến hàng GB), `build/`, `dist/`, `.venv/`, `target/`.
-- Khi nén cả thư mục để gửi, sinh viên làm lãng phí dung lượng ổ đĩa của bạn bè và lãng phí thời gian truyền tải những file mà máy người nhận hoàn toàn có thể tự tái tạo lại (`npm install`).
-
-### 2.4. Rủi ro riêng tư: Vô tình gửi nhầm API key và cấu hình bí mật
-- Trong quá trình làm đồ án có sử dụng AI (OpenAI, Gemini) hoặc kết nối cơ sở dữ liệu, sinh viên lưu khóa bí mật trong file `.env` hoặc file cấu hình cá nhân.
-- Khi gửi nhanh cả thư mục cho bạn hoặc đẩy lên GitHub công khai (theo yêu cầu nộp bài của trường hoặc thể lệ cuộc thi), sinh viên rất dễ quên xóa `.env`. Hậu quả: tài khoản đám mây bị bot quét tự động vét sạch, gây mất tiền oan hoặc rò rỉ dữ liệu thử nghiệm.
-
-### 2.5. Lo ngại an toàn đường truyền: Mạng Wi-Fi công cộng thiếu mã hóa
-- Nếu sinh viên dùng lệnh chia sẻ nhanh quen thuộc `python -m http.server 8000`:
-  - Dữ liệu truyền hoàn toàn bằng văn bản rõ (Plaintext HTTP). Bất kỳ ai trong cùng mạng Wi-Fi trường học đều có thể bắt gói tin (sniffing qua Wireshark) và lấy cắp toàn bộ mã nguồn bài thi/đồ án.
-  - Không có bất kỳ cơ chế xác thực danh tính: ai biết IP và cổng đều tải được mọi file trong máy.
-
----
-
-## 3. Khoảng trống cần giải quyết
-
-Sinh viên và lập trình viên không cần một hệ thống quản trị mạng phức tạp của doanh nghiệp. Họ cần:
-> **Một công cụ chuyển file và thư mục dự án trực tiếp giữa các máy tính trong mạng nội bộ: Cực kỳ đơn giản (chỉ cần nhập IP, Port và mã OTP), tốc độ LAN tối đa, tự động lọc sạch file rác và chặn hoàn toàn việc gửi nhầm dữ liệu nhạy cảm trước khi rời máy.**
-
-Đó chính là sứ mệnh thực tế của **Slug**.

@@ -31,11 +31,11 @@ Trong kỷ nguyên lập trình hiện đại với các trợ lý AI (Cursor, C
 ### 1.2. Chia Sẻ An Toàn Giữa Người Với Người (Không Lo Thừa Rác, Không Lo Nhầm Bí Mật)
 Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc đối tác:
 - **Không lo chia sẻ thừa file rác:** Tự động nhận diện phân tầng `.gitignore` của dự án, loại bỏ sạch sẽ các thư mục build nặng nề (`node_modules/`, `target/`, `build/`, file tạm).
-- **Không lo chia sẻ nhầm file bí mật:** Hệ thống bảo vệ 4 tầng phân định minh bạch:
-  1. **Tầng 1 - Cấu trúc dự án (`.gitignore`):** Lọc bỏ rác build tự động.
-  2. **Tầng 2 - Chính sách Host (`.slug/rules.conf`):** Luật cấm tùy chỉnh theo tổ chức (`deny *.pem`, `deny *.key`, v.v.).
-  3. **Tầng 3 - Smart Regex & Shannon Entropy Guard:** Bộ lọc heuristic & entropy cục bộ siêu tốc, chặn private key, token có độ hỗn loạn cao mà không cần mạng.
-  4. **Tầng 4 - AI Semantic Guard (khi bật `-a / --ai` với LLM API):** Sử dụng LLM API phân tích ngữ cảnh code chuyên sâu để phát hiện credential ngụy trang hoặc secret khó phát hiện bằng regex.
+- **Không lo chia sẻ nhầm file bí mật:** Hệ thống **Slug Guard** kết hợp đa cơ chế phòng vệ phân định minh bạch:
+  - **Quy tắc cấu trúc dự án (`.gitignore` / `.slugignore`):** Tự động lọc bỏ các thư mục build rác và dependencies nặng nề.
+  - **Chính sách kiểm soát của Host (`.slug/rules.conf`):** Các quy tắc cấm hoặc cho phép cụ thể theo thư mục và phần mở rộng (`deny *.pem`, `deny *.key`, v.v.).
+  - **Smart Regex & Shannon Entropy Guard:** Bộ lọc heuristic & entropy cục bộ trong bộ nhớ, phát hiện chuỗi token có độ ngẫu nhiên cao, private key mà không cần kết nối mạng.
+  - **AI Semantic Guard (tùy chọn với `--ai`):** Hỗ trợ kết nối các mô hình cục bộ (Ollama) hoặc Cloud LLM để rà soát ngữ nghĩa chuyên sâu các credential ngụy trang phức tạp.
 
 ### 1.3. Kiến Trúc Engine Viewing Nội Bộ (Zero Remote HTTP)
 - Trên mạng dây LAN/Internet **chỉ tồn tại kết nối nhị phân PQC an toàn lượng tử** (cổng `9443`).
@@ -43,12 +43,40 @@ Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc 
 
 ---
 
-## 2. Hệ Thống Tài Liệu Kỹ Thuật (Architecture & Technical Specs)
+## 2. Trải Nghiệm Giao Diện Người Dùng (Visual Product Showcase)
+
+Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, 100% SVG vector offline không phụ thuộc internet).
+
+### 2.1. Trạm Kết Nối & Quản Lý Phiên Làm Việc (Client Portal & Quick Connect)
+> Cho phép nhập nhanh IP trạm và mã OTP 1 lần (hoặc tài khoản Ephemeral RBAC), tự động thương lượng kênh mật mã Hậu lượng tử NIST FIPS 203 và lưu danh sách trạm thường dùng để truy cập 1 chạm.
+
+<p align="center">
+  <img src="docs/ketnoi.png" alt="Slug - Trạm Kết Nối & Quản Lý Phiên" width="100%" />
+</p>
+
+### 2.2. Trạm Phát & Trung Tâm Điều Khiển Bảo Mật (Host Command Center & Slug Guard)
+> Khởi tạo và quản lý đa trạm phát, giám sát bộ 3 mã OTP xoay vòng theo quyền hạn (`[rw]` Đọc/Ghi, `[r]` Chỉ Đọc, `[w]` Hộp Thư Nộp Bài), quản lý người dùng Ephemeral RBAC và tùy biến bộ quy tắc lọc.
+
+<p align="center">
+  <img src="docs/chiase.png" alt="Slug - Trạm Phát & Quản Lý Chia Sẻ" width="100%" />
+</p>
+
+### 2.3. Trình Duyệt File Trực Quan & Web Dropbox Explorer (PQC Tunnel Browsing)
+> Duyệt cây thư mục từ xa được bảo vệ bởi kênh mã hóa PQC, hỗ trợ tải từng tệp, nén tải toàn bộ thư mục ZIP và xem kế hoạch đồng bộ vi sai (Delta Fast-Path) trước khi kéo về máy.
+
+<p align="center">
+  <img src="docs/dropbox.png" alt="Slug - Web Dropbox Explorer" width="100%" />
+</p>
+
+---
+
+## 3. Hệ Thống Tài Liệu Kỹ Thuật (Architecture & Technical Specs)
 
 Hệ thống tài liệu chuyên sâu được phân định chi tiết theo từng khía cạnh kỹ thuật:
 
 | Tài liệu | Nội dung trọng tâm |
 | :--- | :--- |
+| **[docs/README.md](docs/README.md)** | **Tổng quan hệ thống tài liệu & Cẩm nang thẩm định:** Tóm lược bản chất vấn đề, 4 kịch bản đời thường và ma trận thông tin đối chiếu hỗ trợ Hội đồng Ban giám khảo. |
 | **[01-PROBLEM.md](docs/01-PROBLEM.md)** | Phân tích thực trạng: Lỗ hổng của `python -m http.server`, rủi ro tài khoản mồ côi SSH, ô nhiễm Git và nguy cơ rò rỉ secret vào AI coding assistants. |
 | **[02-SOLUTION.md](docs/02-SOLUTION.md)** | Giải pháp toàn diện của Slug: Quy hoạch 9 lệnh cốt lõi, cơ chế một chạm `slug get`, 3 bộ Suite mật mã, hệ thống tập tin ảo `SlugVFS` và Web Dropbox. |
 | **[03-AI-USAGE.md](docs/03-AI-USAGE.md)** | Phòng thủ dữ liệu AI: Stateful AI Secret Guard với bộ nhớ đệm băm BLAKE3 (`index.db`), cơ chế kiểm toán `slug audit`, và công nghệ RAM-only PQC EnvShield. |
@@ -57,7 +85,7 @@ Hệ thống tài liệu chuyên sâu được phân định chi tiết theo t�
 
 ---
 
-## 3. Quy Hoạch 9 Lệnh Cốt Lõi ("The Essential 9")
+## 4. Quy Hoạch 9 Lệnh Cốt Lõi ("The Essential 9")
 
 Toàn bộ hệ thống CLI của Slug tuân thủ nghiêm ngặt chuẩn POSIX/GNU, tổ chức thành 3 nhóm nghiệp vụ chính và các công cụ tiện ích:
 
@@ -84,13 +112,13 @@ SLUG THE ESSENTIAL 9 CORE CLI
   slug conn                   Quản lý danh sách kết nối lưu trên máy client (list, use, prune)
   slug env                    Bảo vệ biến môi trường trong RAM & Central Vault (init, restore, history, prompt, run)
   slug completion <bash|zsh>  Sinh script tự động hoàn thành lệnh cho shell (Tab completion)
-  slug bench                  Đo kiểm tốc độ truyền tải vi sai và hiệu năng thuật toán mật mã
+  slug bench                  Đo hiệu năng thuật toán mật mã (PQC, BLAKE3) và phân mảnh vi sai In-Memory
   slug version                Hiển thị thông tin phiên bản, commit hash và giấy phép bản quyền
 ```
 
 ---
 
-## 4. Hướng Dẫn Sử Dụng Nhanh (Quickstart)
+## 5. Hướng Dẫn Sử Dụng Nhanh (Quickstart)
 
 ### Kịch Bản 1: Host Workspace Và Chia Sẻ Bằng Lệnh Một Chạm (`slug get`)
 
@@ -131,7 +159,25 @@ Tiến trình sẽ tự động thực hiện bắt tay trao đổi khóa ML-KEM
 
 ---
 
-### Kịch Bản 2: Truy Cập Giao Diện Web Techno B2B (No-CLI Workspace)
+### Kịch Bản 2: Thu Bài Tập Phòng Máy Học Sinh / Sinh Viên (Write-Only Blind Drop)
+
+Khi giảng viên hoặc trưởng nhóm cần thu bài nộp của học sinh, sinh viên trong phòng thực hành nhanh gọn, không lo nghẽn mạng WAN:
+1. **Trên máy giáo viên (Host):**
+   Khởi tạo thư mục nhận bài:
+   ```bash
+   slug add ./bai_nop -p 9443
+   ```
+   Hệ thống in ra **Mã OTP quyền Ghi `[w]` Write-Only** (hoặc xem nhanh bằng `slug totp -p 9443 -r w`).
+2. **Phía học sinh, sinh viên nộp bài:**
+   - Học sinh chỉ cần mở trình duyệt kéo thả bài làm vào Web Dropbox hoặc dùng lệnh CLI:
+     ```bash
+     slug push ./bai_lam.zip 192.168.1.107:9443?otp=70788146
+     ```
+   - **Bảo mật & Chống chép bài:** Tầng `SlugVFS Jail` cưỡng chế quyền `WRITE_ONLY`, học sinh chỉ được phép tải bài lên, **hoàn toàn bị cấm xem danh sách hoặc tải bài của các bạn khác về**. Không cần tạo tài khoản hay cài đặt máy chủ cồng kềnh.
+
+---
+
+### Kịch Bản 3: Truy Cập Giao Diện Web Techno B2B (No-CLI Workspace)
 
 Khi chia sẻ với người dùng không cài đặt sẵn CLI:
 1. Chủ máy mở giao diện quản trị:
@@ -148,7 +194,7 @@ Khi chia sẻ với người dùng không cài đặt sẵn CLI:
 
 ---
 
-### Kịch Bản 3: Bảo Vệ File `.env` Khỏi AI Coding Agents Với PQC EnvShield
+### Kịch Bản 4: Bảo Vệ File `.env` Khỏi AI Coding Agents Với PQC EnvShield
 
 Để ngăn ngừa các công cụ AI (như Cursor, Copilot, Claude Code) đọc lén file cấu hình chứa API key trên đĩa cứng:
 
@@ -173,11 +219,11 @@ slug env history
 
 ---
 
-## 5. Cài Đặt & Biên Dịch (Installation & Build)
+## 6. Cài Đặt & Biên Dịch (Installation & Build)
 
 Slug được đóng gói dưới dạng binary tĩnh độc lập (100% Static Binary, ~8.4 MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy mượt mà trên mọi bản phân phối Linux (Ubuntu, Debian, Alpine, RHEL, CentOS, Arch, Kali).
 
-### 5.1. Cài Đặt Nhanh (Quick Install)
+### 6.1. Cài Đặt Nhanh (Quick Install)
 
 #### Quick Install (Linux / macOS)
 ```bash
@@ -204,7 +250,7 @@ Expand-Archive slug-1.0.0-windows-x86_64.zip -DestinationPath "$env:LOCALAPPDATA
 .\slug.exe version
 ```
 
-### 5.3. Bật Tính Năng Tự Động Gợi Ý Lệnh (Shell Autocompletion)
+### 6.2. Bật Tính Năng Tự Động Gợi Ý Lệnh (Shell Autocompletion)
 Slug hỗ trợ tự động gợi ý cờ và các cổng workspace đang chạy cho Bash và Zsh:
 ```bash
 # Đối với Bash:
@@ -215,7 +261,7 @@ source ~/.bash_completion.d/slug
 slug completion zsh > ~/.zsh/completion/_slug
 ```
 
-### 5.4. Tự Biên Dịch Từ Mã Nguồn (Build From Source)
+### 6.3. Tự Biên Dịch Từ Mã Nguồn (Build From Source)
 Yêu cầu: Trình biên dịch hỗ trợ C++20 (`g++` hoặc `clang++`), thư viện OpenSSL 3.0+ hoặc OpenSSL 3.6.3 (hỗ trợ NIST PQC).
 ```bash
 # Biên dịch binary động thông thường:
@@ -230,6 +276,6 @@ bash scripts/test_local.sh
 
 ---
 
-## 6. Giấy Phép Bản Quyền (License)
+## 7. Giấy Phép Bản Quyền (License)
 
 Dự án được phân phối dưới giấy phép mã nguồn mở **Apache License 2.0**. Xem chi tiết tại tệp [LICENSE](LICENSE).

@@ -40,7 +40,7 @@ Slug phân định rạch ròi giữa **Quy tắc lọc cấu trúc**, **Chính 
 | Tầng | Tên Cơ Chế | Nguồn Cấu Hình | Trạng Thái Hiển Thị (Status) | Ý Nghĩa Kỹ Thuật |
 | :---: | :--- | :--- | :--- | :--- |
 | **1** | **Workspace Filter** | `.gitignore` (phân tầng theo thư mục) | `Excluded (gitignore)` | Lọc bỏ các file rác phát sinh trong quá trình build (`node_modules/`, `target/`, `*.o`, `*.log`). Không phải cơ chế bảo mật mà là bộ lọc cấu trúc dự án. |
-| **2** | **Host Sharing Policy** | `.slug/rules.conf` | `Blocked (policy: <lý do>)` | Chính sách kiểm soát do chủ máy định nghĩa (chặn theo đuôi `.pem`, `.key`, `.sqlite`, hoặc chặn cứng tên file `.env`). Có hiệu lực tuyệt đối. |
+| **2** | **Host Sharing Policy** | `.slug/rules.conf` | `Blocked (policy: <lý do>)` | Chính sách kiểm soát do chủ máy định nghĩa (chặn theo đuôi `.pem`, `.key`, `.sqlite`, hoặc chặn cứng tên file `.env`). Có hiệu lực ưu tiên cao nhất. |
 | **3** | **Secret Audit** | Stateful AI Secret Guard | `Quarantined (AI Secret Guard: <lý do>)` | Hệ thống AI phát hiện chuỗi khóa bí mật, token có entropy cao hoặc file môi trường. Tự động cách ly khỏi manifest và chặn tải về. |
 
 ---
@@ -110,14 +110,14 @@ Slug cung cấp module **PQC EnvShield** (`slug env`):
   # hoặc
   slug env run -- python3 main.py
   ```
-* **Bơm biến môi trường trực tiếp trong RAM:** Slug giải mã bí mật duy nhất trong bộ nhớ RAM tạm thời của tiến trình con, nạp trực tiếp vào biến môi trường của hệ điều hành mà **tuyệt đối không ghi bất kỳ byte plaintext nào xuống đĩa cứng**. AI hoàn toàn không có cơ hội tiếp xúc trực tiếp với file secret bản rõ.
+* **Bơm biến môi trường trực tiếp trong RAM:** Slug giải mã bí mật duy nhất trong bộ nhớ RAM tạm thời của tiến trình con, nạp trực tiếp vào biến môi trường của hệ điều hành mà **không ghi byte plaintext nào xuống đĩa cứng**. AI hoàn toàn không có cơ hội tiếp xúc trực tiếp với file secret bản rõ từ hệ thống tệp.
 
 ### 5.3. Nhận Thức Thực Tế & Tránh Overclaim (No-Overclaim Principle)
 * **Secret có thể bị đọc khi ứng dụng đang chạy không?**
   **Có!** Để phần mềm hoạt động, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ tiến trình (RAM). Một đoạn mã cố tình chạy `printenv` hoặc cố tình dump bộ nhớ tiến trình vẫn có thể lấy được giá trị đó.
 * **Vậy giá trị bảo vệ thực tế của Slug là gì?**
   Các trợ lý AI là tác nhân hỗ trợ (cooperative assistants), chúng **không bao giờ chủ động tìm cách bypass hay viết mã exploit để trích xuất bộ nhớ RAM** (trừ phi lập trình viên cố tình viết prompt hướng dẫn AI làm điều đó).
-* **Kết luận:** Slug cung cấp một **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ ổ đĩa, đảm bảo secret không bao giờ bị rò rỉ vào context window của LLM trong quá trình làm việc hàng ngày. Đồng thời khi chia sẻ workspace giữa người với người, hệ thống lọc 4 tầng (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy Guard` -> `AI Semantic Guard`) đảm bảo không bao giờ bị chia sẻ thừa file rác hay gửi nhầm file bí mật.
+* **Kết luận:** Slug cung cấp một **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn hành vi đọc plaintext thụ động từ ổ đĩa, hạn chế tối đa nguy cơ secret bị nạp vào context window của LLM trong quá trình làm việc hàng ngày. Đồng thời khi chia sẻ workspace giữa người với người, hệ thống **Slug Guard đa cơ chế** (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy Guard` -> `AI Semantic Guard`) giúp tự động loại bỏ rác build và rà soát, cách ly các file bí mật nghi vấn trước khi truyền tải.
 
 ### 5.4. Centralized Env Vault & Nghệ Thuật Dạy AI (Agent Directive)
 

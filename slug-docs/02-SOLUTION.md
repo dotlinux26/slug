@@ -1,126 +1,125 @@
-# 02. Giải pháp và Quy trình 3 bước của Slug
+# 02. Giải pháp và Các Kịch Bản Ứng Dụng Thực Tế của Slug
 
-> **Định vị sản phẩm:** Công cụ kiểm tra và bảo vệ mã nguồn trước khi công khai hoặc chia sẻ.  
-> **Hình thức sản phẩm:** Ứng dụng dòng lệnh (CLI Tool) đa nền tảng viết bằng C++20, đóng gói 1 file thực thi duy nhất (~8MB, zero-dependency) tích hợp Web Explorer cục bộ.
+> **Định vị sản phẩm:** Công cụ chia sẻ tệp tin và kiểm soát mã nguồn an toàn cục bộ, bảo vệ bí mật trước các trợ lý AI.  
+> **Hình thức sản phẩm:** Ứng dụng dòng lệnh (CLI Tool) đa nền tảng viết bằng C++20, đóng gói 1 file thực thi duy nhất (~8MB, zero-dependency) tích hợp Web Portal cục bộ.
 
 ---
 
 ## 1. Triết lý thiết kế: Tối giản bên ngoài, Chắc chắn bên trong
 
-Một sản phẩm dành cho sinh viên và kỹ sư phần mềm phải dễ sử dụng như các công cụ quen thuộc hằng ngày (`git`, `npm`, `python`), không bắt người dùng phải cấu hình máy chủ phức tạp hay nhớ hàng chục tham số rườm rà.
+Một sản phẩm công nghệ thực tiễn dành cho sinh viên, giảng viên và kỹ sư phần mềm phải dễ sử dụng như các công cụ quen thuộc hằng ngày (`git`, `npm`, `python`), không bắt người dùng phải cấu hình máy chủ phức tạp hay nhớ hàng chục tham số rườm rà.
 
-Slug chuẩn hóa toàn bộ quy trình bảo vệ và chia sẻ workspace thành **Quy trình 3 bước trực quan**:
+Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin thành **Quy trình 3 bước trực quan**:
 
 ```text
 +-----------------------------------------------------------------------------------+
-| QUY TRÌNH 3 BƯỚC BẢO VỆ WORKSPACE VỚI SLUG                                        |
+| QUY TRÌNH 3 BƯỚC BẢO VỆ VÀ CHIA SẺ VỚI SLUG                                       |
 +-----------------------------------------------------------------------------------+
 
-  [BƯỚC 1: KIỂM TRA MÃ NGUỒN]
+  [BƯỚC 1: KIỂM TOÁN NỘI DUNG (SLUG AUDIT)]
        slug audit scan .
        ├── Quét heuristic và Shannon Entropy tìm API keys, tokens, credentials
-       └── AI Guard đọc ngữ cảnh, giải thích mức độ nguy hiểm của từng file
+       └── AI Semantic Guard đọc ngữ cảnh, cảnh báo mức độ rủi ro của từng file
                                      |
                                      v
-  [BƯỚC 2: CẤT BÍ MẬT & CHẠY ỨNG DỤNG AN TOÀN]
+  [BƯỚC 2: NIÊM PHONG BÍ MẬT & CHẠY AN TOÀN (ENVSHIELD)]
        slug env init  --->  slug env run -- <lệnh test / start>
        ├── Cất file .env vào Central Vault (~/.slug/env_vault/)
        ├── Khóa lại thành file mã hóa .env.pqc trong repo
        └── Nạp biến môi trường thẳng vào RAM tiến trình khi chạy, không để plaintext trên đĩa
                                      |
                                      v
-  [BƯỚC 3: CHIA SẺ P2P KHÔNG LO THỪA RÁC / LỘ BÍ MẬT]
+  [BƯỚC 3: CHIA SẺ NỘI BỘ LAN / P2P THEO VAI TRÒ]
        slug add .  --->  slug get <link_kèm_otp>
        ├── Tự động lọc bỏ rác build (node_modules/, target/, build/) theo .gitignore
-       ├── Ngăn chặn tuyệt đối các file nhạy cảm đã bị cảnh báo ở Bước 1
-       └── Kênh truyền P2P mã hóa, xác thực bằng mã OTP 8 số dùng một lần
+       ├── Tự động cách ly và ngăn chặn các file nhạy cảm đã bị cảnh báo ở Bước 1
+       └── Kênh truyền P2P mã hóa Hậu Lượng Tử (PQC), xác thực bằng mã OTP phân quyền 3 vai trò
 ```
 
 ---
 
-## 2. Chi tiết Bước 1: Kiểm tra mã nguồn trước khi công khai (`slug audit`)
+## 2. Các Kịch Bản Đời Thường Thực Tế (Real-World Use Cases)
 
-Trước khi sinh viên đẩy code lên GitHub công khai (để nộp bài hoặc dự thi) hoặc gửi cho đồng đội:
+### Kịch Bản 1: Chuyển Tệp Lớn Trong Mạng LAN Văn Phòng / Trường Học
+- **Tình huống:** Hai đồng nghiệp trong văn phòng công ty hoặc hai sinh viên trong phòng lab cần chuyển cho nhau tệp đồ án, tài liệu thiết kế hoặc video dung lượng vài GB.
+- **Cách làm cũ:** Tải lên Google Drive hoặc gửi qua Zalo. Mất hàng chục phút để upload lên server bên thứ ba rồi lại tải xuống, ngốn băng thông đường truyền WAN của trường/công ty.
+- **Giải pháp với Slug:**
+  1. Người gửi mở chia sẻ thư mục:
+     ```bash
+     slug add ./tailieu -p 9443
+     ```
+  2. Người nhận kéo trực tiếp qua mạng LAN chỉ trong vài giây (tốc độ đạt trần băng thông LAN/Wi-Fi):
+     ```bash
+     slug get "192.168.1.105:9443?otp=12822565" ./tailieu
+     # Hoặc mở trực tiếp trên trình duyệt Web: http://192.168.1.105:9443/drop?ticket=...
+     ```
+  - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768).
 
-- **Lệnh thực thi:**
+---
+
+### Kịch Bản 2: Thu Bài Tập Phòng Máy Sinh Viên Gọn Nhẹ (Write-Only / Blind Drop)
+- **Tình huống:** Giảng viên cần thu bài thi / bài tập thực hành của 40 sinh viên trong phòng máy. Giảng viên muốn sinh viên có thể nộp bài nhanh nhưng **không thể xem hay tải bài của nhau về chép**.
+- **Cách làm cũ:**
+  - Dùng Google Form/Drive: Máy trường học nghẽn mạng WAN; sinh viên phải đăng nhập tài khoản cá nhân trên máy công cộng.
+  - Dùng `python -m http.server`: Không hỗ trợ upload. Nếu dùng script upload thì ai cũng nhìn thấy và tải được bài của bạn khác về.
+  - Dùng FTP/SMB: Cấu hình phức tạp, cần tạo tài khoản user hệ thống, phân quyền thư mục cồng kềnh.
+- **Giải pháp với Slug:**
+  1. Giảng viên chỉ cần gõ 1 lệnh duy nhất:
+     ```bash
+     slug add ./nop_bai -p 9443
+     ```
+  2. Slug tự động sinh ra **mã OTP Quyền Ghi (`[w]` Write-Only)**. Giảng viên đọc mã OTP này cho cả lớp hoặc chiếu lên máy chiếu.
+  3. Sinh viên mở trình duyệt Web hoặc dùng lệnh nộp bài:
+     - Sinh viên kéo thả bài làm vào Web Dropbox hoặc gõ `slug push`.
+     - **Cơ chế VFS Jail & RBAC:** Tầng hệ thống tập tin ảo của Slug cưỡng chế quyền `WRITE_ONLY`. Sinh viên chỉ được phép ghi file lên server, **hoàn toàn bị cấm liệt kê thư mục (`list_dir`) hoặc đọc tệp (`read_file`)**.
+  - **Lợi ích:** Thu bài cực kỳ gọn nhẹ, zero-setup, chống nhìn trộm bài thi triệt để, hoạt động mượt mà ngay cả khi phòng máy mất kết nối Internet quốc tế.
+
+---
+
+### Kịch Bản 3: Chia Sẻ Thư Mục Mã Nguồn Dự Án Không Lo Lộ Secret Hay Thừa Rác
+- **Tình huống:** Lập trình viên cần gửi nhanh thư mục mã nguồn đang viết dở cho bạn cùng nhóm để hỗ trợ gỡ lỗi (debug).
+- **Rủi ro thường gặp:** Thư mục chứa file cấu hình `.env` có API key thật, hoặc chứa thư mục `node_modules/` nặng cả GB. Nếu nén ZIP gửi đi, người nhận tải rất lâu và người gửi có nguy cơ lộ token thanh toán / API key cloud.
+- **Giải pháp với Slug:**
+  - Khi chạy `slug add .`, hệ thống **Slug Guard** tự động kích hoạt:
+    1. **Tự động lọc rác build:** Đọc file `.gitignore` để loại bỏ các thư mục `node_modules/`, `target/`, `build/`.
+    2. **Rà soát secret đa cơ chế:** Quét qua bộ lọc Heuristic & Shannon Entropy. Nếu phát hiện chuỗi token có độ ngẫu nhiên cao hoặc file nghi vấn, hệ thống tự động gắn cờ cách ly (`QUARANTINED`), ngăn không cho đối tác tải về.
+    3. **AI Semantic Guard:** Hỗ trợ phân tích ngữ cảnh để phân biệt giữa mock key trong file test và API key thật sự.
+  - **Lợi ích:** Đồng đội nhận được mã nguồn sạch sẽ, không bị nghẽn mạng vì rác build, và người gửi an tâm rằng các khóa bí mật đã được kiểm duyệt và cách ly an toàn.
+
+---
+
+### Kịch Bản 4: Làm Việc Với Trợ Lý AI Lập Trình Mà Không Bị Đọc Trộm Bí Mật (EnvShield)
+- **Tình huống:** Lập trình viên dùng Cursor, Copilot hoặc Claude Code để phát triển ứng dụng gọi LLM API hoặc kết nối cơ sở dữ liệu.
+- **Rủi ro:** Trợ lý AI liên tục quét và đọc các tệp plaintext trên đĩa để nạp context window gửi về server cloud của bên thứ ba, làm lộ API key.
+- **Giải pháp với Slug EnvShield:**
   ```bash
-  slug audit scan .
+  slug env init                 # Cất .env vào ~/.slug/env_vault/, mã hóa thành .env.pqc, xóa plaintext trên đĩa
+  slug env prompt               # Sinh chỉ thị chuẩn cho AI agent (lưu vào .slug/ai-rule.md)
+  slug env run -- npm test      # Giải mã trực tiếp trong RAM và nạp biến môi trường lúc chạy
+  slug env restore              # Khôi phục lại .env bản rõ khi cần cấu hình lại
   ```
-- **Hành vi hệ thống:**
-  1. **Sàng lọc tự động:** Quét toàn bộ cây thư mục, tìm kiếm các mẫu định danh secret phổ biến (AWS Key, Google Gemini/OpenAI API Key, Stripe Token, Private Key, Database connection string).
-  2. **Phân tích Entropy:** Tính toán độ hỗn loạn ký tự (Shannon Entropy) để nhận diện các khóa mật mã ngẫu nhiên dù không khớp regex cố định.
-  3. **Trợ lý AI phân tích ngữ cảnh (`-a / --ai`):** Nếu có kết nối AI, Slug gửi đoạn trích mã nghi vấn để AI giải thích: *"File này chứa Google API Key thật hay chỉ là chuỗi mock data trong file test unit?"*.
-  4. **Báo cáo rõ ràng:** Xuất bảng trạng thái minh bạch: file nào sạch (`CLEAN`), file nào nghi vấn bị cách ly (`QUARANTINED`), file nào bị chặn bởi chính sách (`RULE_BLOCKED`).
+  - **Lợi ích:** Tạo ra rào cản ma sát chủ động (friction barrier) ngăn chặn AI đọc trộm secret từ ổ đĩa, trong khi tiến trình test và run vẫn chạy bình thường với 100% biến môi trường được cấp từ RAM.
 
 ---
 
-## 3. Chi tiết Bước 2: Bảo vệ biến môi trường và Chạy ứng dụng (`slug env`)
+## 3. Bảng So Sánh Toàn Diện Giữa Slug và Các Công Cụ Khác
 
-Để vừa có thể code và chạy test mượt mà với AI, vừa không để file `.env` bản rõ trên đĩa cứng:
-
-### 3.1. Đóng băng và cất giữ bí mật vào Central Vault
-```bash
-slug env init
-```
-- Slug tính toán mã băm định danh duy nhất của workspace.
-- Tự động sao lưu bản `.env` ra **Kho lưu trữ trung tâm ngoài workspace của người dùng** (`~/.slug/env_vault/<workspace_hash>/`).
-- Mã hóa `.env` trong repo thành `.env.pqc` (sử dụng mật mã hậu lượng tử ML-KEM-768 kết hợp AES-256-GCM) và **xóa bỏ hoàn toàn file `.env` bản rõ khỏi thư mục dự án**.
-- Tự động sinh file chỉ dẫn AI (`.slug/ai-rule.md`) để dặn trợ lý AI không cố đọc hay tạo file `.env` rác.
-
-### 3.2. Chạy ứng dụng và chạy test trực tiếp từ RAM
-```bash
-# Ví dụ chạy test hoặc chạy server phát triển
-slug env run -- npm test
-slug env run -- pytest
-slug env run -- python main.py
-```
-- Slug đọc file `.env.pqc`, giải mã trực tiếp trong bộ nhớ RAM của Slug.
-- Nạp toàn bộ các cặp `KEY=VALUE` vào khối môi trường của tiến trình con thông qua hàm hệ điều hành (`execve` trên Linux, `CreateProcessW` trên Windows).
-- **Kết quả:** Ứng dụng con nhận đầy đủ 100% biến môi trường và chạy bình thường, trong khi trên ổ đĩa hoàn toàn không hề có file `.env` bản rõ nào để AI hay người khác đọc lén.
-
-### 3.3. Khôi phục một chạm khi cần cấu hình lại
-```bash
-slug env restore          # Khôi phục lại bản .env mới nhất từ Central Vault
-slug env history          # Xem lịch sử các phiên bản backup trong Vault
-slug env prompt           # Xuất nội dung chỉ thị để paste vào prompt của AI
-```
+| Tiêu chí | `python -m http.server` | FTP / SFTP | Google Drive / Zalo | **Slug** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Bảo mật kênh truyền (Wire Security)** | ❌ Plaintext (HTTP) | ⚠️ SFTP có TLS/SSH, FTP là bản rõ | ⚠️ TLS tới Cloud bên thứ ba | ✅ **100% PQC AEAD** (ML-KEM-768 + XChaCha20) |
+| **Băng thông & Tốc độ** | ✅ Tối đa LAN | ✅ Tối đa LAN | ❌ Phụ thuộc tốc độ WAN Internet | ✅ **Tối đa LAN gigabit (0 byte WAN)** |
+| **Cài đặt & Thiết lập** | ✅ Cực nhanh (cần Python) | ❌ Rất phức tạp (cần root/admin) | ⚠️ Cần tài khoản, login mạng | ✅ **1 file nhị phân (~8MB, zero-setup)** |
+| **Phân quyền nộp bài (Write-Only)** | ❌ Không có | ⚠️ Cấu hình quyền thư mục phức tạp | ❌ Khó kiểm soát bài nộp chép nhau | ✅ **Hỗ trợ sẵn OTP quyền Ghi `[w]` (Blind Drop)** |
+| **Nhận thức cấu trúc dự án** | ❌ Không (gửi cả rác build) | ❌ Không (gửi nguyên thư mục) | ❌ Không (phải tự nén thủ công) | ✅ **Tự động đọc `.gitignore` lọc rác build** |
+| **Kiểm duyệt bí mật (Secret Scanner)** | ❌ Không (lộ sạch `.env`) | ❌ Không có | ❌ Không có | ✅ **Slug Guard (Entropy + AI Semantic Guard)** |
+| **Bảo vệ RAM cho tiến trình chạy AI** | ❌ Không có | ❌ Không có | ❌ Không có | ✅ **PQC EnvShield (RAM-Only Injection)** |
 
 ---
 
-## 4. Chi tiết Bước 3: Chia sẻ Workspace an toàn qua mạng (`slug add` & `slug get`)
+## 4. Tôn Chỉ "Nói Đúng - Nói Đủ - Không Overclaim"
 
-Khi cần gửi nhanh thư mục dự án cho bạn cùng nhóm trong mạng LAN trường học, phòng lab hoặc ký túc xá:
-
-### 4.1. Phía máy gửi (Host):
-```bash
-slug add .
-```
-- Slug tự động quét và áp dụng 3 bộ lọc:
-  - **Lọc rác:** Đọc file `.gitignore` để tự động loại bỏ các thư mục khổng lồ như `node_modules/`, `build/`, `dist/`.
-  - **Lọc secret:** Chặn tuyệt đối các file cấu hình nhạy cảm (`.env`, `.key`, `.pem`, file bị gắn cờ kiểm toán).
-- Hệ thống in ra màn hình một liên kết kèm **mã OTP 8 chữ số** dùng một lần (hết hạn sau phiên kết nối đầu tiên).
-- Hỗ trợ các chế độ lọc linh hoạt khi người dùng yêu cầu:
-  - `--filter-mode protected` (Mặc định): Bật đầy đủ bảo vệ gitignore và kiểm duyệt secret.
-  - `--include-ignored`: Cho phép chia sẻ cả file build/ignored nhưng vẫn giữ nguyên rào chắn chặn secret.
-  - `--no-filter`: Chia sẻ nguyên trạng cho máy tin cậy (nhưng vẫn bảo vệ an toàn các file khóa nội bộ `.slug/`).
-
-### 4.2. Phía máy nhận (Client):
-Chỉ cần 1 lệnh duy nhất:
-```bash
-slug get <link_host_cung_cap>
-# Hoặc mở trực tiếp trên trình duyệt Web Explorer: http://127.0.0.1:8080/drop
-```
-- Máy nhận kéo toàn bộ mã nguồn sạch về máy trong vài giây.
-- Không bị nghẽn mạng vì không phải tải hàng trăm MB file build rác.
-- Người nhận an tâm tuyệt đối rằng trong mã nguồn không hề bị lẫn khóa bí mật của người gửi.
-
----
-
-## 5. Bảng so sánh trải nghiệm thực tế giữa các cách làm
-
-| Tác vụ thông thường | Cách làm truyền thống của sinh viên | Quy trình tối ưu với **Slug** |
-| :--- | :--- | :--- |
-| **Chạy ứng dụng với API key** | Để nguyên file `.env` bản rõ trong thư mục, AI lập chỉ mục đọc được toàn bộ. | Chạy qua `slug env run -- <lệnh>`, nạp biến vào RAM, không có file `.env` trên đĩa. |
-| **Kiểm tra trước khi push GitHub** | Mắt đọc lướt qua từng file hoặc dùng lệnh `git status` đơn giản (dễ bỏ sót). | Chạy `slug audit scan .`, AI giải thích rõ ràng từng file rủi ro. |
-| **Gửi dự án cho bạn qua mạng LAN** | Gõ `python -m http.server 8000` (bản rõ, lộ sạch `.env`, gửi cả `node_modules` nặng máy). | Gõ `slug add .`, P2P mã hóa, xác thực OTP 8 số, tự lọc rác và chặn hoàn toàn secret. |
-| **Khôi phục khi cần sửa cấu hình** | Phải tự tìm lại file backup hoặc xin lại key từ đầu nếu lỡ tay xóa. | Gõ `slug env restore`, khôi phục bản sao từ Central Vault trong 1 giây. |
+Slug cam kết tính trung thực và minh bạch trong mọi tài liệu kỹ thuật:
+1. **Không thần thánh hóa AI:** AI trong Slug không thể "đoán mò" hay "ngăn chặn 100% mọi lỗi lập trình". AI chỉ đóng vai trò là một người cố vấn ngữ cảnh (Advisor) hỗ trợ phân loại mức độ rủi ro của các chuỗi bí mật nghi vấn.
+2. **Quyền quyết định tối thượng thuộc về người dùng:** Mọi quyết định gắn cờ của AI đều có thể được người dùng phê duyệt hoặc bỏ qua thông qua lệnh `slug audit allow`.
+3. **Thẳng thắn về giới hạn bộ nhớ:** Slug EnvShield bảo vệ secret khỏi sự quét ngầm của AI từ đĩa cứng. Khi ứng dụng chạy, biến môi trường hiển nhiên tồn tại trong RAM; nếu người dùng cố tình viết code `printenv` để trích xuất thì dữ liệu vẫn sẽ hiển thị.
+4. **Không phóng đại hiệu năng mạng:** Lệnh `slug bench` chỉ đo hiệu năng CPU mật mã (ML-KEM, BLAKE3, ChaCha20), tốc độ phân mảnh vi sai In-Memory và tốc độ đọc ghi đĩa vật lý của máy; tốc độ truyền mạng thực tế phụ thuộc vào hạ tầng đường truyền giữa hai máy.

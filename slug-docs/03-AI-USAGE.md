@@ -1,103 +1,157 @@
-# 03. Ứng dụng Trí tuệ Nhân tạo (AI) trong Slug
+# BẢO VỆ DỮ LIỆU TRONG KỶ NGUYÊN AI: VỊ TRÍ THỰC TẾ CỦA AI TRONG SLUG
 
-> **Mục tiêu tiêu chí AI trong SICT Innovation Challenge (25 điểm):**  
-> AI không phải là "từ khóa quảng cáo" mà phải mang lại giá trị thực tế, giải quyết được bài toán con người khó tự xử lý thủ công, đồng thời có cơ chế kiểm soát chi phí và ranh giới an toàn rõ ràng.
+## 1. Định Vị Đúng: AI Nên Đứng Ở Đâu Trong Một Công Cụ Chia Sẻ Workspace?
 
----
+Trong bối cảnh các cuộc thi công nghệ và sản phẩm bảo mật, việc lạm dụng AI hoặc "gắn nhãn AI lên mọi thứ" rất dễ tạo ra cảm giác an toàn giả (False Sense of Security). 
 
-## 1. Hai vai trò của AI trong Slug: Đối tượng cần bảo vệ & Trợ lý phân tích
-
-Trong môi trường phát triển phần mềm có AI hiện nay, Slug nhìn nhận AI ở cả hai khía cạnh:
+Slug tiếp cận AI theo một triết lý kỹ thuật thực dụng và có kiểm soát:
 
 ```text
-+-----------------------------------------------------------------------------------+
-| HAI MẶT CỦA AI TRONG HỆ SINH THÁI SLUG                                            |
-+-----------------------------------------------------------------------------------+
-
-     [MẶT 1: AI LÀ ĐỐI TƯỢNG CẦN BẢO VỆ]         [MẶT 2: AI LÀ TRỢ LÝ PHÂN TÍCH]
-     (AI Coding Assistants: Cursor, Copilot)      (Stateful AI Secret Guard)
-     
-     - AI tự động đọc code và index context.      - AI đọc ngữ cảnh code để giải thích rủi ro.
-     - Dễ làm lộ secret bản rõ vào LLM Cloud.     - Phân biệt giữa mock token và real secret.
-     
-     --> Slug bảo vệ bằng cách:                   --> Slug sử dụng AI để:
-         + Xóa .env bản rõ khỏi ổ đĩa.                + Hỗ trợ sinh viên hiểu vì sao file bị gắn cờ.
-         + Nạp secret trực tiếp vào RAM tiến trình.   + Đề xuất cách khắc phục trước khi share/push.
-         + Cung cấp Agent Directive (.slug/ai-rule).  + Lưu bộ nhớ đệm (BLAKE3) để tiết kiệm chi phí.
++---------------------------------------------------------------------------------+
+| QUY TẮC CỐT LÕI (DETERMINISTIC CORE) - LOGIC TOÁN HỌC & HỆ THỐNG XÁC ĐỊNH        |
+| - Mật mã học: NIST FIPS 203/204 (ML-KEM-768, ML-DSA-65), AEAD XChaCha20-Poly1305|
+| - Phân quyền: RBAC (r / w / rw), TTL tự hủy, TOTP Anti-Replay                   |
+| - Phân loại Workspace: Đọc phân tầng file .gitignore                            |
+| - Chính sách máy chủ: File cấu hình .slug/rules.conf                            |
++---------------------------------------------------------------------------------+
+                                      |
+                                      v
++---------------------------------------------------------------------------------+
+| VAI TRÒ CỦA AI: TÍN HIỆU PHÂN TÍCH HỖ TRỢ (ADVISORY & CONTEXT-AWARE AUDIT)      |
+| - Nhận diện bí mật ngữ nghĩa (Semantic Secret Detection) mà rule tĩnh bỏ sót    |
+| - Quét Heuristic kết hợp phân tích độ hỗn loạn Shannon Entropy                   |
+| - Gắn cờ cảnh báo (Flag/Quarantine) đưa vào bảng kiểm toán (.slug/index.db)      |
++---------------------------------------------------------------------------------+
+                                      |
+                                      v
++---------------------------------------------------------------------------------+
+| THỰC THI BẢO MẬT: DO POLICY CỦA HOST QUYẾT ĐỊNH (HOST POLICY ENFORCEMENT)       |
+| - AI chỉ cung cấp tín hiệu phân tích, KHÔNG tự ý cấp quyền vượt qua rule chặn    |
+| - Chủ máy (Host Admin) giữ quyền tối thượng để Whitelist hoặc cưỡng chế chặn   |
++---------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 2. AI Guard: Phân tích ngữ nghĩa và Giải thích rủi ro cho sinh viên
+## 2. Mô Hình 3 Tầng Phân Loại Bảo Vệ Dữ Liệu (3-Tier Protection Model)
 
-### 2.1. Giới hạn của các công cụ quét regex truyền thống
-Các bộ lọc regex tĩnh (`gitleaks`, regex script) thường gặp 2 nhược điểm lớn đối với sinh viên:
-1. **Quá máy móc (Nhiều cảnh báo giả - False Positive):** Khi sinh viên viết các bộ test unit (ví dụ `test_auth.py`), họ thường gán chuỗi giả như `api_key = "sk-fake1234567890abcdef"`. Regex tĩnh sẽ báo lỗi đỏ lòm và chặn lại dù chuỗi này vô hại.
-2. **Khó hiểu với sinh viên mới:** Regex chỉ báo dòng `Line 45: Matched rule 'openai-key'`. Sinh viên không hiểu vì sao dòng code này nguy hiểm, có cần sửa không và sửa như thế nào.
+Slug phân định rạch ròi giữa **Quy tắc lọc cấu trúc**, **Chính sách của chủ máy**, và **Kiểm toán bí mật bằng AI**:
 
-### 2.2. Cách tiếp cận của AI Guard trong Slug
-Slug kết hợp **3 tầng phát hiện**:
-- **Tầng 1 - Heuristic & Entropy (Cục bộ, siêu tốc, miễn phí):** Quét nhanh các mẫu từ khóa nhạy cảm và tính toán độ hỗn loạn Shannon Entropy ($H(X) \ge 4.0$).
-- **Tầng 2 - AI Semantic Analysis (Trợ lý thông minh):** Với các đoạn code bị nghi vấn, Slug trích xuất một đoạn ngữ cảnh ngắn (snippet) và gửi tới mô hình AI (hỗ trợ mô hình cục bộ như Ollama/Local AI hoặc API đám mây) để đánh giá ngữ nghĩa:
-  - *"Đoạn mã này nằm trong thư mục nào? (src/ hay tests/)? Tên biến là gì? Đây là dữ liệu giả lập hay cấu hình kết nối thực tế?"*
-- **Tầng 3 - Giải thích thân thiện bằng ngôn ngữ tự nhiên:** AI trả về kết quả bằng tiếng Việt rõ ràng:
-  > *"File `config/database.js` dòng 14 chứa chuỗi kết nối PostgreSQL có mật khẩu thật `postgres:admin123@db.prod...`. Nguy cơ: Kẻ xấu có thể truy cập cơ sở dữ liệu nếu file này bị đẩy lên GitHub. Khuyến nghị: Hãy chuyển mật khẩu vào biến môi trường `DATABASE_URL` và quản lý bằng `slug env init`."*
+| Tầng | Tên Cơ Chế | Nguồn Cấu Hình | Trạng Thái Hiển Thị (Status) | Ý Nghĩa Kỹ Thuật |
+| :---: | :--- | :--- | :--- | :--- |
+| **1** | **Workspace Filter** | `.gitignore` (phân tầng theo thư mục) | `Excluded (gitignore)` | Lọc bỏ các file rác phát sinh trong quá trình build (`node_modules/`, `target/`, `*.o`, `*.log`). Không phải cơ chế bảo mật mà là bộ lọc cấu trúc dự án. |
+| **2** | **Host Sharing Policy** | `.slug/rules.conf` | `Blocked (policy: <lý do>)` | Chính sách kiểm soát do chủ máy định nghĩa (chặn theo đuôi `.pem`, `.key`, `.sqlite`, hoặc chặn cứng tên file `.env`). Có hiệu lực ưu tiên cao nhất. |
+| **3** | **Secret Audit** | Stateful AI Secret Guard | `Quarantined (AI Secret Guard: <lý do>)` | Hệ thống AI phát hiện chuỗi khóa bí mật, token có entropy cao hoặc file môi trường. Tự động cách ly khỏi manifest và chặn tải về. |
 
 ---
 
-## 3. Bộ nhớ đệm kiểm toán (Stateful Audit Index) — Tiết kiệm chi phí và thời gian
+## 3. Stateful AI Secret Guard: Kiến Trúc & Cơ Chế Hoạt Động
 
-Một trong những rào cản lớn nhất khi ứng dụng AI vào công cụ lập trình là: **gọi AI liên tục sẽ làm chậm máy và tốn chi phí token.**
+Hệ thống AI Guard của Slug (`src/ai/stateful_audit.hpp`, `src/ai/scanner.cpp`) hoạt động như một trạm kiểm soát dữ liệu tự động ngay tại tầng giao vận.
 
-Slug giải quyết bài toán này bằng **Stateful Audit Index** (`.slug/index.db`):
+### 3.1. Hai Tầng Quét Thông Minh
+1. **Quét Mẫu Ngữ Cảnh Nâng Cao (Context-Aware Heuristics):**
+   * **Nhận diện chuyên sâu file môi trường:** Tự động phát hiện `.env`, `.env.local`, `.env.production` và các biến thể (loại trừ các file mẫu tài liệu như `.env.example`, `.env.sample`).
+   * **Nhận diện Unquoted & Quoted Token:** Quét các dòng gán biến `KEY=VALUE` hoặc `KEY: VALUE` cho các từ khóa nhạy cảm (`api_key`, `secret`, `token`, `password`, `auth`) ngay cả khi không đặt trong dấu ngoặc kép.
+   * **Mẫu định danh nhà cung cấp phổ biến:** OpenAI (`sk-proj-...`), Stripe (`sk_live_...`), GitHub (`ghp_...`), AWS (`AKIA...`), Private Key Headers (`-----BEGIN ... PRIVATE KEY-----`).
+2. **Phân Tích Độ Hỗn Loạn Thông Tin (Shannon Entropy Analyzer):**
+   * Với các chuỗi secret được sinh ngẫu nhiên (không có tiền tố cố định), AI Guard tính toán độ hỗn loạn Shannon:
+     $$H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
+   * Bất kỳ giá trị nào có độ dài $\ge 20$ ký tự và entropy $H(X) \ge 4.0$ bits/byte sẽ bị nghi vấn là khóa mật mã sinh ngẫu nhiên và đưa vào diện cách ly.
 
-```text
-File mã nguồn  --->  Tính băm BLAKE3  --->  Tra cứu .slug/index.db
-                                                    |
-             +--------------------------------------+--------------------------------------+
-             |                                                                             |
-      [Hash trùng khớp]                                                             [Hash khác / Mới]
-      File chưa hề bị sửa đổi                                                       File vừa mới được chỉnh sửa
-             |                                                                             |
-      Lấy kết quả cũ từ Cache                                                       Chuyển trạng thái sang STALE
-      (Không tốn 1 ms, không tốn token AI!)                                         Ép kiểm tra lại trước khi chia sẻ!
+### 3.2. Bộ Nhớ Đệm Trạng Thái BLAKE3 (`.slug/index.db`)
+Để không làm chậm tiến trình làm việc khi dự án có hàng chục nghìn tệp:
+* Mỗi file được định danh bằng mã băm nội dung BLAKE3 (32 bytes).
+* Trạng thái quét (`CLEAN`, `AI_FLAGGED`, `USER_ALLOWED`) được lưu vào SQLite/B-Tree index.
+* Khi file không đổi nội dung (khớp BLAKE3 hash), thời gian kiểm tra là **0 ms**, hoàn toàn không tốn CPU quét lại.
+* Khi nội dung file thay đổi, hash thay đổi, hệ thống sẽ tự động kích hoạt quét lại.
+
+---
+
+## 4. Quy Trình Phản Ứng & Phê Duyệt Của Chủ Máy (`slug audit`)
+
+Slug không để AI tự quyết định một cách mù quáng. Mọi hành động của AI đều minh bạch và có thể được chủ máy can thiệp:
+
+### 4.1. Liệt Kê Các Tệp Bị Cách Ly
+```bash
+$ slug audit list -p 9443
+AUDIT QUARANTINE INDEX (Port 9443):
+
+[FILE PATH]                [STATUS]      [LOCATION]   [REASON]
+------------------------------------------------------------------------------------------
+tests/leaked_token.ts      AI_FLAGGED    L1           Stripe Live Secret Key
+.env                       AI_FLAGGED    L1           Environment Secret File (.env)
+config/jwt.key             AI_FLAGGED    L4           High-entropy Secret Token
 ```
 
-### Lợi ích thực tế:
-- **Khởi động tức thì:** Khi sinh viên chạy lệnh `slug add .` lần thứ hai, Slug kiểm tra nhanh mã băm của toàn bộ file trong chưa đầy 50 mili-giây. Các file đã kiểm tra sạch sẽ không bao giờ bị quét lại bằng AI.
-- **Phát hiện sửa đổi tức thời (Anti-TOCTOU):** Nếu sinh viên vừa sửa một file mã nguồn và dán thêm khóa bí mật vào, mã băm BLAKE3 thay đổi ngay lập tức $\rightarrow$ Slug nhận diện trạng thái `STALE` và tự động kích hoạt kiểm tra lại, ngăn chặn việc lén chèn secret vào phút chót.
-
----
-
-## 4. Dạy AI Agent dùng công cụ an toàn (Agent Directive)
-
-Thay vì cố gắng "chiến đấu" hoặc chặn hoàn toàn trợ lý AI lập trình, Slug chủ động **hướng dẫn AI làm việc đúng cách**:
-
-Khi chạy `slug env init`, Slug tự động tạo ra tệp chỉ thị:
-- Đường dẫn: `.slug/ai-rule.md` (đồng thời xuất ra khi gõ `slug env prompt`).
-
-### Nội dung chỉ thị gửi AI Coding Agent:
-```markdown
-# SLUG WORKSPACE SECURITY DIRECTIVE
-- In this repository, sensitive environment variables are securely sealed in `.env.pqc`.
-- DO NOT attempt to create or read plaintext `.env` on disk.
-- ALWAYS execute runtime commands (tests, builds, server start) through Slug:
-    slug env run -- <command>
-- Slug will automatically inject decrypted secrets directly into RAM for the child process.
+### 4.2. Phê Duyệt File Báo Nhầm (Whitelist False Positive)
+Nếu `tests/leaked_token.ts` chỉ là mock token phục vụ cho việc chạy test tự động:
+```bash
+$ slug audit allow tests/leaked_token.ts --reason "Safe mock token for unit testing" -p 9443
+[+] Whitelisted: tests/leaked_token.ts (USER_ALLOWED)
 ```
-
-Nhờ chỉ thị này:
-1. Khi sinh viên bảo AI: *"Hãy chạy test kiểm tra hàm đăng nhập"*, AI sẽ tự động gõ `slug env run -- npm test` thay vì cố tình tìm file `.env` trên ổ cứng.
-2. Trợ lý AI trở thành một tác nhân hợp tác (cooperative agent), tuân thủ đúng quy trình bảo mật mà không gây cản trở trải nghiệm lập trình.
+Quyết định này được ghi nhận vĩnh viễn trong nhật ký kiểm toán `.slug/audit.log` và cập nhật vào `.slug/index.db`. File này sẽ được phép chuyển sang trạng thái `Available` trong lần `slug pull` tiếp theo.
 
 ---
 
-## 5. Ranh giới an toàn: AI chỉ đóng vai trò Cố vấn (Advisory Only)
+## 5. PQC EnvShield: Lá Chắn Bảo Vệ Bí Mật Chủ Động Khỏi AI Assistants
 
-Để đảm bảo tính tin cậy tuyệt đối và khả năng kiểm thử của hệ thống:
-- **AI không có quyền tự ý mở khóa các file vi phạm luật cứng:** Nếu một file nằm trong danh sách cấm tuyệt đối của chủ máy (ví dụ `deny *.pem` trong `.slug/rules.conf`) hoặc các file nhạy cảm của hệ thống (`.slug/`, `.git/`), AI tuyệt đối không thể can thiệp để mở khóa file đó.
-- **Quyền quyết định thuộc về con người (Human-in-the-Loop):** Nếu AI gắn cờ một file là nghi vấn nhưng sinh viên khẳng định đó là dữ liệu an toàn, sinh viên có thể dùng lệnh:
+### 5.1. Bối Cảnh Thực Tế & Rủi Ro Rò Rỉ Secret Vào Context Window
+Trong quy trình phát triển hiện đại với sự hỗ trợ của các trợ lý AI (Cursor, Copilot, Claude Code, Antigravity, Devin):
+* Các trợ lý AI liên tục quét cấu trúc thư mục và đọc nội dung file để nạp context vào LLM và gửi lên server cloud của nhà cung cấp AI.
+* Nếu tệp `.env` hoặc khóa bí mật nằm dưới dạng bản rõ (plaintext) trên ổ đĩa, AI sẽ tự động đọc lén (passive ingestion) và đưa toàn bộ secret vào context window, lịch sử chat hoặc log hệ thống bên thứ ba.
+
+### 5.2. Cách Thức Slug Phòng Vệ Chủ Động
+Slug cung cấp module **PQC EnvShield** (`slug env`):
+* **Mã hóa tĩnh (At-Rest Encryption):** Lệnh `slug env init` sử dụng mật mã hậu lượng tử mã hóa file `.env` thành `.env.pqc`, đồng thời xóa sạch bản rõ `.env` khỏi ổ đĩa.
+* **Thực thi qua công cụ (Tool-Assisted Execution):** Lập trình viên dạy trợ lý AI cách chạy ứng dụng thông qua công cụ:
   ```bash
-  slug audit allow <tên_file> --reason "Dữ liệu mock test đã được kiểm tra"
+  slug env run -- npm start
+  # hoặc
+  slug env run -- python3 main.py
   ```
-  Hành động này được ghi vết minh bạch vào `audit.log`, gắn chặt với mã băm BLAKE3 của đúng nội dung đó. Nếu sau này nội dung file bị thay đổi, quyền ngoại lệ sẽ tự động bị hủy bỏ.
+* **Bơm biến môi trường trực tiếp trong RAM:** Slug giải mã bí mật duy nhất trong bộ nhớ RAM tạm thời của tiến trình con, nạp trực tiếp vào biến môi trường của hệ điều hành mà **không ghi byte plaintext nào xuống đĩa cứng**. AI hoàn toàn không có cơ hội tiếp xúc trực tiếp với file secret bản rõ từ hệ thống tệp.
+
+### 5.3. Nhận Thức Thực Tế & Tránh Overclaim (No-Overclaim Principle)
+* **Secret có thể bị đọc khi ứng dụng đang chạy không?**
+  **Có!** Để phần mềm hoạt động, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ tiến trình (RAM). Một đoạn mã cố tình chạy `printenv` hoặc cố tình dump bộ nhớ tiến trình vẫn có thể lấy được giá trị đó.
+* **Vậy giá trị bảo vệ thực tế của Slug là gì?**
+  Các trợ lý AI là tác nhân hỗ trợ (cooperative assistants), chúng **không bao giờ chủ động tìm cách bypass hay viết mã exploit để trích xuất bộ nhớ RAM** (trừ phi lập trình viên cố tình viết prompt hướng dẫn AI làm điều đó).
+* **Kết luận:** Slug cung cấp một **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn hành vi đọc plaintext thụ động từ ổ đĩa, hạn chế tối đa nguy cơ secret bị nạp vào context window của LLM trong quá trình làm việc hàng ngày. Đồng thời khi chia sẻ workspace giữa người với người, hệ thống **Slug Guard đa cơ chế** (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy Guard` -> `AI Semantic Guard`) giúp tự động loại bỏ rác build và rà soát, cách ly các file bí mật nghi vấn trước khi truyền tải.
+
+### 5.4. Centralized Env Vault & Nghệ Thuật Dạy AI (Agent Directive)
+
+#### A. Kho Lưu Trữ Trung Tâm Ngoài Workspace (`~/.slug/env_vault/`)
+Khi chạy `slug env init`:
+1. Slug tính mã băm định danh duy nhất của Workspace (BLAKE3 16-hex dựa trên canonical path).
+2. Tự động lưu bản sao `.env` ra ngoài workspace vào Central Vault của người dùng:
+   ```text
+   ~/.slug/env_vault/<workspace_hash>/
+   ├── meta.json                      # Lưu: workspace_path, timestamp, blake3 hash, size, version
+   ├── env_20261016_205000_v1.bak     # Bản backup v1
+   └── env_20261016_213000_v2.bak     # Bản backup v2 (nếu init lại)
+   ```
+3. Trong workspace: Tạo file mã hóa `.env.pqc` và xóa sạch `.env` cùng `.env.bak` khỏi workspace để AI không thể đọc trộm (trừ khi dùng cờ `slug env init --keep`).
+
+#### B. Khôi Phục 1 Chạm (`slug env restore`) & Lịch Sử (`slug env history`)
+* Khi developer cần khôi phục lại `.env` bản rõ trên đĩa:
+  ```bash
+  slug env restore
+  ```
+  Slug tự động lấy bản backup mới nhất từ Central Vault (hoặc giải mã trực tiếp từ `.env.pqc` nếu vault thất lạc) và dọn sạch `.env.pqc`.
+* Để kiểm tra các phiên bản backup đã lưu:
+  ```bash
+  slug env history
+  ```
+
+#### C. Nghệ Thuật Dạy AI (`slug env prompt`)
+Lệnh `slug env prompt` in ra chỉ dẫn chuẩn cho AI coding agents (đồng thời tự động tạo `.slug/ai-rule.md`):
+```markdown
+# SLUG ENVSHIELD AGENT DIRECTIVE
+- In this repository, sensitive environment variables are sealed in `.env.pqc`.
+- DO NOT attempt to create or read plaintext `.env` on disk.
+- ALWAYS execute runtime commands (npm start, pytest, python, cargo, etc.) through Slug EnvShield:
+    slug env run -- <command>
+- Slug will decrypt secrets directly in process memory (RAM).
+```
+Nhờ chỉ dẫn này, AI hiểu cách dùng công cụ để chạy lệnh test/start (`slug env run -- pytest`) thay vì đọc file trên đĩa hoặc tạo `.env` rác.

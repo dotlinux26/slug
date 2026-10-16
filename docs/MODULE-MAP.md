@@ -68,7 +68,7 @@
    - Mọi truy cập đều đi qua `vfs.resolve_and_jail(virtual_path, role)`.
    - Bất kỳ nỗ lực `../../` hoặc symlink trỏ ra ngoài `ServerRootPath` đều lập tức bị từ chối `AccessDenied`.
 2. **RBAC Enforcement tại VFS:**
-   - `Role::WRITE_ONLY`: Bị cấm gọi `list_dir()` hoặc `read_file()` (bảo vệ tuyệt đối mã nguồn của Host).
+   - `Role::WRITE_ONLY`: Bị cấm gọi `list_dir()` hoặc `read_file()` (bảo vệ mã nguồn của Host không bị đọc lén, hỗ trợ bài toán thu bài tập một chiều).
    - `Role::READ_ONLY`: Bị cấm gọi `write_file()` hoặc `delete_file()`.
 3. **Unified Filter Integration:**
    - Tích hợp đồng nhất `.gitignore` phân tầng + `.slug/rules.conf` + danh sách `AI_FLAGGED`. Mọi lệnh `ls`, `pull`, hay Web `/drop` đều dùng chung một logic lọc.
