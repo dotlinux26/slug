@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO="${SLUG_REPO:-dotlinux26/slug}"
-VERSION="1.0.0-rc2"
+VERSION="1.0.0"
 
 print_info() {
     echo "[*] $1"

@@ -8,6 +8,7 @@
 #include "src/bench/benchmark.hpp"
 #include "src/policy/rules.hpp"
 #include "src/ai/stateful_audit.hpp"
+#include "src/net/control_server.hpp"
 #include <string>
 #include <vector>
 #include <sstream>
@@ -451,7 +452,8 @@ public:
         const std::vector<core::AuditEvent>& events,
         const bench::FullBenchmarkReport& bench_rep,
         const std::vector<policy::SlugRule>& rules,
-        const std::vector<ai::AuditIndexEntry>& audit_entries)
+        const std::vector<ai::AuditIndexEntry>& audit_entries,
+        const std::vector<SessionState>& client_sessions)
     {
         double blake3_speed = 0.0, sha256_speed = 0.0;
         for (const auto& h_item : bench_rep.hashes) {
@@ -570,6 +572,68 @@ public:
           << "  if (s >= 3600) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';"
           << "  return s + 's';"
           << "}"
+          << "function formatAgo(ts) {"
+          << "  if (!ts || ts === 0) return '-';"
+          << "  const now = Math.floor(Date.now() / 1000);"
+          << "  const diff = Math.max(0, now - ts);"
+          << "  if (diff < 5) return 'just now';"
+          << "  if (diff < 60) return diff + 's ago';"
+          << "  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';"
+          << "  if (diff < 86400) return Math.floor(diff / 3600) + 'h ' + Math.floor((diff % 3600) / 60) + 'm ago';"
+          << "  return Math.floor(diff / 86400) + 'd ago';"
+          << "}"
+          << "function renderAuthBadge(type) {"
+          << "  if (type === 'TOTP') return '<span class=\"badge badge-pqc\">TOTP</span>';"
+          << "  if (type === 'Account' || type === 'Ephemeral Account') return '<span class=\"badge\" style=\"background:#ddf4ff; color:#0969da; border:1px solid rgba(9,105,218,0.3);\">ACCOUNT</span>';"
+          << "  if (type === 'Host Admin') return '<span class=\"badge\" style=\"background:#fbefff; color:#8250df; border:1px solid rgba(130,80,223,0.3);\">ADMIN</span>';"
+          << "  return '<span class=\"badge badge-excluded\">' + type + '</span>';"
+          << "}"
+          << "function renderSessionStatus(s) {"
+          << "  if (s.is_revoked) return '<span class=\"badge badge-quarantined\" style=\"background:var(--danger-bg); color:var(--danger);\">REVOKED (Đã hủy)</span>';"
+          << "  if (s.is_expired) return '<span class=\"badge\" style=\"background:#f6f8fa; color:var(--text-muted); border:1px solid var(--border-primary);\">EXPIRED (Đã chết)</span>';"
+          << "  if (s.expires_at === 0) return '<span class=\"badge badge-available\">ACTIVE (Permanent ∞)</span>';"
+          << "  return '<span class=\"badge badge-available\">ACTIVE (Còn sống: ' + formatSec(s.remaining_sec, s.expires_at) + ')</span>';"
+          << "}"
+          << "function reloadSessions() {"
+          << "  fetch('/api/admin/sessions')"
+          << "    .then(r => r.json())"
+          << "    .then(sessions => {"
+          << "      const tbody = document.getElementById('sessions-tbody');"
+          << "      if (!tbody) return;"
+          << "      if (!sessions || sessions.length === 0) {"
+          << "        tbody.innerHTML = '<tr><td colspan=\"8\" style=\"color:var(--text-muted); text-align:center; padding:14px;\">No connected client sessions recorded yet</td></tr>';"
+          << "        return;"
+          << "      }"
+          << "      let html = '';"
+          << "      sessions.forEach(s => {"
+          << "        let actBadge = renderAuthBadge(s.auth_type);"
+          << "        let stBadge = renderSessionStatus(s);"
+          << "        let btn = (s.is_active && !s.is_revoked)"
+          << "          ? '<button class=\"btn-danger btn-sm\" onclick=\"killSession(' + s.session_id + ')\">Kill Session</button>'"
+          << "          : '<span style=\"color:var(--text-muted); font-size:11px;\">Terminated</span>';"
+          << "        let timeInfo = formatAgo(s.created_at) + ' / <span style=\"color:var(--text-accent);\">' + formatAgo(s.last_active_at) + '</span>';"
+          << "        html += '<tr><td><strong>#' + s.session_id + '</strong></td>'"
+          << "             + '<td><code>' + s.identity + '</code></td>'"
+          << "             + '<td>' + actBadge + '</td>'"
+          << "             + '<td><code>' + s.remote_endpoint + '</code></td>'"
+          << "             + '<td><span class=\"role-tag\">' + s.role + '</span></td>'"
+          << "             + '<td>' + timeInfo + '</td>'"
+          << "             + '<td>' + stBadge + '</td>'"
+          << "             + '<td>' + btn + '</td></tr>';"
+          << "      });"
+          << "      tbody.innerHTML = html;"
+          << "    }).catch(e => {});"
+          << "}"
+          << "function killSession(id) {"
+          << "  if (!confirm('Revoke and terminate client session #' + id + ' immediately?')) return;"
+          << "  fetch('/api/admin/sessions/revoke', {"
+          << "    method: 'POST', headers: { 'Content-Type': 'application/json' },"
+          << "    body: JSON.stringify({ session_id: id })"
+          << "  }).then(r => r.json()).then(res => {"
+          << "    if (res.status === 'ok') reloadSessions();"
+          << "    else alert(res.message || 'Failed to revoke session');"
+          << "  }).catch(e => alert('Network error revoking session'));"
+          << "}"
           << "function reloadUsers() {"
           << "  fetch('/api/admin/users')"
           << "    .then(r => r.json())"
@@ -685,7 +749,7 @@ public:
           << "  fetch('/api/admin/audit/allow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: filePath, reason: reason }) })"
           << "    .then(r => r.json()).then(res => { if (res.status === 'ok') reloadAudit(); else alert(res.message); });"
           << "}"
-          << "window.addEventListener('DOMContentLoaded', () => { runLiveBenchmark(); setInterval(runLiveBenchmark, 3500); });"
+          << "window.addEventListener('DOMContentLoaded', () => { runLiveBenchmark(); setInterval(runLiveBenchmark, 3500); reloadSessions(); setInterval(reloadSessions, 2500); });"
           << "</script></head><body><div class='container'>"
           << "<div class='top-bar'>"
           << "<h1>Slug Workspace Admin &amp; Security Policy</h1>"
@@ -720,6 +784,54 @@ public:
             h << "<tr><td colspan='4' style='color:var(--text-muted);'>No user accounts configured</td></tr>";
         }
         h << "</tbody></table></div></div>"
+
+          << "<div class='card' style='margin-bottom: 16px;'>"
+          << "<h3><span>Connected Client Sessions (Real-Time PQC Channels)</span>"
+          << "<span style='display:flex; align-items:center; gap:8px;'>"
+          << "<span id='sessions-pulse' style='font-size:11px; color:var(--success); font-weight:normal;'>● Realtime Live (2.5s)</span>"
+          << "<button class='btn-sec btn-sm' onclick='reloadSessions()'>Refresh</button>"
+          << "</span></h3>"
+          << "<table><thead><tr>"
+          << "<th>Session ID</th><th>Identity</th><th>Auth Type</th><th>Client Endpoint</th><th>Role</th><th>Created / Last Active</th><th>Status / TTL</th><th>Actions</th>"
+          << "</tr></thead><tbody id='sessions-tbody'>";
+
+        for (const auto& s : client_sessions) {
+            std::string auth_badge = "<span class='badge badge-excluded'>" + s.auth_type + "</span>";
+            if (s.auth_type == "TOTP") auth_badge = "<span class='badge badge-pqc'>TOTP</span>";
+            else if (s.auth_type == "Account" || s.auth_type == "Ephemeral Account") auth_badge = "<span class='badge' style='background:#ddf4ff; color:#0969da; border:1px solid rgba(9,105,218,0.3);'>ACCOUNT</span>";
+            else if (s.auth_type == "Host Admin") auth_badge = "<span class='badge' style='background:#fbefff; color:#8250df; border:1px solid rgba(130,80,223,0.3);'>ADMIN</span>";
+
+            std::string st_badge = "<span class='badge badge-available'>ACTIVE</span>";
+            if (s.is_revoked) {
+                st_badge = "<span class='badge badge-quarantined' style='background:var(--danger-bg); color:var(--danger);'>REVOKED (Đã hủy)</span>";
+            } else if (s.expires_at > 0 && s.expires_at <= now) {
+                st_badge = "<span class='badge' style='background:#f6f8fa; color:var(--text-muted); border:1px solid var(--border-primary);'>EXPIRED (Đã chết)</span>";
+            } else if (s.expires_at == 0) {
+                st_badge = "<span class='badge badge-available'>ACTIVE (Permanent ∞)</span>";
+            } else {
+                st_badge = "<span class='badge badge-available'>ACTIVE (Còn sống: " + core::Utils::format_ttl(s.expires_at - now) + ")</span>";
+            }
+
+            std::string act_btn = (s.is_active(now) && !s.is_revoked)
+                ? ("<button class='btn-danger btn-sm' onclick=\"killSession(" + std::to_string(s.session_id) + ")\">Kill Session</button>")
+                : "<span style='color:var(--text-muted); font-size:11px;'>Terminated</span>";
+
+            std::string created_str = (s.created_at == 0) ? "-" : (std::to_string(now > s.created_at ? (now - s.created_at) : 0) + "s ago");
+            std::string active_str = (s.last_active_at == 0) ? "-" : (std::to_string(now > s.last_active_at ? (now - s.last_active_at) : 0) + "s ago");
+
+            h << "<tr><td><strong>#" << s.session_id << "</strong></td>"
+              << "<td><code>" << s.identity << "</code></td>"
+              << "<td>" << auth_badge << "</td>"
+              << "<td><code>" << s.remote_endpoint << "</code></td>"
+              << "<td><span class='role-tag'>" << core::role_to_string(s.role) << "</span></td>"
+              << "<td>" << created_str << " / <span style='color:var(--text-accent);'>" << active_str << "</span></td>"
+              << "<td>" << st_badge << "</td>"
+              << "<td>" << act_btn << "</td></tr>";
+        }
+        if (client_sessions.empty()) {
+            h << "<tr><td colspan='8' style='color:var(--text-muted); text-align:center; padding:14px;'>No connected client sessions recorded yet</td></tr>";
+        }
+        h << "</tbody></table></div>"
 
           << "<div class='card' style='margin-bottom: 16px;'>"
           << "<h3><span>Cryptographic &amp; I/O Telemetry</span><span id='bench-status' style='font-size:11px;'></span></h3>"

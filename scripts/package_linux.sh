@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0-rc2"
+VERSION="1.0.0"
 ARCH="x86_64"
 DIST_DIR="dist"
 PKG_NAME="slug-${VERSION}-linux-${ARCH}"

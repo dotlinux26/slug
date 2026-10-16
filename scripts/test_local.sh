@@ -83,8 +83,8 @@ if [ ! -f "$BIN" ]; then
     make static -j$(nproc)
 fi
 
-assert_success "$BIN version | grep -q 'Slug 1.0.0-rc2'" "Binary version check ($BIN)"
-assert_success "$STATIC_BIN version | grep -q 'Slug 1.0.0-rc2'" "Static binary execution check ($STATIC_BIN)"
+assert_success "$BIN version | grep -q 'Slug 1.0.0'" "Binary version check ($BIN)"
+assert_success "$STATIC_BIN version | grep -q 'Slug 1.0.0'" "Static binary execution check ($STATIC_BIN)"
 
 mkdir -p "$TEST_DIR"
 
@@ -192,6 +192,21 @@ assert_success "echo '$USER_LIST' | grep -q 'bob.*r.*ACTIVE'" "User 'bob' active
 
 assert_success "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Authenticate as 'alice' with valid password"
 assert_failure "$BIN connect -i 127.0.0.1 -p $TEST_PORT -u alice -P wrong_password" "Reject 'alice' with invalid password"
+
+# Test Client Sessions Management
+SESS_LIST=$($BIN session list -p $TEST_PORT)
+assert_success "echo '$SESS_LIST' | grep -q 'alice.*Account'" "Client sessions manager tracks active 'alice' account session"
+assert_success "echo '$SESS_LIST' | grep -q 'TOTP'" "Client sessions manager tracks historical/active TOTP session"
+STATUS_SESS=$($BIN status -p $TEST_PORT --sessions)
+assert_success "echo '$STATUS_SESS' | grep -q 'Connected Client Sessions'" "Command 'slug status -p <port> --sessions' displays active sessions"
+
+# Kill a session and verify revocation
+FIRST_SID=$(echo "$SESS_LIST" | grep -oP '#\K[0-9]+' | head -n 1)
+if [ -n "$FIRST_SID" ]; then
+    assert_success "$BIN session kill $FIRST_SID -p $TEST_PORT" "Revoke/kill client session #$FIRST_SID via CLI"
+    REVOKED_LIST=$($BIN session list -p $TEST_PORT)
+    assert_success "echo '$REVOKED_LIST' | grep -q '#$FIRST_SID.*REVOKED'" "Session #$FIRST_SID confirmed REVOKED in session manager"
+fi
 
 # ==============================================================================
 # TEST SUITE 5: Security Policy & Dynamic Rules
@@ -311,9 +326,9 @@ assert_success "$STATIC_BIN bench --quick | grep -q 'Suite 3: PurePQC'" "Run qui
 echo -e "\n${BOLD}--- TEST SUITE 12: Packaging & Release Validation ---${NC}"
 
 assert_success "$PROJECT_ROOT/scripts/package_linux.sh > /dev/null" "Build universal Linux tarball (slug-*-linux-x86_64.tar.gz)"
-assert_success "[ -f '$PROJECT_ROOT/dist/slug-1.0.0-rc2-linux-x86_64.tar.gz' ]" "Universal Linux release archive exists"
+assert_success "[ -f '$PROJECT_ROOT/dist/slug-1.0.0-linux-x86_64.tar.gz' ]" "Universal Linux release archive exists"
 assert_success "$PROJECT_ROOT/scripts/package_deb.sh > /dev/null" "Build Debian/Ubuntu .deb package (slug_*_amd64.deb)"
-assert_success "[ -f '$PROJECT_ROOT/dist/slug_1.0.0-rc2_amd64.deb' ]" "Debian package exists and validated"
+assert_success "[ -f '$PROJECT_ROOT/dist/slug_1.0.0_amd64.deb' ]" "Debian package exists and validated"
 
 # ==============================================================================
 # TEST SUMMARY

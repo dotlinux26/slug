@@ -106,16 +106,25 @@ std::optional<WebSession> WebServer::validate_session(const std::string& token) 
         sessions_.erase(it);
         return std::nullopt;
     }
+    if (!it->second.ticket.empty()) {
+        auto cs = control_server_.find_session_by_ticket(it->second.ticket);
+        if (!cs) {
+            sessions_.erase(it);
+            return std::nullopt;
+        }
+        control_server_.touch_session(cs->session_id);
+    }
     return it->second;
 }
 
-std::string WebServer::create_session(const std::string& identity, core::Role role, uint64_t ttl_sec) {
+std::string WebServer::create_session(const std::string& identity, core::Role role, uint64_t ttl_sec, const std::string& ticket) {
     std::string token = core::Utils::to_hex(core::Utils::random_bytes(24));
     WebSession s;
     s.token = token;
     s.identity = identity;
     s.role = role;
     s.expires_at = (ttl_sec == 0) ? 0 : core::Utils::current_timestamp() + ttl_sec;
+    s.ticket = ticket;
     std::lock_guard<std::mutex> lock(session_mutex_);
     sessions_[token] = s;
     return token;
@@ -124,6 +133,18 @@ std::string WebServer::create_session(const std::string& identity, core::Role ro
 void WebServer::destroy_session(const std::string& token) {
     std::lock_guard<std::mutex> lock(session_mutex_);
     sessions_.erase(token);
+}
+
+void WebServer::revoke_session_by_ticket(const std::string& ticket) {
+    if (ticket.empty()) return;
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    for (auto it = sessions_.begin(); it != sessions_.end(); ) {
+        if (it->second.ticket == ticket) {
+            it = sessions_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 std::string WebServer::render_directory_listing(const std::string& rel_subpath, const WebSession& session) {
@@ -150,6 +171,8 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
     ai::StatefulAuditIndex audit_idx(idx_file);
     auto audit_entries = audit_idx.list_flagged_or_all(false);
 
+    auto client_sessions = control_server_.list_sessions();
+
     return WebAssets::render_admin_dashboard(
         control_server_.workspace_root(),
         control_server_.port(),
@@ -160,7 +183,8 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
         events,
         bench_rep,
         rules,
-        audit_entries
+        audit_entries,
+        client_sessions
     );
 }
 
@@ -178,7 +202,7 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
     if (!current_session && !ticket.empty()) {
         auto sess_opt = control_server_.find_session_by_ticket(ticket);
         if (sess_opt) {
-            new_session_token = create_session(sess_opt->identity, sess_opt->role, 14400);
+            new_session_token = create_session(sess_opt->identity, sess_opt->role, 14400, ticket);
             current_session = validate_session(new_session_token);
         }
     }
@@ -224,12 +248,34 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
         j["admin_ticket"] = control_server_.create_host_admin_ticket();
         j["ai_enabled"] = control_server_.ai_enabled();
         j["ttl_seconds"] = control_server_.cert_ttl();
+
+        json s_arr = json::array();
+        uint64_t now_ts = core::Utils::current_timestamp();
+        for (const auto& s : control_server_.list_sessions()) {
+            json item;
+            item["session_id"] = s.session_id;
+            item["identity"] = s.identity;
+            item["auth_type"] = s.auth_type;
+            item["role"] = core::role_to_string(s.role);
+            item["remote_endpoint"] = s.remote_endpoint;
+            item["created_at"] = s.created_at;
+            item["last_active_at"] = s.last_active_at;
+            item["expires_at"] = s.expires_at;
+            item["remaining_sec"] = (s.expires_at > now_ts) ? (s.expires_at - now_ts) : 0;
+            item["is_revoked"] = s.is_revoked;
+            item["is_expired"] = (s.expires_at > 0 && s.expires_at <= now_ts);
+            item["is_active"] = s.is_active(now_ts);
+            item["status"] = s.is_revoked ? "REVOKED" : ((s.expires_at > 0 && s.expires_at <= now_ts) ? "EXPIRED" : "ACTIVE");
+            s_arr.push_back(item);
+        }
+        j["sessions"] = s_arr;
+
         send_resp(200, "OK", "application/json", j.dump(2));
         return;
     }
 
-    // STRICT GATEKEEPER: If not authenticated, reject immediately!
-    if (!current_session) {
+    // STRICT GATEKEEPER: If not authenticated and not localhost loopback, reject immediately!
+    if (!current_session && !is_localhost) {
         std::string body = WebAssets::render_forbidden_page("Mutual Post-Quantum Certificate / Session Ticket Required.");
         send_resp(403, "Forbidden", "text/html; charset=utf-8", body);
         return;
@@ -272,6 +318,59 @@ void WebServer::dispatch_http(platform::TcpSocket& client, const HttpRequest& re
         }
         auto rep = bench::BenchmarkEngine::run_all(true);
         send_resp(200, "OK", "application/json", rep.to_json().dump(2));
+        return;
+    }
+
+    if (path == "/api/admin/sessions") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        auto sessions = control_server_.list_sessions();
+        uint64_t now_ts = core::Utils::current_timestamp();
+        json arr = json::array();
+        for (const auto& s : sessions) {
+            json item;
+            item["session_id"] = s.session_id;
+            item["identity"] = s.identity;
+            item["auth_type"] = s.auth_type;
+            item["role"] = core::role_to_string(s.role);
+            item["remote_endpoint"] = s.remote_endpoint;
+            item["created_at"] = s.created_at;
+            item["last_active_at"] = s.last_active_at;
+            item["expires_at"] = s.expires_at;
+            item["remaining_sec"] = (s.expires_at > now_ts) ? (s.expires_at - now_ts) : 0;
+            item["is_revoked"] = s.is_revoked;
+            item["is_expired"] = (s.expires_at > 0 && s.expires_at <= now_ts);
+            item["is_active"] = s.is_active(now_ts);
+            item["status"] = s.is_revoked ? "REVOKED" : ((s.expires_at > 0 && s.expires_at <= now_ts) ? "EXPIRED" : "ACTIVE");
+            arr.push_back(item);
+        }
+        send_resp(200, "OK", "application/json", arr.dump(2));
+        return;
+    }
+
+    if (path == "/api/admin/sessions/revoke" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            uint32_t sid = j.value("session_id", 0U);
+            if (sid == 0) {
+                send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"session_id required\"}");
+                return;
+            }
+            bool ok = control_server_.revoke_session(sid);
+            if (ok) {
+                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"Session revoked\"}");
+            } else {
+                send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Session not found\"}");
+            }
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+        }
         return;
     }
 

@@ -25,8 +25,20 @@ struct SessionState {
     std::array<uint8_t, 32> session_key{};
     std::string identity;
     std::string web_ticket;
+    std::string auth_type{"Unknown"};     // "TOTP", "Account", "Ticket", "Host Admin"
+    std::string remote_endpoint{"-"};     // "ip:port" or "127.0.0.1 (local)"
+    uint64_t created_at{0};
+    uint64_t last_active_at{0};
+    bool is_revoked{false};
+
+    bool is_active(uint64_t now) const {
+        if (is_revoked) return false;
+        if (expires_at == 0) return true;
+        return now < expires_at;
+    }
 
     bool has_permission(core::Role required) const {
+        if (is_revoked) return false;
         if (role == core::Role::READ_WRITE) return true;
         return role == required;
     }
@@ -57,6 +69,9 @@ public:
     std::optional<SessionState> get_session(uint32_t session_id) const;
     std::optional<SessionState> find_session_by_ticket(const std::string& ticket) const;
     std::string create_host_admin_ticket(uint64_t ttl_sec = 14400);
+    std::vector<SessionState> list_sessions() const;
+    bool revoke_session(uint32_t session_id);
+    void touch_session(uint32_t session_id);
 
     core::SlugVFS& vfs() { return vfs_; }
     const core::SlugVFS& vfs() const { return vfs_; }

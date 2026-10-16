@@ -64,8 +64,10 @@ std::optional<SessionState> ControlServer::get_session(uint32_t session_id) cons
     std::lock_guard<std::mutex> lock(session_mutex_);
     auto it = sessions_.find(session_id);
     if (it != sessions_.end()) {
-        if (core::Utils::current_timestamp() < it->second.expires_at) {
-            return it->second;
+        if (!it->second.is_revoked) {
+            if (it->second.expires_at == 0 || core::Utils::current_timestamp() < it->second.expires_at) {
+                return it->second;
+            }
         }
     }
     return std::nullopt;
@@ -76,8 +78,10 @@ std::optional<SessionState> ControlServer::find_session_by_ticket(const std::str
     std::lock_guard<std::mutex> lock(session_mutex_);
     for (const auto& [id, s] : sessions_) {
         if (s.web_ticket == ticket) {
-            if (core::Utils::current_timestamp() < s.expires_at) {
-                return s;
+            if (!s.is_revoked) {
+                if (s.expires_at == 0 || core::Utils::current_timestamp() < s.expires_at) {
+                    return s;
+                }
             }
         }
     }
@@ -88,14 +92,61 @@ std::string ControlServer::create_host_admin_ticket(uint64_t ttl_sec) {
     std::lock_guard<std::mutex> lock(session_mutex_);
     uint32_t sid = next_session_id_++;
     std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
+    uint64_t now = core::Utils::current_timestamp();
     SessionState ss;
     ss.session_id = sid;
     ss.role = core::Role::READ_WRITE;
-    ss.expires_at = core::Utils::current_timestamp() + ttl_sec;
+    ss.expires_at = (ttl_sec == 0) ? 0 : (now + ttl_sec);
     ss.identity = "host_admin";
     ss.web_ticket = ticket;
+    ss.auth_type = "Host Admin";
+    ss.remote_endpoint = "127.0.0.1 (local)";
+    ss.created_at = now;
+    ss.last_active_at = now;
+    ss.is_revoked = false;
     sessions_[sid] = ss;
     return ticket;
+}
+
+std::vector<SessionState> ControlServer::list_sessions() const {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    std::vector<SessionState> result;
+    result.reserve(sessions_.size());
+    for (const auto& [id, s] : sessions_) {
+        result.push_back(s);
+    }
+    std::sort(result.begin(), result.end(), [](const SessionState& a, const SessionState& b) {
+        return a.created_at > b.created_at;
+    });
+    return result;
+}
+
+bool ControlServer::revoke_session(uint32_t session_id) {
+    std::string ticket_to_revoke;
+    std::string ident;
+    std::string auth_t;
+    {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        auto it = sessions_.find(session_id);
+        if (it == sessions_.end()) return false;
+        if (it->second.is_revoked) return true;
+        it->second.is_revoked = true;
+        ticket_to_revoke = it->second.web_ticket;
+        ident = it->second.identity;
+        auth_t = it->second.auth_type;
+    }
+    audit_logger_.log("host_admin", "SESSION_REVOKED", "session_" + std::to_string(session_id),
+                      "Revoked " + auth_t + " session for " + ident);
+    return true;
+}
+
+void ControlServer::touch_session(uint32_t session_id) {
+    if (session_id == 0) return;
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    auto it = sessions_.find(session_id);
+    if (it != sessions_.end()) {
+        it->second.last_active_at = core::Utils::current_timestamp();
+    }
 }
 
 void ControlServer::run_accept_loop() {
@@ -238,15 +289,21 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 core::Role granted_role = *role_opt;
                 uint32_t sid = 0;
                 std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
+                uint64_t now = core::Utils::current_timestamp();
                 {
                     std::lock_guard<std::mutex> lock(session_mutex_);
                     sid = next_session_id_++;
                     SessionState ss;
                     ss.session_id = sid;
                     ss.role = granted_role;
-                    ss.expires_at = core::Utils::current_timestamp() + cert_ttl_;
+                    ss.expires_at = (cert_ttl_ == 0) ? 0 : (now + cert_ttl_);
                     ss.identity = "totp_client_" + client.peer_endpoint().ip;
                     ss.web_ticket = ticket;
+                    ss.auth_type = "TOTP";
+                    ss.remote_endpoint = client.peer_endpoint().ip + ":" + std::to_string(client.peer_endpoint().port);
+                    ss.created_at = now;
+                    ss.last_active_at = now;
+                    ss.is_revoked = false;
                     sessions_[sid] = ss;
                 }
                 cur_session_id = sid;
@@ -281,15 +338,21 @@ void ControlServer::handle_client(platform::TcpSocket client) {
 
                 uint32_t sid = 0;
                 std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
+                uint64_t now = core::Utils::current_timestamp();
                 {
                     std::lock_guard<std::mutex> lock(session_mutex_);
                     sid = next_session_id_++;
                     SessionState ss;
                     ss.session_id = sid;
                     ss.role = acc_opt ? acc_opt->role : core::Role::READ_ONLY;
-                    ss.expires_at = (acc_opt && acc_opt->expires_at == 0) ? 0 : (core::Utils::current_timestamp() + ttl);
+                    ss.expires_at = (acc_opt && acc_opt->expires_at == 0) ? 0 : (now + ttl);
                     ss.identity = u;
                     ss.web_ticket = ticket;
+                    ss.auth_type = "Account";
+                    ss.remote_endpoint = client.peer_endpoint().ip + ":" + std::to_string(client.peer_endpoint().port);
+                    ss.created_at = now;
+                    ss.last_active_at = now;
+                    ss.is_revoked = false;
                     sessions_[sid] = ss;
                 }
                 cur_session_id = sid;
@@ -314,6 +377,14 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             json resp;
             if (sess_opt) {
                 cur_session_id = sess_opt->session_id;
+                {
+                    std::lock_guard<std::mutex> lock(session_mutex_);
+                    auto it = sessions_.find(cur_session_id);
+                    if (it != sessions_.end()) {
+                        it->second.last_active_at = core::Utils::current_timestamp();
+                        it->second.remote_endpoint = client.peer_endpoint().ip + ":" + std::to_string(client.peer_endpoint().port);
+                    }
+                }
                 resp["status"] = "ok";
                 resp["session_id"] = sess_opt->session_id;
                 resp["role"] = core::role_to_string(sess_opt->role);
@@ -329,6 +400,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             if (!send_packet(resp)) break;
 
         } else if (type == "get_manifest") {
+            touch_session(cur_session_id);
             auto sess = get_session(cur_session_id);
             if (!sess) {
                 json err;
@@ -345,6 +417,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             if (!send_packet(resp)) break;
 
         } else if (type == "get_chunk") {
+            touch_session(cur_session_id);
             auto sess = get_session(cur_session_id);
             if (!sess) {
                 json err;
@@ -388,6 +461,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             if (!send_packet(resp)) break;
 
         } else if (type == "push_file") {
+            touch_session(cur_session_id);
             auto sess = get_session(cur_session_id);
             if (!sess || !sess->has_permission(core::Role::WRITE_ONLY)) {
                 json err;

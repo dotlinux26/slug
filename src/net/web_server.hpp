@@ -19,6 +19,7 @@ struct WebSession {
     std::string identity;
     core::Role role{core::Role::READ_ONLY};
     uint64_t expires_at{0};
+    std::string ticket;
 };
 
 struct HttpRequest {
@@ -45,8 +46,9 @@ public:
     void handle_http_request(platform::TcpSocket& client, std::span<const uint8_t, 4> initial_bytes);
 
     std::optional<WebSession> validate_session(const std::string& token);
-    std::string create_session(const std::string& identity, core::Role role, uint64_t ttl_sec = 86400);
+    std::string create_session(const std::string& identity, core::Role role, uint64_t ttl_sec = 86400, const std::string& ticket = "");
     void destroy_session(const std::string& token);
+    void revoke_session_by_ticket(const std::string& ticket);
 
 private:
     ControlServer& control_server_;

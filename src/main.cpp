@@ -175,7 +175,7 @@ void print_banner() {
                   __/ |
                  |___/ 
   Slug: Secure, Ephemeral, Git-like Workspace Sharing & Synchronization
-  Version: 1.0.0-rc2 | Post-Quantum Cryptography & AI Guard (Apache-2.0)
+  Version: 1.0.0 | Post-Quantum Cryptography & AI Guard (Apache-2.0)
 )" << std::endl;
 }
 
@@ -195,6 +195,7 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
     status                   Inspect active workspaces, ports, suites, and realtime OTPs
                              Flags: -s, --short             (Ultra-compact view)
                                     -p, --port <port>       (Inspect specific server)
+                                    --sessions              (List connected client sessions)
                                     --flagged               (List AI-quarantined files)
 
     totp [-p <port>]         Display active role-based One-Time TOTP tokens (rw, r, w)
@@ -205,6 +206,9 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
                              Flags: -a, --all               (Stop all hosted servers)
 
   [ACCESS CONTROL & SECURITY]
+    session <list|kill <id>> Inspect and terminate connected client sessions (TOTP, Account, Ticket)
+                             Flags: -p, --port <port>       (Target server port)
+
     user <add|mod|rm|list>   Manage ephemeral & permanent accounts with RBAC (rw, r, w)
                              Flags: -u, --user <name>       (Username)
                                     -P, --pass <password>   (Account password; prompts if omitted)
@@ -449,24 +453,187 @@ static nlohmann::json query_workspace_api(uint16_t port, const std::string& path
     }
 }
 
+static nlohmann::json post_workspace_api(uint16_t port, const std::string& path, const nlohmann::json& payload, int timeout_ms = 1200) {
+    platform::TcpSocket sock;
+    if (!sock.connect("127.0.0.1", port, timeout_ms)) {
+        return nullptr;
+    }
+    std::string body = payload.dump();
+    std::string req = "POST " + path + " HTTP/1.1\r\n" +
+                      "Host: 127.0.0.1\r\n" +
+                      "Content-Type: application/json\r\n" +
+                      "Content-Length: " + std::to_string(body.size()) + "\r\n" +
+                      "Connection: close\r\n\r\n" + body;
+    if (!sock.send_all(req)) {
+        return nullptr;
+    }
+    std::vector<uint8_t> buf(4096);
+    std::string resp;
+    while (true) {
+        int n = sock.receive(buf, 1000);
+        if (n <= 0) break;
+        resp.append(reinterpret_cast<char*>(buf.data()), n);
+    }
+    size_t body_pos = resp.find("\r\n\r\n");
+    if (body_pos == std::string::npos) return nullptr;
+    try {
+        return nlohmann::json::parse(resp.substr(body_pos + 4));
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+int cmd_session(int argc, char* argv[]) {
+    std::string action = "list";
+    uint32_t kill_id = 0;
+    uint16_t port = 0;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "list" || arg == "ls") {
+            action = "list";
+        } else if (arg == "kill" || arg == "revoke" || arg == "rm" || arg == "del") {
+            action = "kill";
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                kill_id = static_cast<uint32_t>(std::stoul(argv[++i]));
+            }
+        } else if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
+            port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        } else if (kill_id == 0 && std::isdigit(arg[0])) {
+            kill_id = static_cast<uint32_t>(std::stoul(arg));
+        }
+    }
+
+    auto list = core::WorkspaceManager::load_registry();
+    if (list.empty()) {
+        std::cout << "[-] No active workspace servers found. Share a folder with: slug add <path>" << std::endl;
+        return 1;
+    }
+
+    if (port == 0) {
+        if (list.size() == 1) {
+            port = list[0].port;
+        } else {
+            std::cout << "[!] Multiple active servers detected. Specify server port with -p <port>:" << std::endl;
+            for (const auto& w : list) {
+                std::cout << "    - Port " << w.port << " (" << w.path << ")" << std::endl;
+            }
+            return 1;
+        }
+    }
+
+    if (action == "kill") {
+        if (kill_id == 0) {
+            std::cerr << "Usage: slug session kill <session_id> [-p <port>]" << std::endl;
+            return 1;
+        }
+        nlohmann::json payload;
+        payload["session_id"] = kill_id;
+        auto res = post_workspace_api(port, "/api/admin/sessions/revoke", payload);
+        if (res.is_object() && res.value("status", "") == "ok") {
+            std::cout << "[+] Client session #" << kill_id << " successfully revoked and terminated on port " << port << "." << std::endl;
+            return 0;
+        } else {
+            std::string msg = (res.is_object() && res.contains("message")) ? res["message"].get<std::string>() : "Failed to revoke session";
+            std::cerr << "[-] Error: " << msg << std::endl;
+            return 1;
+        }
+    }
+
+    // Default: list sessions
+    auto st = query_workspace_api(port);
+    if (!st.is_object()) {
+        std::cerr << "[-] Cannot connect to workspace server on port " << port << " (server might not be running)" << std::endl;
+        return 1;
+    }
+
+    std::string ws_name = st.value("workspace_name", st.value("workspace", "workspace"));
+    std::cout << "\nCLIENT SESSIONS (Port " << port << " - " << ws_name << "):\n" << std::endl;
+
+    if (!st.contains("sessions") || !st["sessions"].is_array() || st["sessions"].empty()) {
+        std::cout << "  No connected client sessions recorded yet.\n" << std::endl;
+        return 0;
+    }
+
+    std::cout << std::left
+              << std::setw(8)  << "[ID]"
+              << std::setw(24) << "[IDENTITY]"
+              << std::setw(12) << "[TYPE]"
+              << std::setw(24) << "[ENDPOINT]"
+              << std::setw(8)  << "[ROLE]"
+              << std::setw(22) << "[STATUS / TTL]"
+              << std::setw(14) << "[LAST ACTIVE]"
+              << std::endl;
+    std::cout << std::string(112, '-') << std::endl;
+
+    uint64_t now_ts = core::Utils::current_timestamp();
+    for (const auto& s : st["sessions"]) {
+        uint32_t sid = s.value("session_id", 0U);
+        std::string ident = s.value("identity", "-");
+        std::string auth_t = s.value("auth_type", "-");
+        std::string ep = s.value("remote_endpoint", "-");
+        std::string role_s = s.value("role", "-");
+        std::string status_s = s.value("status", "ACTIVE");
+        uint64_t rem_sec = s.value("remaining_sec", 0ULL);
+        uint64_t exp_at = s.value("expires_at", 0ULL);
+        uint64_t last_act = s.value("last_active_at", 0ULL);
+
+        std::string st_display = status_s;
+        if (status_s == "ACTIVE") {
+            if (exp_at == 0) st_display = "ACTIVE (Permanent)";
+            else st_display = "ACTIVE (" + core::Utils::format_ttl(rem_sec) + ")";
+        }
+
+        std::string act_display = "-";
+        if (last_act > 0 && now_ts >= last_act) {
+            uint64_t diff = now_ts - last_act;
+            if (diff < 5) act_display = "just now";
+            else if (diff < 60) act_display = std::to_string(diff) + "s ago";
+            else if (diff < 3600) act_display = std::to_string(diff / 60) + "m ago";
+            else act_display = std::to_string(diff / 3600) + "h ago";
+        }
+
+        std::cout << std::left
+                  << std::setw(8)  << ("#" + std::to_string(sid))
+                  << std::setw(24) << (ident.size() > 22 ? ident.substr(0, 20) + ".." : ident)
+                  << std::setw(12) << auth_t
+                  << std::setw(24) << (ep.size() > 22 ? ep.substr(0, 20) + ".." : ep)
+                  << std::setw(8)  << role_s
+                  << std::setw(22) << st_display
+                  << std::setw(14) << act_display
+                  << std::endl;
+    }
+    std::cout << std::endl;
+    return 0;
+}
+
 int cmd_status(int argc, char* argv[]) {
     bool show_flagged = false;
+    bool show_sessions = false;
     bool short_mode = false;
     uint16_t target_port = 0;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--flagged") show_flagged = true;
+        else if (arg == "--sessions" || arg == "-S") show_sessions = true;
         else if (arg == "-s" || arg == "--short" || arg == "--compact") short_mode = true;
         else if ((arg == "-p" || arg == "--port") && i + 1 < argc) {
             target_port = static_cast<uint16_t>(std::stoi(argv[++i]));
         }
     }
 
-    if (target_port > 0) {
+    if (target_port > 0 && !show_sessions && !show_flagged) {
         return cmd_serve(argc, argv);
     }
 
     auto list = core::WorkspaceManager::load_registry();
+    if (target_port > 0) {
+        std::vector<core::WorkspaceInfo> filtered;
+        for (const auto& w : list) {
+            if (w.port == target_port) filtered.push_back(w);
+        }
+        list = filtered;
+    }
 
     print_banner();
     std::cout << "ACTIVE WORKSPACE SERVERS (" << list.size() << "):\n" << std::endl;
@@ -527,6 +694,21 @@ int cmd_status(int argc, char* argv[]) {
             std::cout << "  Connect:   slug connect -i 127.0.0.1 -p " << w.port << " -o " << live_rw << std::endl;
         }
         std::cout << std::endl;
+
+        if (show_sessions && st.is_object() && st.contains("sessions") && st["sessions"].is_array()) {
+            const auto& sessions = st["sessions"];
+            std::cout << "   |-> Connected Client Sessions (" << sessions.size() << "):" << std::endl;
+            for (const auto& s : sessions) {
+                uint32_t sid = s.value("session_id", 0U);
+                std::string ident = s.value("identity", "-");
+                std::string auth_t = s.value("auth_type", "-");
+                std::string ep = s.value("remote_endpoint", "-");
+                std::string role_s = s.value("role", "-");
+                std::string status_s = s.value("status", "ACTIVE");
+                std::cout << "       #" << sid << " " << ident << " (" << auth_t << ") [" << role_s << "] " << ep << " - " << status_s << std::endl;
+            }
+            std::cout << std::endl;
+        }
 
         if (show_flagged) {
             std::filesystem::path idx_path = norm_path / ".slug" / "index.db";
@@ -1567,6 +1749,7 @@ _slug() {
         'totp:Display active role-based One-Time TOTP tokens'
         'stop:Stop workspace server'
         'user:Manage workspace accounts and RBAC permissions'
+        'session:Inspect or terminate connected client sessions'
         'audit:Inspect or whitelist AI-flagged files'
         'get:One-shot connect and pull remote workspace'
         'pull:Incremental differential sync using BLAKE3'
@@ -1633,7 +1816,7 @@ _slug_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local commands="add status totp stop user audit get pull push conn serve web completion env bench ls set version help"
+    local commands="add status totp stop session user audit get pull push conn serve web completion env bench ls set version help"
 
     case "${prev}" in
         slug)
@@ -1643,6 +1826,11 @@ _slug_completions() {
         serve|server|stop)
             local ports=$(slug --internal-list-ports 2>/dev/null)
             COMPREPLY=( $(compgen -W "${ports} list stop -p --port -w --web -a --all" -- ${cur}) )
+            return 0
+            ;;
+        session|sessions)
+            local ports=$(slug --internal-list-ports 2>/dev/null)
+            COMPREPLY=( $(compgen -W "${ports} list kill revoke rm -p --port" -- ${cur}) )
             return 0
             ;;
         totp)
@@ -2468,6 +2656,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "pull") return cmd_pull(argc, argv);
     if (cmd == "push") return cmd_push(argc, argv);
     if (cmd == "user") return cmd_user(argc, argv);
+    if (cmd == "session" || cmd == "sessions") return cmd_session(argc, argv);
     if (cmd == "rule") return cmd_rule(argc, argv);
     if (cmd == "audit") return cmd_audit(argc, argv);
     if (cmd == "env") return cmd_env(argc, argv);
@@ -2483,7 +2672,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "get") return cmd_get(argc, argv);
     if (cmd == "completion") return cmd_completion(argc, argv);
     if (cmd == "version" || cmd == "-v" || cmd == "--version") {
-        std::cout << "Slug 1.0.0-rc2 (Linux/Windows/macOS x86_64, Post-Quantum Suites 1-3, Apache-2.0)" << std::endl;
+        std::cout << "Slug 1.0.0 (Linux/Windows/macOS x86_64, Post-Quantum Suites 1-3, Apache-2.0)" << std::endl;
         return 0;
     }
     if (cmd == "help" || cmd == "-h" || cmd == "--help") {
