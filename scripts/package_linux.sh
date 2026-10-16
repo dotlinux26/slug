@@ -42,7 +42,18 @@ cp LICENSE "$TARGET_DIR/LICENSE"
 mkdir -p "$DIST_DIR"
 tar -czf "${DIST_DIR}/${PKG_NAME}.tar.gz" -C "$DIST_DIR" "$PKG_NAME"
 
+# 6. Copy standalone binary and installer to dist
+cp bin/slug-static "${DIST_DIR}/slug-linux-${ARCH}"
+chmod 0755 "${DIST_DIR}/slug-linux-${ARCH}"
+cp scripts/install.sh "${DIST_DIR}/install.sh"
+chmod 0755 "${DIST_DIR}/install.sh"
+
+# 7. Generate Linux SHA256 checksums
+(cd "$DIST_DIR" && sha256sum "${PKG_NAME}.tar.gz" "slug-linux-${ARCH}" "install.sh" > "SHA256SUMS.linux")
+
 echo "[+] Universal Linux tarball created: ${DIST_DIR}/${PKG_NAME}.tar.gz"
-ls -lh "${DIST_DIR}/${PKG_NAME}.tar.gz"
+echo "[+] Standalone Linux binary created: ${DIST_DIR}/slug-linux-${ARCH}"
+echo "[+] Linux SHA256 sums created: ${DIST_DIR}/SHA256SUMS.linux"
+ls -lh "${DIST_DIR}/${PKG_NAME}.tar.gz" "${DIST_DIR}/slug-linux-${ARCH}"
 echo "[*] Contents:"
 tar -ztvf "${DIST_DIR}/${PKG_NAME}.tar.gz"

@@ -640,7 +640,7 @@ public:
           << "  window.location.href = '/download-folder?dir=' + encodeURIComponent(currentDir);"
           << "}"
           << "</script>\n"
-        h << "<div id='upload-toast'></div>"
+          << "<div id='upload-toast'></div>"
           << "<div class='footer'>Slug &bull; Policy-Aware Git-like Workspace Sharing &bull; Apache-2.0</div>"
           << "</div>"
           << "<div style='position:fixed; bottom:24px; right:24px; display:flex; flex-direction:column; gap:8px; z-index:9999;'>"

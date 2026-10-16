@@ -64,3 +64,7 @@ rm -rf "$DEB_ROOT"
 echo "[+] Debian package built: ${DIST_DIR}/slug_${VERSION}_${ARCH}.deb"
 ls -lh "${DIST_DIR}/slug_${VERSION}_${ARCH}.deb"
 dpkg-deb --info "${DIST_DIR}/slug_${VERSION}_${ARCH}.deb"
+
+if [ -f "${DIST_DIR}/SHA256SUMS.linux" ]; then
+    (cd "$DIST_DIR" && sha256sum "slug_${VERSION}_${ARCH}.deb" >> "SHA256SUMS.linux")
+fi

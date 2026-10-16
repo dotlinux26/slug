@@ -101,7 +101,7 @@ static uint32_t calculate_crc32(std::span<const uint8_t> data) {
     for (uint8_t b : data) {
         crc ^= b;
         for (int i = 0; i < 8; ++i) {
-            crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320u : 0u);
         }
     }
     return ~crc;

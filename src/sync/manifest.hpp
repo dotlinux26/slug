@@ -1,6 +1,7 @@
 #pragma once
 
 #include "src/sync/chunker.hpp"
+#include "src/core/types.hpp"
 #include <optional>
 #include <string>
 #include <vector>
@@ -36,8 +37,6 @@ struct WorkspaceManifest {
     static std::optional<WorkspaceManifest> from_json(const std::string& json_str);
     void compute_root_hash();
 };
-
-#include "src/core/types.hpp"
 
 class ManifestBuilder {
 public:

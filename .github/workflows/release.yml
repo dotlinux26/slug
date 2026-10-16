@@ -147,6 +147,9 @@ jobs:
           }
 
           Write-Host "[+] All Windows release assets uploaded successfully to $TargetTag!"
+          try {
+            git push origin --delete build-logs
+          } catch {}
 
   build-linux:
     name: Build Linux x64 Native Static Release
@@ -161,7 +164,7 @@ jobs:
       - name: Install Build Dependencies & OpenSSL
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev pkg-config
+          sudo apt-get install -y build-essential libssl-dev libzstd-dev zlib1g-dev pkg-config
 
       - name: Compile Slug Static Binary
         run: |
@@ -197,6 +200,18 @@ jobs:
               upload_assets+=("$f")
             fi
           done
+
+          # Download and merge existing SHA256SUMS from GitHub release if present
+          if gh release download "$TargetTag" -p "SHA256SUMS" --clobber 2>/dev/null; then
+            if [ -f "dist/SHA256SUMS.linux" ]; then
+              cat "dist/SHA256SUMS.linux" >> "SHA256SUMS"
+              sort -u "SHA256SUMS" -o "dist/SHA256SUMS"
+              upload_assets+=("dist/SHA256SUMS")
+            fi
+          elif [ -f "dist/SHA256SUMS.linux" ]; then
+            cp "dist/SHA256SUMS.linux" "dist/SHA256SUMS"
+            upload_assets+=("dist/SHA256SUMS")
+          fi
 
           if gh release view "$TargetTag" >/dev/null 2>&1; then
             echo "[*] Uploading Linux assets to existing release $TargetTag..."
