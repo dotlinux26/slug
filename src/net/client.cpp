@@ -410,10 +410,14 @@ bool SlugClient::get_file(const std::string& remote_path,
         return false;
     }
 
+    std::string norm_remote = remote_path;
+    std::replace(norm_remote.begin(), norm_remote.end(), '\\', '/');
+    while (!norm_remote.empty() && norm_remote.front() == '/') norm_remote.erase(0, 1);
+
     const auto& manifest = *manifest_opt;
     const sync::ManifestFileEntry* target_entry = nullptr;
     for (const auto& f : manifest.files) {
-        if (f.relative_path == remote_path) {
+        if (f.relative_path == norm_remote) {
             target_entry = &f;
             break;
         }
@@ -421,12 +425,12 @@ bool SlugClient::get_file(const std::string& remote_path,
 
     if (!target_entry) {
         for (const auto& s : manifest.skipped) {
-            if (s.relative_path == remote_path) {
-                log("Error: File '" + remote_path + "' is unavailable (" + s.reason + " - " + s.status + ")");
+            if (s.relative_path == norm_remote) {
+                log("Error: File '" + norm_remote + "' is unavailable (" + s.reason + " - " + s.status + ")");
                 return false;
             }
         }
-        log("Error: Remote file '" + remote_path + "' not found in workspace");
+        log("Error: Remote file '" + norm_remote + "' not found in workspace");
         return false;
     }
 
@@ -480,9 +484,13 @@ bool SlugClient::push(const fs::path& local_file,
         return false;
     }
 
+    std::string norm_dest = remote_dest;
+    std::replace(norm_dest.begin(), norm_dest.end(), '\\', '/');
+    while (!norm_dest.empty() && norm_dest.front() == '/') norm_dest.erase(0, 1);
+
     json req;
     req["type"] = "push_file";
-    req["path"] = remote_dest;
+    req["path"] = norm_dest;
     req["data_b64"] = core::Utils::to_base64(*data);
 
     if (!send_json(req)) {

@@ -1039,6 +1039,7 @@ int cmd_list(int argc, char* argv[]) {
     const auto& manifest = *manifest_opt;
 
     std::string norm_sub = subpath;
+    std::replace(norm_sub.begin(), norm_sub.end(), '\\', '/');
     while (!norm_sub.empty() && norm_sub.front() == '/') norm_sub.erase(0, 1);
     while (!norm_sub.empty() && norm_sub.back() == '/') norm_sub.pop_back();
 
@@ -1235,6 +1236,9 @@ int cmd_pull(int argc, char* argv[]) {
             }
         }
     }
+
+    std::replace(remote_scope.begin(), remote_scope.end(), '\\', '/');
+    while (!remote_scope.empty() && remote_scope.front() == '/') remote_scope.erase(0, 1);
 
     if (target_dir.empty()) {
         target_dir = "./pulled_workspace";
@@ -1444,6 +1448,9 @@ int cmd_get(int argc, char* argv[]) {
             local_dest = remaining_pos[0];
         }
     }
+
+    std::replace(remote_path.begin(), remote_path.end(), '\\', '/');
+    while (!remote_path.empty() && remote_path.front() == '/') remote_path.erase(0, 1);
 
     if (local_dest.empty() && !remote_path.empty()) {
         local_dest = std::filesystem::path(remote_path).filename().string();

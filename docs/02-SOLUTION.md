@@ -1,145 +1,152 @@
-# GIẢI PHÁP TOÀN DIỆN CỦA SLUG (THE SLUG SOLUTION)
+# GIẢI PHÁP TOÀN DIỆN CỦA SLUG: QUY TRÌNH BÀN GIAO WORKSPACE CÓ KIỂM SOÁT
 
-## 1. Triết Lý Thiết Kế: "Bảo Mật Hậu Lượng Tử - Trải Nghiệm Một Chạm"
+## 1. Triết Lý Cốt Lõi: "Kết Nối Không Đồng Nghĩa Với Tải Dữ Liệu"
 
-Slug giải quyết triệt để sự xung đột kinh điển giữa **tính bảo mật chặt chẽ** và **sự tiện dụng tức thì**. Dự án biến quy trình chia sẻ thư mục làm việc phức tạp (vốn đòi hỏi nhiều bước cấu hình SSH, Git remote hoặc mở port nguy hiểm) thành một trải nghiệm liền mạch:
-- **Tốc độ:** Khởi tạo workspace trong 1 giây, kéo toàn bộ dự án về máy khách chỉ bằng 1 câu lệnh duy nhất.
-- **Không rác hệ thống (Zero Footprint):** Các tài khoản, phiên làm việc và mã xác thực đều có thời hạn sống (TTL) và tự động tiêu hủy.
-- **An toàn tuyệt đối:** Mã hóa đầu-cuối chuẩn hậu lượng tử (Post-Quantum Cryptography) kết hợp cơ chế giam giữ đường dẫn (Path Jailing) và kiểm duyệt rò rỉ bí mật.
+Trong các công cụ truyền file cũ, việc kết nối thường gắn liền với tải toàn bộ hoặc yêu cầu cấu hình đường dẫn phức tạp. Slug tách bạch rõ ràng 4 giai đoạn của một quy trình bàn giao workspace:
+
+```text
++-------------------+      +--------------------+      +--------------------+      +-------------------+
+| 1. KẾT NỐI (AUTH) | ---> | 2. KHÁM PHÁ (LS)   | ---> | 3. XEM TRƯỚC (PLAN)| ---> | 4. TRUYỀN TẢI     |
+|   slug connect    |      |   slug ls          |      |   Transfer Preview |      | slug get / pull   |
+|   Bắt tay PQC,    |      |   Duyệt cấu trúc,  |      |   Dung lượng, ghi  |      | Kéo đúng 1 file   |
+|   lưu conn context|      |   xem trạng thái   |      |   đè, file bị chặn |      | hoặc delta scope  |
++-------------------+      +--------------------+      +--------------------+      +-------------------+
+```
+
+1. **Kết nối (`slug connect`):** Bắt tay mật mã hậu lượng tử, xác thực mã OTP hoặc tài khoản, lưu vé phiên vào context (`conn_1`). **Không tải bất kỳ file nào về máy**.
+2. **Khám phá (`slug ls`):** Duyệt xem cây thư mục từ xa dạng bảng kỹ thuật rõ ràng với thông tin kích thước và trạng thái kiểm duyệt mà không tốn băng thông kéo nội dung.
+3. **Xem trước kế hoạch (`Transfer Plan Preview`):** Biết trước bao nhiêu file sẽ được tải, bao nhiêu file bị loại bởi `.gitignore` hay chính sách bảo vệ, và dung lượng thực tế cần truyền.
+4. **Truyền tải chọn lọc (`slug get` / `slug pull`):**
+   - Lấy đúng 1 file duy nhất: `slug get <path>`
+   - Đồng bộ một phạm vi thư mục: `slug pull [scope] --to <dir>`
 
 ---
 
-## 2. Quy Hoạch 9 Lệnh Cốt Lõi ("The Essential 9" POSIX/GNU CLI)
+## 2. Quy Hoạch 9 Lệnh Cốt Lõi (The Essential 9 POSIX/GNU CLI)
 
-Hệ thống dòng lệnh của Slug được chuẩn hóa theo tiêu chuẩn POSIX/GNU, phân định rõ ràng giữa danh từ (tài nguyên) và động từ (hành động).
+Hệ thống dòng lệnh của Slug tuân thủ nghiêm ngặt tiêu chuẩn POSIX/GNU:
 
 ```text
 SLUG ESSENTIAL 9 ARCHITECTURE
 
 HOST WORKSPACE               ACCESS & SECURITY            CLIENT WORKSPACE SYNC
-  slug add                     slug user                    slug get (One-Shot)
-  slug status                  slug audit                   slug pull
-  slug totp                                                 slug push
-  slug stop
+  slug add                     slug user                    slug connect (Auth Only)
+  slug status                  slug audit                   slug ls (Technical Explorer)
+  slug totp                                                 slug get (Single File Only)
+  slug stop                                                 slug pull (Delta with Plan Preview)
+                                                            slug push (Upload under RBAC)
 ```
 
-### Bảng Chi Tiết 9 Lệnh Cốt Lõi
+### Bảng Chi Tiết Hành Vi Lệnh
 
-| Lệnh | Chức năng | Ví dụ sử dụng tiêu biểu |
-| :--- | :--- | :--- |
-| **`slug add [path]`** | Khởi tạo và host một workspace an toàn | `slug add . -p 9443 -s pqc -t 1d --ai` |
-| **`slug status`** | Kiểm tra danh sách hoặc chi tiết server đang chạy | `slug status` hoặc `slug status -p 9443 -s` |
-| **`slug totp`** | Xuất bảng 3 mã OTP phân quyền hoặc lấy mã nhanh | `slug totp -p 9443` hoặc `slug totp -p 9443 -r r --code-only` |
-| **`slug stop`** | Dừng một server cụ thể hoặc dừng tất cả | `slug stop -p 9443` hoặc `slug stop --all` |
-| **`slug user`** | Quản lý tài khoản truy cập phân quyền | `slug user add dev -p 9443 -r rw -t 7d` |
-| **`slug audit`** | Quản lý danh sách file bị AI Guard chặn | `slug audit list -p 9443` hoặc `slug audit allow <file>` |
-| **`slug get`** | Kéo dự án về máy khách trong đúng 1 lệnh (One-Shot) | `slug get "192.168.1.107:9443?otp=12822565" ./my-project` |
-| **`slug pull`** | Đồng bộ vi sai các thay đổi mới nhất từ Host | `slug pull --prune` |
-| **`slug push`** | Đẩy các file đã sửa hoặc file mới lên Host | `slug push --dry-run` |
-
-### Các Lệnh Tiện Ích Hỗ Trợ (System Utilities)
-- **`slug serve -p <port> [-w]`**: Xem chi tiết thông số bảo mật của server hoặc mở giao diện Web Dashboard quản trị.
-- **`slug conn`**: Quản lý danh sách kết nối lưu trên máy client (`slug conn list`, `slug conn use`, `slug conn prune`).
-- **`slug env`**: Bảo vệ biến môi trường nhạy cảm trong bộ nhớ RAM (`slug env init`, `slug env run -- <cmd>`).
-- **`slug completion <bash|zsh>`**: Sinh script gợi ý lệnh (Tab completion) tự động nhận diện các cổng đang mở.
-- **`slug bench`**: Đo kiểm tốc độ vi sai và hiệu năng thuật toán mật mã.
-- **`slug version`**: Hiển thị thông tin phiên bản, commit hash và giấy phép Apache-2.0.
+| Nhóm | Lệnh | Hành vi & Ý nghĩa kỹ thuật | Ví dụ thực tế |
+| :--- | :--- | :--- | :--- |
+| **Host** | **`slug add <path>`** | Khởi tạo và host workspace với PQC và AI Guard | `slug add . -p 9443 -s pqc -t 2h -a` |
+| | **`slug status`** | Kiểm tra danh sách server, port, suite và các file bị gắn cờ | `slug status --flagged` |
+| | **`slug totp`** | Xuất mã One-Time TOTP phân quyền (`rw`, `r`, `w`) | `slug totp -p 9443 -r r --code-only` |
+| | **`slug stop`** | Dừng một server cụ thể hoặc dừng toàn bộ | `slug stop -p 9443` hoặc `slug stop -a` |
+| **Security** | **`slug user`** | Quản lý tài khoản tạm thời theo vai trò (RBAC) | `slug user add bob -p 9443 -r r -t 4h` |
+| | **`slug audit`** | Quản lý, kiểm tra hoặc bỏ chặn file bị AI Guard cách ly | `slug audit list -p 9443` hoặc `slug audit allow <file>` |
+| **Client** | **`slug connect`** | Bắt tay PQC, xác thực OTP/User, lưu context (`conn_N`), **không tải file** | `slug connect -i 192.168.1.107 -p 9443 -o 12822565` |
+| | **`slug ls [subpath]`** | Duyệt cấu trúc workspace từ xa dạng bảng (`NAME`, `TYPE`, `SIZE`, `STATUS`) | `slug ls` hoặc `slug ls src/ -r` |
+| | **`slug get <path>`** | **Chỉ tải duy nhất 1 file được chỉ định**, tuyệt đối không kéo cả thư mục | `slug get src/main.rs ./main.rs` |
+| | **`slug pull [scope]`** | Đồng bộ vi sai Git-like có hiển thị **Transfer Plan Preview** | `slug pull src/ --to ./local_src -y` |
+| | **`slug push <file>`** | Tải file lên workspace từ xa (yêu cầu quyền `w` hoặc `rw`) | `slug push ./fix.rs src/fix.rs` |
 
 ---
 
-## 3. Đột Phá UX: Lệnh Một Chạm `slug get` (One-Shot Magic Transfer)
+## 3. Minh Họa Luồng Trải Nghiệm Thực Tế Phía Client
 
-Thay vì buộc người dùng phía máy khách phải thực hiện tuần tự 3 bước:
-1. `slug connect -i 192.168.1.107 -p 9443 -o 12822565`
-2. Lưu và kích hoạt ngữ cảnh kết nối.
-3. `slug pull` để kéo file về máy.
-
-Lệnh **`slug get`** gộp toàn bộ chuỗi thao tác trên vào một câu lệnh duy nhất:
-
+### Bước 1: Kết Nối Xác Thực
 ```bash
-slug get "192.168.1.107:9443?otp=12822565" ./lab-workspace
+$ slug connect -i 192.168.1.107 -p 9443 -o 12822565
+[*] Connecting to 192.168.1.107:9443...
+[+] Handshake OK! Negotiated: Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)
+[*] Authenticating with single-use TOTP: 12822565...
+[+] Authenticated via TOTP
+[+] Connection saved: conn_1
+[+] Your active connection changed to: conn_1 (192.168.1.107:9443 - my_project)
+    Role:        rw (Read-Write)
+    Certificate: 8f4e2a1b9c0d... (TTL: 2h)
+    Web Drop:    http://192.168.1.107:9443/drop?ticket=8f4e2a1b9c0d...
+
+Quick Actions:
+  slug ls                Browse remote files
+  slug get <file>        Download a specific single file
+  slug pull ./clone      Pull remote files incrementally
+  slug push <file>       Push file to remote workspace
 ```
 
-### Cơ Chế Xử Lý Thông Minh Của `slug get`:
-1. **Bộ phân tích URL linh hoạt (Smart URL Parser):**
-   - Hỗ trợ định dạng ngắn: `192.168.1.107:9443?otp=12822565`
-   - Hỗ trợ scheme tiêu chuẩn: `slug://192.168.1.107:9443?otp=12822565`
-   - Hỗ trợ Web link: `http://192.168.1.107:9443/drop?ticket=24b3eca0...`
-   - Nhận diện đa dạng query parameter: `?otp=`, `?token=`, `?ticket=`, `?user=`, `?pass=`.
-2. **Tự động bắt tay mật mã (PQC Handshake):** Trao đổi khóa ML-KEM-768 và chữ ký số ML-DSA-65 qua kênh socket nhị phân an toàn.
-3. **Kích hoạt cơ chế Single-Use Burn:** Mã OTP được máy chủ xác thực và tiêu hủy tức thì, sau đó máy chủ cấp vé phiên (Session Certificate Ticket) độc quyền.
-4. **Kéo dữ liệu vi sai (Differential Sync Engine):** Tự động khởi tạo thư mục đích, tải manifest từ máy chủ, so khớp hash khối 64 KiB và tải về chính xác các khối dữ liệu còn thiếu.
-
----
-
-## 4. Ba Bộ Suite Mật Mã Tiêu Chuẩn Quốc Tế
-
-Slug cho phép lựa chọn bộ thuật toán mật mã phù hợp với yêu cầu bảo mật của hạ tầng qua cờ `-s`:
-
+### Bước 2: Khám Phá Workspace Từ Xa Bằng `slug ls`
 ```bash
-slug add . -p 9443 -s pqc
+$ slug ls
+REMOTE WORKSPACE: my_project (conn_1 @ 192.168.1.107:9443)
+Scope: [root] | Role: rw | Crypto: Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)
+
+NAME                             TYPE      SIZE        STATUS
+--------------------------------------------------------------------------------
+src/                             folder    12.4 KB     Available
+docs/                            folder    4.8 KB      Available
+build/                           folder    -           Excluded (gitignore)
+tests/                           folder    6.1 KB      Available
+.env                             file      120 B       Quarantined (AI Secret Guard: Environment Secret File)
+Cargo.toml                       file      340 B       Available
+README.md                        file      1.2 KB      Available
+--------------------------------------------------------------------------------
+Total: 15 available file(s) (24.5 KB) | 4 excluded/quarantined item(s)
 ```
 
-| Suite | Tên định danh | KEM / Key Exchange | Chữ Ký Số (Signature) | Băm Nội Dung | Mã Hóa Khối (AEAD) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Suite 1** | `classical` | X25519 (ECDH) | Ed25519 | SHA-256 | XChaCha20-Poly1305 |
-| **Suite 2** | `modern` | X25519 (ECDH) | Ed25519 | BLAKE3 (High-speed) | XChaCha20-Poly1305 |
-| **Suite 3** | `pqc` *(Mặc định)* | **ML-KEM-768** (NIST FIPS 203) | **ML-DSA-65** (NIST FIPS 204) | **BLAKE3** | **XChaCha20-Poly1305** |
-
-- **Suite 3 (PurePQC):** Đạt khả năng kháng tấn công thu thập trước giải mã sau (Harvest Now, Decrypt Later) của máy tính lượng tử tương lai, sử dụng bài toán toán học trên lưới đại số (Lattice-based cryptography).
-
----
-
-## 5. Tầng Hệ Thống Tập Tin Ảo An Toàn (`SlugVFS`)
-
-Để ngăn chặn hoàn toàn nguy cơ vượt ngục thư mục (Directory Traversal) và bảo vệ cây thư mục máy chủ, toàn bộ các thao tác đọc/ghi đều bị cô lập qua lớp trừu tượng `SlugVFS` (`src/core/vfs.hpp`):
-
-1. **Định Danh Đường Dẫn Ảo (Virtual Path):**
-   - Phía Client không bao giờ biết đường dẫn vật lý thực tế trên máy chủ (ví dụ: `/home/user/secret_proj`).
-   - Mọi tệp tin đều được biểu diễn dưới dạng đường dẫn ảo bắt đầu từ gốc `/` (ví dụ: `/src/main.cpp`).
-2. **Giam Giữ Thư Mục Tuyệt Đối (Path Jailing):**
-   - Mọi yêu cầu được phân giải qua `vfs.resolve_and_jail(virtual_path, role)`.
-   - Các nỗ lực chứa ký tự điều hướng (`../`, `..\\`) hoặc symbolic link trỏ ra ngoài thư mục máy chủ đều bị từ chối ngay lập tức với mã lỗi `AccessDenied`.
-3. **Thực Thi RBAC Ngay Tại Tầng VFS:**
-   - **`Role::WRITE_ONLY` (`w`):** Không được phép gọi `list_dir()` hoặc `read_file()`. Khách chỉ có thể đẩy file vào hòm thư mù (Blind Drop).
-   - **`Role::READ_ONLY` (`r`):** Bị cấm gọi `write_file()` hoặc `delete_file()`. Khách chỉ có thể đọc và đồng bộ về máy.
-   - **`Role::READ_WRITE` (`rw`):** Cho phép đồng bộ song hướng hoàn chỉnh.
-4. **Bộ Lọc Tập Trung Đa Tầng:**
-   - Kết hợp đồng nhất `.gitignore` phân tầng, quy tắc cấu hình nội bộ `.slug/rules.conf`, và danh sách tệp bị AI Guard chặn (`AI_FLAGGED`).
-
----
-
-## 6. Cơ Chế Phân Quyền Hạt Nhân (Granular RBAC & Ephemeral TTL)
-
-### Bộ Ba Mã OTP Tự Động Làm Mới (Role OTPs)
-Mỗi workspace khi khởi chạy luôn duy trì 3 mã OTP 8 chữ số độc lập:
-- `[rw] Read-Write OTP`: Dành cho lập trình viên cần kéo và đẩy code đầy đủ.
-- `[r]  Read-Only OTP`: Dành cho người xem xét mã (Code Reviewer), máy chủ build CI/CD chỉ cần tải code.
-- `[w]  Write-Only OTP`: Dành cho khách nộp bài, gửi log kiểm toán mà không được xem mã nguồn của máy chủ.
-
-Mã OTP được làm mới sau mỗi 60 giây và tự động bị tiêu hủy (Single-Use Burn) ngay khi kết nối thành công.
-
-### Tài Khoản Định Danh Và Thời Hạn Sống (TTL)
-Chủ máy có thể cấp tài khoản định danh riêng cho đồng nghiệp:
+### Bước 3A: Chỉ Lấy Đúng 1 File Bằng `slug get`
 ```bash
-# Cấp tài khoản tạm thời hết hạn sau 24 giờ
-slug user add alice -p 9443 -r rw -t 24h
-
-# Cấp tài khoản vĩnh viễn (cho server CI nội bộ)
-slug user add ci-bot -p 9443 -r r -t inf
+$ slug get src/main.rs ./main.rs
+[*] Downloading single file: src/main.rs -> ./main.rs...
+Downloaded: src/main.rs -> ./main.rs (340 B) [BLAKE3: a1b2c3d4e5f6...]
 ```
-Sau khi hết thời hạn TTL, máy chủ sẽ tự động vô hiệu hóa tài khoản và dọn dẹp phiên làm việc mà không cần sự can thiệp thủ công của quản trị viên.
+*(Nếu người dùng chạy `slug get` không truyền tên file, Slug từ chối kéo cả thư mục và hướng dẫn dùng `slug ls` hoặc `slug pull`).*
+
+### Bước 3B: Đồng Bộ Vi Sai Phạm Vi Bằng `slug pull` Kèm Plan Preview
+```bash
+$ slug pull src/ --to ./my_src
+--- Workspace Transfer Plan Preview ---
+Remote scope:        src/
+Local destination:   ./my_src
+Files selected:      8 (12.4 KB)
+Files excluded:      2 (gitignore / policy)
+Files quarantined:   1 (AI Secret Guard)
+Estimated download:  12.4 KB
+Overwriting:         0 local file(s)
+---------------------------------------
+Proceed with transfer? [y/N]: y
+[*] Starting Delta Sync into ./my_src...
+Synced: src/main.rs (340 B)
+Synced: src/lib.rs (1.2 KB)
+...
+Pull complete! Transferred 12.4 KB, saved 0.0 B (Git-like Delta Sync)
+```
 
 ---
 
-## 7. Giao Diện Web Techno B2B SaaS (Web Dropbox & Admin Dashboard)
+## 4. Giao Diện Web Explorer: Strict Light Theme & 2px Border Radius
 
-Đối với các tình huống người nhận không có cài đặt sẵn Slug CLI (ví dụ: mở trên điện thoại, máy tính bảng hoặc máy khách không có quyền cài binary):
-- Chủ máy mở giao diện quản trị: `slug serve -p 9443 -w`.
-- Người nhận mở link chia sẻ kèm vé phiên: `http://<IP>:9443/drop?ticket=<24-byte-hex>`.
+Khi lập trình viên cần duyệt file trực quan hoặc kéo-thả, Web UI của Slug cung cấp một trải nghiệm đồng nhất với CLI:
 
-### Đặc Điểm Giao Diện Web Của Slug:
-- **Phong cách Techno Minimalist B2B:** Sử dụng bảng màu tối doanh nghiệp (`#0d1117`, `#161b22`, `#21262d`, `#30363d`, `#58a6ff`), bo góc sắc nét (`2px`), font chữ kỹ thuật (`JetBrains Mono`).
-- **Kéo Thả Trực Quan (No-CLI Workspace):** Người dùng kéo thả trực tiếp tệp tin hoặc thư mục vào trình duyệt để tải lên.
-- **Giám Sát Thời Gian Thực (Realtime Metrics):** Biểu đồ đo kiểm hiệu năng đồng bộ (Latency, Throughput) tự động cập nhật liên tục mà không cần click chuột.
-- **Bảo Vệ Phiên Bằng Capability Ticket:** Ngăn chặn truy cập trái phép bằng vé ngẫu nhiên 192-bit sinh từ CSPRNG, lưu trữ phiên hoàn toàn trong bộ nhớ RAM của máy chủ.
+* **Phong cách thiết kế:** Tông màu Light kỹ thuật (`#f6f8fa` canvas, `#ffffff` surface, `#d0d7de` border, font đơn sắc Mono).
+* **Bo góc:** Chuẩn hóa tuyệt đối **`2px border-radius`** trên mọi card, button, table, badge, modal (loại bỏ hoàn toàn phong cách bo tròn dạng pill).
+* **Bảng Remote Explorer:**
+  * Cột: `[ ]` (Checkbox đa chọn) | `NAME` | `TYPE` | `SIZE` | `STATUS` | `ACTION`.
+  * Huy hiệu trạng thái 3 tầng: `Available` (xanh lá nhạt), `Excluded` (xám nhạt - gitignore), `Blocked` (vàng nhạt - policy), `Quarantined` (đỏ nhạt - AI Secret Guard).
+  * Thanh điều khiển: `Selected: X files • Estimated: Y MB` kèm hai nút `[Preview Transfer]` (mở popup danh sách file) và `[Download Selected]`.
+  * Hỗ trợ kéo thả (Drag-and-Drop) upload trực tiếp nếu tài khoản có quyền `w` hoặc `rw`.
+
+---
+
+## 5. Tương Thích Tuyệt Đối Đa Nền Tảng (Windows & Linux)
+
+Slug được thiết kế để hoạt động hoàn hảo trong môi trường đa hệ điều hành (ví dụ: host chạy Linux, client chạy Windows hoặc ngược lại):
+
+1. **Chuẩn Hóa Đường Dẫn Giao Thức (Protocol Path):**
+   * Toàn bộ manifest, dữ liệu gói tin PQC và policy nội bộ luôn sử dụng ký tự phân cách chuẩn **`/`** (Forward Slash).
+   * Tuyệt đối không để đường dẫn tuyệt đối hoặc ký tự `\` đặc thù của Windows lọt vào gói tin mạng.
+2. **Tự Động Chuyển Đổi Tại Biên CLI (Boundary Normalization):**
+   * Nếu người dùng Windows gõ `slug get src\main.rs` hoặc `slug push src\contrib.rs`, hệ thống tự động chuẩn hóa dấu `\` thành `/` trước khi tra cứu hoặc gửi lên máy chủ.
+   * Khi ghi xuống đĩa cứng, `std::filesystem::path` tự động chuyển đổi sang đường dẫn bản địa tương ứng của hệ điều hành.
