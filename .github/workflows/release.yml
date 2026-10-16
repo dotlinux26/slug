@@ -148,8 +148,12 @@ jobs:
 
           Write-Host "[+] All Windows release assets uploaded successfully to $TargetTag!"
           try {
-            git push origin --delete build-logs
+            $hasLogsBranch = git ls-remote --heads origin build-logs
+            if ($hasLogsBranch) {
+              git push origin --delete build-logs 2>$null
+            }
           } catch {}
+          $global:LASTEXITCODE = 0
 
   build-linux:
     name: Build Linux x64 Native Static Release
