@@ -17,6 +17,9 @@ public:
     // Returns std::nullopt if the path attempts traversal (e.g. "../", symlink pointing outside).
     static std::optional<fs::path> resolve_safe_path(const fs::path& root_dir, const std::string& relative_path);
 
+    // Validates that all path components contain only portable, cross-platform valid characters (blocks <>:"|?* and controls)
+    static bool is_valid_portable_path(const std::string& path_str);
+
     // Normalizes path separators to forward slashes for cross-platform protocol consistency
     static std::string to_protocol_path(const fs::path& relative_path);
 

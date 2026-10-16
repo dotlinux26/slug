@@ -34,48 +34,55 @@ bool PathUtils::is_internal_slug_path(const fs::path& path) {
     return false;
 }
 
+bool PathUtils::is_valid_portable_path(const std::string& path_str) {
+    const std::string forbidden_chars = "<>:\"|?*";
+    fs::path p(path_str);
+    for (const auto& comp : p) {
+        std::string s = comp.string();
+        if (s == "." || s == "..") continue;
+        for (char c : s) {
+            if (forbidden_chars.find(c) != std::string::npos || static_cast<unsigned char>(c) < 32) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 std::optional<fs::path> PathUtils::resolve_safe_path(const fs::path& root_dir, const std::string& relative_path) {
+    // 1. Check portable filename characters
+    if (!is_valid_portable_path(relative_path)) {
+        return std::nullopt;
+    }
+
     std::error_code ec;
     fs::path root_canonical = fs::weakly_canonical(root_dir, ec);
     if (ec) return std::nullopt;
 
     // Check raw string for obvious traversal tricks
     if (relative_path.find("..") != std::string::npos) {
-        // Detailed check through path components
         fs::path test_path(relative_path);
         for (const auto& comp : test_path) {
             if (comp == "..") return std::nullopt;
         }
     }
 
-    fs::path target = root_canonical / relative_path;
-    fs::path target_canonical = fs::weakly_canonical(target, ec);
+    fs::path candidate = root_canonical / fs::path(relative_path).relative_path();
+    fs::path target_canonical = fs::weakly_canonical(candidate, ec);
     if (ec) return std::nullopt;
 
-    std::string root_str = root_canonical.string();
-    std::string target_str = target_canonical.string();
-
-    // Ensure root_str has trailing separator for prefix check
-    if (!root_str.empty() && root_str.back() != fs::path::preferred_separator) {
-        root_str += fs::path::preferred_separator;
+    // Strict path jailing via mismatch on canonical path components
+    auto [root_end, nothing] = std::mismatch(root_canonical.begin(), root_canonical.end(), target_canonical.begin());
+    if (root_end != root_canonical.end()) {
+        return std::nullopt; // Escaped root! Traversal detected!
     }
 
-    // Target must match root exactly or start with root_str
-    if (target_str == root_canonical.string()) {
-        return target_canonical;
-    }
-
-    if (target_str.rfind(root_str, 0) != 0) {
-        // Path escaped root! Traversal detected!
-        return std::nullopt;
-    }
-
-    // Check if target is a symlink pointing outside root
-    if (fs::is_symlink(target, ec)) {
-        fs::path symlink_target = fs::canonical(target, ec);
+    // Additional symlink escape check
+    if (fs::is_symlink(candidate, ec)) {
+        fs::path symlink_target = fs::canonical(candidate, ec);
         if (ec) return std::nullopt;
-        std::string sym_str = symlink_target.string();
-        if (sym_str != root_canonical.string() && sym_str.rfind(root_str, 0) != 0) {
+        auto [sym_end, sym_nothing] = std::mismatch(root_canonical.begin(), root_canonical.end(), symlink_target.begin());
+        if (sym_end != root_canonical.end()) {
             return std::nullopt;
         }
     }
