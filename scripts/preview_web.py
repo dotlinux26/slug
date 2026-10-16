@@ -1315,7 +1315,67 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 return
 
         
+        if path == "/api/fs/inspect-path":
+            target_path = query.get("path", [""])[0]
+            if not target_path:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "ok",
+                    "exists": False,
+                    "is_dir": False,
+                    "has_slug": False,
+                    "has_gitignore": False,
+                    "has_slugignore": False,
+                    "next_free_port": 9443
+                }).encode("utf-8"))
+                return
+
+            full_p = os.path.abspath(target_path)
+            exists = os.path.exists(full_p)
+            is_dir = os.path.isdir(full_p) if exists else False
+            has_slug = os.path.exists(os.path.join(full_p, ".slug")) if exists else False
+            has_gitignore = os.path.exists(os.path.join(full_p, ".gitignore")) if exists else False
+            has_slugignore = (os.path.exists(os.path.join(full_p, ".slugignore")) or os.path.exists(os.path.join(full_p, ".slug", "rules.conf"))) if exists else False
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "exists": exists,
+                "is_dir": is_dir,
+                "has_slug": has_slug,
+                "has_gitignore": has_gitignore,
+                "has_slugignore": has_slugignore,
+                "next_free_port": 9443
+            }).encode("utf-8"))
+            return
+
+        if path == "/api/host/workspaces":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","workspaces":[]}')
+            return
+
         if path == "/api/audit/workspace":
+            target_path = query.get("path", [""])[0]
+            if not target_path or target_path in ["", "./"]:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "ok",
+                    "path": target_path,
+                    "stats": {"clean": 0, "quarantined": 0, "excluded": 0},
+                    "clean_files": [],
+                    "quarantined_files": [],
+                    "excluded_files": []
+                }).encode("utf-8"))
+                return
+
             clean_count = 24 + (1 if ".env" in UNQUARANTINED_FILES else 0)
             quarantined_count = 0 if ".env" in UNQUARANTINED_FILES else 1
             self.send_response(200)
@@ -1323,7 +1383,7 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({
                 "status": "ok",
-                "workspace": "Thư mục hiện tại (D:\\slugdoc)",
+                "workspace": target_path,
                 "stats": {
                     "clean": clean_count,
                     "quarantined": quarantined_count,
@@ -1458,7 +1518,25 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(err_bytes)
             return
-        
+
+        if path == "/api/host/start":
+            wpath = req_data.get("path", "")
+            if not wpath: wpath = "./"
+            wport = int(req_data.get("port", 9443))
+            try:
+                os.makedirs(wpath, exist_ok=True)
+            except Exception:
+                pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "port": wport,
+                "message": f"Đã bắt đầu chia sẻ workspace tại '{wpath}' trên cổng {wport}"
+            }).encode("utf-8"))
+            return
+
         if path == "/api/host/suite":
             suite = req_data.get("suite", "2")
             host_id = req_data.get("host_id", "")

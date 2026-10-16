@@ -28,13 +28,17 @@ class WorkspaceManager {
 public:
     static WorkspaceManager& instance();
 
-    // Initializes or adds a workspace server
+    // Initializes or adds a workspace server (auto-picks free port if busy)
     bool add_workspace(const std::filesystem::path& folder_path,
                        uint16_t port = kDefaultPort,
                        SuiteID suite = SuiteID::SUITE_2_MODERN,
                        uint64_t ttl_seconds = 86400,
                        bool enable_ai = false,
-                       FilterMode filter_mode = FilterMode::PROTECTED);
+                       FilterMode filter_mode = FilterMode::PROTECTED,
+                       uint16_t* actual_port = nullptr);
+
+    // Automatically finds the next available, free TCP port starting from starting_port
+    uint16_t find_available_port(uint16_t starting_port = 9443);
 
     // Stops a workspace on a given port
     bool stop_workspace(uint16_t port);

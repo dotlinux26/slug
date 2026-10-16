@@ -3180,10 +3180,51 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/api/fs/inspect-path") {
+                std::string target_dir = "";
+                size_t ppos = query.find("path=");
+                if (ppos != std::string::npos) {
+                    target_dir = query.substr(ppos + 5);
+                    size_t amp = target_dir.find('&');
+                    if (amp != std::string::npos) target_dir = target_dir.substr(0, amp);
+                    target_dir = slug_url_decode(target_dir);
+                }
+                nlohmann::json res;
+                res["status"] = "ok";
+                if (target_dir.empty()) {
+                    res["exists"] = false;
+                    res["is_dir"] = false;
+                    res["has_slug"] = false;
+                    res["has_gitignore"] = false;
+                    res["has_slugignore"] = false;
+                    res["next_free_port"] = core::WorkspaceManager::instance().find_available_port(9443);
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                    return;
+                }
+                std::error_code ec;
+                std::filesystem::path p = std::filesystem::u8path(target_dir);
+                bool exists = std::filesystem::exists(p, ec);
+                bool is_dir = exists && std::filesystem::is_directory(p, ec);
+                bool has_slug = exists && std::filesystem::exists(p / ".slug", ec);
+                bool has_gitignore = exists && std::filesystem::exists(p / ".gitignore", ec);
+                bool has_slugignore = exists && (std::filesystem::exists(p / ".slugignore", ec) || std::filesystem::exists(p / ".slug" / "rules.conf", ec));
+                uint16_t next_free = core::WorkspaceManager::instance().find_available_port(9443);
+
+                res["exists"] = exists;
+                res["is_dir"] = is_dir;
+                res["has_slug"] = has_slug;
+                res["has_gitignore"] = has_gitignore;
+                res["has_slugignore"] = has_slugignore;
+                res["next_free_port"] = next_free;
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
             if (path == "/api/host/start" && method == "POST") {
                 try {
                     auto j = nlohmann::json::parse(body);
-                    std::string wpath = j.value("path", "./");
+                    std::string wpath = j.value("path", "");
+                    if (wpath.empty()) wpath = "./";
                     uint16_t wport = static_cast<uint16_t>(j.value("port", 9443));
                     std::string suite_str = j.value("suite", "2");
                     std::string filter_str = j.value("filter", "protected");
@@ -3192,14 +3233,22 @@ int cmd_portal(int argc, char* argv[]) {
                     core::SuiteID suite = core::suite_from_string(suite_str);
                     core::FilterMode fmode = core::filter_mode_from_string(filter_str);
 
+                    uint16_t assigned_port = wport;
                     bool ok = core::WorkspaceManager::instance().add_workspace(
-                        wpath, wport, suite, wttl, true, fmode
+                        wpath, wport, suite, wttl, true, fmode, &assigned_port
                     );
                     nlohmann::json res;
                     res["status"] = ok ? "ok" : "error";
-                    res["port"] = wport;
-                    res["message"] = ok ? ("Đã bắt đầu chia sẻ workspace tại '" + wpath + "' trên cổng " + std::to_string(wport))
-                                        : "Không thể khởi động chia sẻ workspace (thư mục không hợp lệ hoặc cổng bị trùng)";
+                    res["port"] = assigned_port;
+                    if (ok) {
+                        if (assigned_port != wport) {
+                            res["message"] = "Cổng " + std::to_string(wport) + " đã bận, Slug đã tự động chọn cổng mới khả dụng: " + std::to_string(assigned_port) + " (Đã chia sẻ thành công).";
+                        } else {
+                            res["message"] = "Đã bắt đầu chia sẻ workspace tại '" + wpath + "' trên cổng " + std::to_string(assigned_port);
+                        }
+                    } else {
+                        res["message"] = "Không thể khởi động chia sẻ workspace (vui lòng kiểm tra quyền truy cập thư mục hoặc cổng mạng)";
+                    }
                     send_portal_http(sock, ok ? 200 : 400, ok ? "OK" : "Bad Request", "application/json", res.dump());
                 } catch (...) {
                     send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid request body\"}");

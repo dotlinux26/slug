@@ -1955,13 +1955,30 @@ function updateAuditWorkspaceDropdown() {
   const sel = document.getElementById('audit-target-workspace');
   if (!sel) return;
   const currentVal = sel.value;
-  let html = '<option value="./">Thư mục hiện tại (./)</option>';
-  hostedWorkspaces.forEach(w => {
-    html += `<option value="${w.id}">${w.path} (Cổng ${w.port})</option>`;
-  });
-  html += '<option value="custom">-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>';
-  sel.innerHTML = html;
-  if (currentVal) sel.value = currentVal;
+  let html = '';
+  if (hostedWorkspaces && hostedWorkspaces.length > 0) {
+    hostedWorkspaces.forEach(w => {
+      html += `<option value="${w.id}">Trạm Host: ${w.path} (Cổng ${w.port})</option>`;
+    });
+    html += '<option value="custom">-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>';
+    sel.innerHTML = html;
+    if (currentVal && currentVal !== './' && currentVal !== 'custom') {
+      sel.value = currentVal;
+    } else if (currentVal === 'custom') {
+      sel.value = 'custom';
+    } else {
+      sel.value = hostedWorkspaces[0].id;
+    }
+  } else {
+    html = '<option value="custom" selected>-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>';
+    sel.innerHTML = html;
+    sel.value = 'custom';
+  }
+  const customSec = document.getElementById('custom-workspace-path-sec');
+  if (customSec) customSec.style.display = (sel.value === 'custom') ? 'block' : 'none';
+  const targetLabel = document.getElementById('audit-current-target-label');
+  const targetPath = getSelectedAuditPath();
+  if (targetLabel) targetLabel.textContent = targetPath || 'Chưa chọn thư mục nào';
 }
 
 let currentUserModalHostId = null;
@@ -2091,23 +2108,29 @@ function switchAuditFileView(view) {
 
 function setCustomAuditWorkspace() {
   const customInput = document.getElementById('custom-audit-path');
-  const p = (customInput ? customInput.value.trim() : '') || './';
+  const p = (customInput ? customInput.value.trim() : '');
+  if (!p) {
+    alert('Vui lòng chọn hoặc nhập đường dẫn thư mục máy trước khi quét!');
+    if (customInput) customInput.focus();
+    return;
+  }
   const targetLabel = document.getElementById('audit-current-target-label');
   if (targetLabel) targetLabel.textContent = p;
+  showToast(`Đang quét kiểm toán thư mục: ${p}...`);
   renderAuditWorkspaceFiles();
 }
 
 function getSelectedAuditPath() {
   const sel = document.getElementById('audit-target-workspace');
-  if (!sel) return './';
+  if (!sel) return '';
   const val = sel.value;
   if (val === 'custom') {
     const customInput = document.getElementById('custom-audit-path');
-    return (customInput ? customInput.value.trim() : '') || './';
+    return (customInput ? customInput.value.trim() : '');
   }
-  const found = hostedWorkspaces.find(w => w.id === val);
+  const found = hostedWorkspaces.find(w => w.id === val || String(w.port) === val);
   if (found && found.path) return found.path;
-  return val || './';
+  return (val && val !== './' && val !== 'custom') ? val : '';
 }
 
 function renderAuditWorkspaceFiles() {
@@ -2116,7 +2139,30 @@ function renderAuditWorkspaceFiles() {
 
   const targetPath = getSelectedAuditPath();
   const targetLabel = document.getElementById('audit-current-target-label');
-  if (targetLabel) targetLabel.textContent = targetPath;
+  if (targetLabel) targetLabel.textContent = targetPath || 'Chưa chọn thư mục nào';
+
+  // Không tự động chạy gì hoặc hiển thị gì nếu không có đường dẫn nào được chọn!
+  if (!targetPath) {
+    const statClean = document.getElementById('audit-stat-clean');
+    const statQuar = document.getElementById('audit-stat-quarantined');
+    const statExcl = document.getElementById('audit-stat-excluded');
+    const countQuar = document.getElementById('audit-count-quarantine');
+    const countClean = document.getElementById('audit-count-clean');
+    const countExcl = document.getElementById('audit-count-excluded');
+    if (statClean) statClean.textContent = '0';
+    if (statQuar) statQuar.textContent = '0';
+    if (statExcl) statExcl.textContent = '0';
+    if (countClean) countClean.textContent = '0';
+    if (countQuar) countQuar.textContent = '0';
+    if (countExcl) countExcl.textContent = '0';
+
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:36px 16px;">
+      <div style="font-size:24px; margin-bottom:8px; opacity:0.6;">${ICONS.folder}</div>
+      <div style="font-size:13px; font-weight:600; color:var(--text-main); margin-bottom:4px;">Chưa chọn thư mục nào để kiểm toán</div>
+      <div style="font-size:11px; color:var(--text-muted);">Vui lòng chọn trạm host đang chia sẻ hoặc bấm <strong>"Chọn Thư Mục Máy..."</strong> bên trên rồi bấm <strong>"Áp Dụng &amp; Quét"</strong>.</div>
+    </td></tr>`;
+    return;
+  }
 
   fetch('/api/audit/workspace?path=' + encodeURIComponent(targetPath))
     .then(r => r.json())
@@ -2254,6 +2300,7 @@ function switchRole(role) {
     loadEnvVaultList();
   }
   if (role === 'ai') {
+    updateAuditWorkspaceDropdown();
     renderAuditWorkspaceFiles();
   }
   if (role === 'bench') {
@@ -2267,16 +2314,40 @@ function switchRole(role) {
   }
 }
 
+let _inspectSlugTimer = null;
 function checkHostPathHasSlug(path) {
   const note = document.getElementById('slug-detect-note');
   if (!note) return;
-  // If path is entered, simulate/check .slug detection
-  if (path.trim().length > 0) {
-    note.style.display = 'block';
-    note.innerHTML = `<span style="color:#0969da; display:inline-flex; align-items:center; gap:6px;">${ICONS.shield} <strong>Slug Detection:</strong> Thư mục có cấu hình <code>.slug/</code> sẽ tự động khôi phục tài khoản, quy tắc lọc (.slugignore) và lịch sử cách ly secret.</span>`;
-  } else {
+  const p = (path || '').trim();
+  if (!p) {
     note.style.display = 'none';
+    note.innerHTML = '';
+    return;
   }
+  if (_inspectSlugTimer) clearTimeout(_inspectSlugTimer);
+  _inspectSlugTimer = setTimeout(() => {
+    fetch('/api/fs/inspect-path?path=' + encodeURIComponent(p))
+      .then(r => r.json())
+      .then(data => {
+        note.style.display = 'block';
+        if (data.exists && data.has_slug) {
+          note.innerHTML = `<span style="color:#1a7f37; display:inline-flex; align-items:center; gap:6px;">${ICONS.shield} <strong>Slug Detection:</strong> Đã phát hiện cấu hình <code>.slug/</code> thực tế &mdash; Slug sẽ tự động khôi phục tài khoản, quy tắc lọc (.slugignore) và bảo toàn lịch sử cách ly.</span>`;
+        } else if (data.exists) {
+          note.innerHTML = `<span style="color:#0969da; display:inline-flex; align-items:center; gap:6px;">${ICONS.folder} <strong>Thư mục mới:</strong> Thư mục hợp lệ (chưa có <code>.slug/</code>) &mdash; Slug sẽ khởi tạo mới cấu hình bảo mật Post-Quantum.</span>`;
+        } else {
+          note.innerHTML = `<span style="color:#9a6700; display:inline-flex; align-items:center; gap:6px;">${ICONS.plus} <strong>Khởi tạo thư mục mới:</strong> Thư mục chưa có trên máy &mdash; Slug sẽ tự động tạo mới thư mục này khi bắt đầu chia sẻ.</span>`;
+        }
+        if (data.next_free_port) {
+          const portInp = document.getElementById('host-port');
+          if (portInp && (!portInp.value || portInp.value === '9443')) {
+            portInp.placeholder = String(data.next_free_port);
+          }
+        }
+      })
+      .catch(() => {
+        note.style.display = 'none';
+      });
+  }, 200);
 }
 
 function renderHostedWorkspaces() {
@@ -4377,7 +4448,7 @@ window.onload = function() {
       <div class="form-group" style="margin-bottom:0;">
         <label>Đường Dẫn File Cần Quét Sâu (File Path)</label>
         <div style="display:flex; gap:8px; align-items:stretch;">
-          <input type="text" id="audit-scan-path" class="input-text" value="src/main.cpp" placeholder="Nhập đường dẫn file hoặc bấm Chọn Tệp..." style="flex:1; height:36px;">
+          <input type="text" id="audit-scan-path" class="input-text" value="" placeholder="Bắt buộc: Bấm 'Chọn Tệp...' hoặc nhập đường dẫn file cần quét..." style="flex:1; height:36px;">
           <input type="file" id="audit-file-picker" style="display:none;" onchange="handleAuditFileSelected(this)">
           <button type="button" class="btn-sec btn-sm" onclick="document.getElementById('audit-file-picker').click()" style="height:36px; padding:0 14px; white-space:nowrap; flex-shrink:0; display:inline-flex; align-items:center; gap:6px; border-radius:var(--radius-sharp); cursor:pointer;" title="Duyệt và chọn tệp từ máy tính">
             ${ICONS.folder} <span>Chọn Tệp (Browse...)</span>
@@ -4419,15 +4490,14 @@ window.onload = function() {
           <label style="font-size:11px; font-weight:700; color:var(--text-main); margin:0; display:inline-flex; align-items:center; gap:6px;">
             ${ICONS.folder} <span>Trạm Host / Workspace Mục Tiêu:</span>
           </label>
-          <span style="font-size:11px; color:var(--text-muted);">Đang kiểm toán: <strong id="audit-current-target-label" style="color:#0969da;">Thư mục hiện tại (./)</strong></span>
+          <span style="font-size:11px; color:var(--text-muted);">Đang kiểm toán: <strong id="audit-current-target-label" style="color:#0969da;">Chưa chọn thư mục nào</strong></span>
         </div>
         <select id="audit-target-workspace" class="input-select" onchange="switchAuditWorkspace(this.value)" style="height:34px; box-sizing:border-box; width:100%;">
-          <option value="./" selected>Thư mục hiện tại (./)</option>
-          <option value="custom">-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>
+          <option value="custom" selected>-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>
         </select>
-        <div id="custom-workspace-path-sec" style="display:none; margin-top:8px;">
+        <div id="custom-workspace-path-sec" style="display:block; margin-top:8px;">
           <div style="display:flex; gap:8px; align-items:stretch;">
-            <input type="text" id="custom-audit-path" class="input-text" style="flex:1; height:34px; box-sizing:border-box; font-size:12px;" value="" placeholder="Nhập đường dẫn thư mục (ví dụ: marknote)...">
+            <input type="text" id="custom-audit-path" class="input-text" style="flex:1; height:34px; box-sizing:border-box; font-size:12px;" value="" placeholder="Bắt buộc: Bấm 'Chọn Thư Mục Máy...' hoặc nhập đường dẫn...">
             <input type="file" id="dir-picker-custom-audit-path" webkitdirectory directory style="display:none;" onchange="handleDirInputSelected(this, 'custom-audit-path')">
             <button type="button" class="btn-sec" onclick="chooseLocalSaveLocation('custom-audit-path')" style="height:34px !important; box-sizing:border-box; padding:0 14px; font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;">
               ${ICONS.folder} Chọn Thư Mục Máy...

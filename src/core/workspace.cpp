@@ -1,3 +1,4 @@
+#include "src/platform/platform.hpp"
 #include "src/core/workspace.hpp"
 #include "src/platform/fs.hpp"
 #include "src/platform/process.hpp"
@@ -9,6 +10,9 @@
 
 #if defined(SLUG_PLATFORM_POSIX)
 #include <signal.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 #endif
 
 namespace slug::core {
@@ -119,20 +123,82 @@ void WorkspaceManager::update_registry(const WorkspaceInfo& info, bool remove) {
     platform::PathUtils::write_text_file_atomic(registry_file_path(), j.dump(2));
 }
 
+uint16_t WorkspaceManager::find_available_port(uint16_t starting_port) {
+    if (starting_port < 1024) starting_port = 9443;
+    auto reg = load_registry();
+
+    for (uint32_t p = starting_port; p <= 65535; ++p) {
+        uint16_t candidate = static_cast<uint16_t>(p);
+        // 1. Check in-memory instances_
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (instances_.find(candidate) != instances_.end()) {
+                continue;
+            }
+        }
+        // 2. Check registry for active background process
+        bool in_use = false;
+        for (const auto& r : reg) {
+            if (r.port == candidate && r.pid > 0 && platform::ProcessUtils::is_process_alive(r.pid)) {
+                in_use = true;
+                break;
+            }
+        }
+        if (in_use) continue;
+
+        // 3. Test binding OS TCP socket
+#if defined(SLUG_PLATFORM_WINDOWS)
+        SOCKET sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) continue;
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(candidate);
+
+        int res = ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        ::closesocket(sock);
+        if (res == 0) {
+            return candidate;
+        }
+#else
+        int sock = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (sock < 0) continue;
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(candidate);
+
+        int res = ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        ::close(sock);
+        if (res == 0) {
+            return candidate;
+        }
+#endif
+    }
+    return starting_port;
+}
+
 bool WorkspaceManager::add_workspace(const fs::path& folder_path,
                                     uint16_t port,
                                     SuiteID suite,
                                     uint64_t ttl_seconds,
                                     bool enable_ai,
-                                    FilterMode filter_mode) {
+                                    FilterMode filter_mode,
+                                    uint16_t* actual_port) {
 
     std::error_code ec;
     fs::path canonical_path = fs::canonical(folder_path, ec);
     if (ec) {
         canonical_path = fs::absolute(folder_path).lexically_normal();
     }
+    // Automatically create directory if user specified a non-existent folder
+    if (!fs::exists(canonical_path)) {
+        fs::create_directories(canonical_path, ec);
+    }
     if (!fs::exists(canonical_path) || !fs::is_directory(canonical_path)) {
-        std::cerr << "Error: Target folder does not exist or is not a directory: " << folder_path << std::endl;
+        std::cerr << "Error: Target folder does not exist and could not be created: " << folder_path << std::endl;
         return false;
     }
 
@@ -153,15 +219,31 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    if (instances_.find(port) != instances_.end()) {
-        std::cerr << "Error: Workspace already running on port " << port << std::endl;
+
+    // Auto-search next available port if port is occupied
+    uint16_t target_port = (port >= 1024) ? port : 9443;
+    std::shared_ptr<net::ControlServer> ctrl;
+
+    int attempts = 100;
+    while (attempts-- > 0) {
+        if (instances_.find(target_port) == instances_.end()) {
+            ctrl = std::make_shared<net::ControlServer>(canonical_path, target_port, suite, ttl_seconds, enable_ai, filter_mode);
+            if (ctrl->start()) {
+                break; // Successfully bound and started!
+            }
+            ctrl.reset();
+        }
+        // Collision: search next available port
+        target_port = find_available_port(target_port + 1);
+    }
+
+    if (!ctrl) {
+        std::cerr << "Error: Failed to bind server to any available port starting from " << port << std::endl;
         return false;
     }
 
-    auto ctrl = std::make_shared<net::ControlServer>(canonical_path, port, suite, ttl_seconds, enable_ai, filter_mode);
-    if (!ctrl->start()) {
-        std::cerr << "Error: Failed to bind server to port " << port << std::endl;
-        return false;
+    if (actual_port) {
+        *actual_port = ctrl->port();
     }
 
     // Start embedded Web GUI multiplexed on the control port
