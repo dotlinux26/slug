@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/slug-logo.svg" alt="Slug Logo" width="360" />
+</p>
+
 # Slug: Secure, Ephemeral, Git-like Workspace Sharing & Synchronization
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -5,34 +9,37 @@
 [![Post-Quantum Cryptography](https://img.shields.io/badge/PQC-ML--KEM--768%20%7C%20ML--DSA--65-success.svg)](https://csrc.nist.gov/Projects/post-quantum-cryptography)
 [![Zero-Dependency Static Binary](https://img.shields.io/badge/Linux_Static-100%25_Portable-brightgreen.svg)](BUILD.md)
 
-```text
-   _____ _             
-  / ____| |            
- | (___ | |_   _  __ _ 
-  \___ \| | | | |/ _` |
-  ____) | | |_| | (_| |
- |_____/|_|\__,_|\__, |
-                  __/ |
-                 |___/ 
-  Slug: Secure, Ephemeral, Git-like Workspace Sharing & Synchronization
-  Version: 1.0.0 | Post-Quantum Cryptography & AI Guard (Apache-2.0)
-```
-
-> **Slug** là giải pháp chia sẻ và đồng bộ không gian làm việc (workspace) tức thì dành cho lập trình viên, kỹ sư bảo mật và chuyên gia DevOps. Kết hợp tốc độ chia sẻ một chạm tương tự AirDrop với nền tảng mật mã hậu lượng tử (Post-Quantum Cryptography), hệ thống phân quyền hạt nhân tự hủy và lá chắn bảo vệ bí mật khỏi các trợ lý AI.
+> **Slug: Lớp lá chắn bảo vệ bí mật chủ động trước các trợ lý AI & Nền tảng chia sẻ Workspace an toàn giữa người với người không lo thừa hoặc nhầm file bí mật.**  
+> *(Proactive Secret Shield Against AI Assistants & Safe Human-to-Human P2P Workspace Sharing)*
 
 ---
 
-## 1. Tổng Quan & Triết Lý Thiết Kế
+## 1. Tuyên Bố Giá Trị Cốt Lõi & Nhận Thức Thực Tế (No-Overclaim Philosophy)
 
-Trong kỷ nguyên phát triển phần mềm hiện đại và sự bùng nổ của các trợ lý AI (Cursor, Copilot, ChatGPT), việc chia sẻ nhanh mã nguồn, tệp thử nghiệm và artifact giữa các máy tính (laptop cá nhân, máy trạm lab, cloud server) thường vấp phải hai thái cực:
-1. **Thiếu an toàn:** Dùng `python3 -m http.server` gửi bản rõ qua Wi-Fi/LAN, mở cổng không bảo vệ, hoặc gửi file qua ứng dụng chat đám mây bên thứ ba.
-2. **Nặng nề và dư thừa:** Dùng Git commit/push làm ô nhiễm lịch sử repo, hoặc cấp quyền tài khoản SSH/rsync vĩnh viễn gây ra rủi ro tài khoản mồ côi.
+### 1.1. Lá Chắn Bảo Vệ Bí Mật Chủ Động Trước Các Trợ Lý AI (EnvShield)
+Trong kỷ nguyên lập trình hiện đại với các trợ lý AI (Cursor, Copilot, Claude Code, Antigravity, Devin, v.v.), AI liên tục lập chỉ mục và đọc các tệp trong workspace để nạp context vào mô hình ngôn ngữ lớn (LLM) gửi về cloud.
+- **Rủi ro thực tế:** Nếu tệp cấu hình chứa secret (`.env`, private key, API token) nằm dưới dạng bản rõ (plaintext) trên ổ đĩa, AI sẽ tự động đọc lén và đưa toàn bộ bí mật vào context window hoặc log chat mà lập trình viên không hề hay biết.
+- **Cách Slug giải quyết:**
+  - `slug env init`: Mã hóa file `.env` thành `.env.pqc` bằng mật mã hậu lượng tử và **xóa hoàn toàn bản rõ khỏi đĩa cứng**.
+  - Lập trình viên hướng dẫn AI thực thi dự án thông qua công cụ: `slug env run -- <command>`.
+  - Slug chỉ giải mã bí mật trong bộ nhớ RAM tạm thời của tiến trình con lúc chạy. **AI không bao giờ được tiếp xúc trực tiếp với tệp plaintext trên đĩa cứng.**
+- **Góc nhìn kỹ thuật thẳng thắn (Tránh Overclaim):**
+  - *Có đọc được không nếu cố tình?* **Có!** Khi ứng dụng chạy, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ RAM của process để code hoạt động. Nếu viết lệnh `printenv` hoặc cố tình dump memory thì vẫn đọc được.
+  - *Tại sao cách tiếp cận này lại hiệu quả?* Các trợ lý AI là tác nhân hỗ trợ (cooperative agents), chúng **không bao giờ chủ động tìm cách bypass hay khai thác bộ nhớ RAM** (trừ phi người dùng cố tình viết prompt hướng dẫn AI làm điều đó).
+  - *Giá trị thực chất:* Slug tạo ra một **rào cản ma sát chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ ổ đĩa, đảm bảo secret không bị nuốt chửng vào context window của LLM trong công việc hàng ngày.
 
-**Slug dung hòa trọn vẹn hai yếu tố trên:**
-- **Trải nghiệm tức thì ("Mì ăn liền như AirDrop"):** Kéo toàn bộ workspace về máy chỉ bằng đúng 1 lệnh duy nhất (`slug get`).
-- **Mã hóa hậu lượng tử mặc định (NIST FIPS 203 / 204):** Chống lại nguy cơ thu thập dữ liệu giải mã tương lai của máy tính lượng tử.
-- **Không để lại rác hệ thống (Zero Footprint):** Các phiên làm việc và mã xác thực TOTP tự hủy ngay sau khi dùng hoặc hết hạn theo thời gian sống (TTL).
-- **Lá chắn AI Secret Guard & EnvShield:** Chủ động ngăn chặn các extension AI đọc trộm khóa API và file `.env` trên đĩa cứng.
+### 1.2. Chia Sẻ An Toàn Giữa Người Với Người (Không Lo Thừa Rác, Không Lo Nhầm Bí Mật)
+Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc đối tác:
+- **Không lo chia sẻ thừa file rác:** Tự động nhận diện phân tầng `.gitignore` của dự án, loại bỏ sạch sẽ các thư mục build nặng nề (`node_modules/`, `target/`, `build/`, file tạm).
+- **Không lo chia sẻ nhầm file bí mật:** Hệ thống bảo vệ 4 tầng phân định minh bạch:
+  1. **Tầng 1 - Cấu trúc dự án (`.gitignore`):** Lọc bỏ rác build tự động.
+  2. **Tầng 2 - Chính sách Host (`.slug/rules.conf`):** Luật cấm tùy chỉnh theo tổ chức (`deny *.pem`, `deny *.key`, v.v.).
+  3. **Tầng 3 - Smart Regex & Shannon Entropy Guard:** Bộ lọc heuristic & entropy cục bộ siêu tốc, chặn private key, token có độ hỗn loạn cao mà không cần mạng.
+  4. **Tầng 4 - AI Semantic Guard (khi bật `-a / --ai` với LLM API):** Sử dụng LLM API phân tích ngữ cảnh code chuyên sâu để phát hiện credential ngụy trang hoặc secret khó phát hiện bằng regex.
+
+### 1.3. Kiến Trúc Engine Viewing Nội Bộ (Zero Remote HTTP)
+- Trên mạng dây LAN/Internet **chỉ tồn tại kết nối nhị phân PQC an toàn lượng tử** (cổng `9443`).
+- Giao diện Web chỉ là một **Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080`** của máy client. Mọi thao tác duyệt cây thư mục (`/drop`), tải file ZIP toàn thư mục (`/download-folder`), tải file đơn hay upload đều được tunnel mã hóa qua các frame PQC nhị phân. Không có bất kỳ byte HTTP lộ thiên nào trên mạng!
 
 ---
 

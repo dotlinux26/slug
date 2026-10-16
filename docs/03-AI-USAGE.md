@@ -94,8 +94,27 @@ Quyết định này được ghi nhận vĩnh viễn trong nhật ký kiểm to
 
 ---
 
-## 5. PQC EnvShield: Cách Ly Biến Môi Trường Trong Bộ Nhớ RAM
+## 5. PQC EnvShield: Lá Chắn Bảo Vệ Bí Mật Chủ Động Khỏi AI Assistants
 
-Bên cạnh việc quét file trên đĩa cứng, Slug cung cấp module **EnvShield** (`slug env`) nhằm giải quyết rủi ro các AI agent đọc trộm file `.env` khi chạy tiến trình:
-* File cấu hình được mã hóa tĩnh thành `.env.pqc`.
-* Khi lập trình viên chạy ứng dụng (`slug env run -- npm start`), Slug giải mã khóa trong RAM và inject trực tiếp vào môi trường tiến trình con qua biến môi trường OS mà **không bao giờ ghi file `.env` bản rõ xuống đĩa cứng**.
+### 5.1. Bối Cảnh Thực Tế & Rủi Ro Rò Rỉ Secret Vào Context Window
+Trong quy trình phát triển hiện đại với sự hỗ trợ của các trợ lý AI (Cursor, Copilot, Claude Code, Antigravity, Devin):
+* Các trợ lý AI liên tục quét cấu trúc thư mục và đọc nội dung file để nạp context vào LLM và gửi lên server cloud của nhà cung cấp AI.
+* Nếu tệp `.env` hoặc khóa bí mật nằm dưới dạng bản rõ (plaintext) trên ổ đĩa, AI sẽ tự động đọc lén (passive ingestion) và đưa toàn bộ secret vào context window, lịch sử chat hoặc log hệ thống bên thứ ba.
+
+### 5.2. Cách Thức Slug Phòng Vệ Chủ Động
+Slug cung cấp module **PQC EnvShield** (`slug env`):
+* **Mã hóa tĩnh (At-Rest Encryption):** Lệnh `slug env init` sử dụng mật mã hậu lượng tử mã hóa file `.env` thành `.env.pqc`, đồng thời xóa sạch bản rõ `.env` khỏi ổ đĩa.
+* **Thực thi qua công cụ (Tool-Assisted Execution):** Lập trình viên dạy trợ lý AI cách chạy ứng dụng thông qua công cụ:
+  ```bash
+  slug env run -- npm start
+  # hoặc
+  slug env run -- python3 main.py
+  ```
+* **Bơm biến môi trường trực tiếp trong RAM:** Slug giải mã bí mật duy nhất trong bộ nhớ RAM tạm thời của tiến trình con, nạp trực tiếp vào biến môi trường của hệ điều hành mà **tuyệt đối không ghi bất kỳ byte plaintext nào xuống đĩa cứng**. AI hoàn toàn không có cơ hội tiếp xúc trực tiếp với file secret bản rõ.
+
+### 5.3. Nhận Thức Thực Tế & Tránh Overclaim (No-Overclaim Principle)
+* **Secret có thể bị đọc khi ứng dụng đang chạy không?**
+  **Có!** Để phần mềm hoạt động, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ tiến trình (RAM). Một đoạn mã cố tình chạy `printenv` hoặc cố tình dump bộ nhớ tiến trình vẫn có thể lấy được giá trị đó.
+* **Vậy giá trị bảo vệ thực tế của Slug là gì?**
+  Các trợ lý AI là tác nhân hỗ trợ (cooperative assistants), chúng **không bao giờ chủ động tìm cách bypass hay viết mã exploit để trích xuất bộ nhớ RAM** (trừ phi lập trình viên cố tình viết prompt hướng dẫn AI làm điều đó).
+* **Kết luận:** Slug cung cấp một **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ ổ đĩa, đảm bảo secret không bao giờ bị rò rỉ vào context window của LLM trong quá trình làm việc hàng ngày. Đồng thời khi chia sẻ workspace giữa người với người, hệ thống lọc 4 tầng (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy Guard` -> `AI Semantic Guard`) đảm bảo không bao giờ bị chia sẻ thừa file rác hay gửi nhầm file bí mật.

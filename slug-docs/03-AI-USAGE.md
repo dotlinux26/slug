@@ -176,3 +176,21 @@ Bộ kiểm thử tối thiểu:
 ## 9. Định hướng
 
 Mục tiêu của Stateful AI Audit không phải “AI nhớ mãi file sạch”, mà là **gắn mỗi quyết định kiểm tra với đúng nội dung, phiên bản scanner và chính sách**. BLAKE3 giúp nhận diện nội dung trùng khớp; trạng thái có audit làm cho cảnh báo có thể giải thích, quét lại và quản lý được.
+
+---
+
+## 10. EnvShield: Lá Chắn Bảo Vệ Bí Mật Chủ Động Khỏi AI Assistants (Tránh Overclaim)
+
+### 10.1. Tuyên bố cốt lõi (Claim Word)
+> **Slug là lớp lá chắn bảo vệ bí mật chủ động trước các trợ lý AI, đồng thời là nền tảng chia sẻ workspace an toàn giữa người với người không lo thừa hoặc nhầm file bí mật.**
+
+### 10.2. Cơ chế bảo vệ trước các AI Coding Assistant
+1. **Mã hóa tĩnh:** Lệnh `slug env init` mã hóa `.env` thành `.env.pqc` bằng mật mã hậu lượng tử và xóa hoàn toàn bản rõ khỏi ổ đĩa.
+2. **Dạy AI dùng qua công cụ:** Lập trình viên hướng dẫn AI chạy dự án qua lệnh `slug env run -- <command>`.
+3. **Giải mã an toàn trong RAM:** Slug giải mã bí mật trong RAM của tiến trình con lúc runtime. AI không bao giờ được tiếp xúc trực tiếp với file plaintext trên ổ đĩa.
+
+### 10.3. Nhận thức thực tế (Không Overclaim)
+- **Biến môi trường có thể bị đọc khi đang chạy không?** Có, vì để ứng dụng chạy được thì các biến môi trường bắt buộc phải tồn tại trong bộ nhớ RAM của tiến trình. Một lệnh như `printenv` vẫn có thể in ra.
+- **Tại sao cơ chế này vẫn an toàn?** Các trợ lý AI (Copilot, Cursor, Claude Code) là tác nhân hỗ trợ, chúng **không tự ý tìm cách bypass hay khai thác bộ nhớ RAM** (trừ phi người dùng cố tình viết prompt hướng dẫn AI làm điều đó).
+- **Giá trị thực tế:** Slug tạo ra **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ đĩa vào context window hay chat log của LLM. Kết hợp với bộ lọc 4 tầng (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy` -> `AI Semantic Guard`), Slug giúp chia sẻ workspace giữa người với người an toàn tuyệt đối.
+
