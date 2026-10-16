@@ -1097,349 +1097,1487 @@ public:
         const std::vector<core::ConnectionInfo>& conns,
         uint16_t portal_port)
     {
-        std::ostringstream h;
-        h << "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-          << "<title>Slug - Client Portal</title><style>"
-          << ":root {"
-          << "  --bg-canvas: #f6f8fa; --bg-surface: #ffffff; --bg-surface-hover: #f3f4f6;"
-          << "  --border-primary: #d0d7de; --border-focus: #0969da; --radius-sharp: 2px;"
-          << "  --text-main: #1f2328; --text-muted: #656d76; --text-accent: #0969da;"
-          << "  --success: #1a7f37; --success-bg: #dafbe1; --warning: #9a6700; --warning-bg: #fff8c5;"
-          << "  --danger: #cf222e; --danger-bg: #ffebe9; --pqc: #8250df; --pqc-bg: #fbefff;"
-          << "}"
-          << "* { box-sizing: border-box; }"
-          << "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg-canvas); color: var(--text-main); margin: 0; padding: 24px; line-height: 1.5; }"
-          << ".container { max-width: 960px; margin: 0 auto; background: var(--bg-surface); border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 24px; box-shadow: 0 1px 3px rgba(31,35,40,0.08); }"
-          << ".top-bar { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-primary); padding-bottom: 16px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }"
-          << "h1 { color: var(--text-main); font-size: 18px; margin: 0; display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-weight: 600; }"
-          << ".badge { padding: 2px 7px; border-radius: var(--radius-sharp); font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.3px; }"
-          << ".badge-pqc { background: var(--pqc-bg); color: var(--pqc); border: 1px solid rgba(130,80,223,0.3); }"
-          << ".card { background: #ffffff; border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 18px; margin-bottom: 18px; }"
-          << ".card h3 { margin-top: 0; font-size: 14px; color: var(--text-main); border-bottom: 1px solid var(--border-primary); padding-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-family: 'JetBrains Mono', monospace; font-weight: 600; }"
-          << ".tab-container { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border-primary); }"
-          << ".role-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid var(--border-primary); padding-bottom: 8px; }"
-          << ".role-tab-btn { background: transparent; border: 1px solid transparent; padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: var(--radius-sharp); color: var(--text-muted); font-family: 'JetBrains Mono', monospace; transition: all 0.15s ease; }"
-          << ".role-tab-btn:hover { background: var(--bg-surface-hover); color: var(--text-main); }"
-          << ".role-tab-btn.active { background: #0969da; color: #ffffff; border-color: #0969da; }"
-          << ".host-card { background: #ffffff; border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 16px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(31,35,40,0.06); transition: border-color 0.15s ease; }"
-          << ".host-card:hover { border-color: #54aeff; }"
-          << ".host-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 1px solid var(--border-primary); margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }"
-          << ".host-title { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }"
-          << ".host-body { display: grid; grid-template-columns: 1.2fr 1.3fr 2fr; gap: 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }"
-          << "@media (max-width: 900px) { .host-body { grid-template-columns: 1fr; } }"
-          << ".host-box { background: #f6f8fa; border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }"
-          << ".host-box-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }"
-          << ".host-otp-code { font-size: 26px; font-weight: 900; color: #0969da; letter-spacing: 3px; margin: 2px 0 4px 0; font-family: 'JetBrains Mono', monospace; }"
-          << ".progress-bar { height: 4px; background: #e1e4e8; border-radius: 2px; overflow: hidden; margin: 6px 0; }"
-          << ".progress-fill { height: 100%; background: #0969da; transition: width 1s linear; }"
-          << ".admin-drawer { background: #fafbfc; border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 14px; margin-top: 14px; display: none; }"
-          << ".admin-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-primary); padding-bottom: 8px; margin-bottom: 12px; }"
-          << ".admin-tab-btn { background: transparent; border: 1px solid transparent; padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; border-radius: 2px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }"
-          << ".admin-tab-btn.active { background: #0969da; color: #fff; }"
-          << ".clickable-row { cursor: pointer; transition: background-color 0.12s ease; user-select: none; }"
-          << ".clickable-row:hover { background-color: #f0f6fc !important; }"
-          << ".tab-container { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border-primary); }"
-          << ".tab-btn { background: transparent; border: none; border-bottom: 2px solid transparent; padding: 8px 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer; color: var(--text-muted); font-weight: 500; }"
-          << ".tab-btn.active { color: var(--text-accent); border-bottom-color: var(--text-accent); font-weight: 600; }"
-          << ".form-grid { display: grid; grid-template-columns: 2fr 1fr 2fr; gap: 12px; margin-bottom: 14px; }"
-          << ".form-group { margin-bottom: 12px; }"
-          << ".form-group label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-family: 'JetBrains Mono', monospace; font-weight: 500; }"
-          << ".input-text, .input-select { background: #ffffff; border: 1px solid var(--border-primary); color: var(--text-main); padding: 7px 10px; border-radius: var(--radius-sharp); font-size: 12px; width: 100%; box-sizing: border-box; font-family: 'JetBrains Mono', monospace; }"
-          << ".input-text:focus, .input-select:focus { border-color: var(--border-focus); outline: 2px solid var(--border-focus); outline-offset: -1px; }"
-          << ".btn { background: #0969da; color: #ffffff; padding: 7px 14px; border-radius: var(--radius-sharp); text-decoration: none; font-size: 12px; font-weight: 500; border: 1px solid #0969da; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; }"
-          << ".btn:hover { background: #0856b3; border-color: #0856b3; }"
-          << ".btn-sec { background: #ffffff; border: 1px solid var(--border-primary); color: var(--text-main); padding: 5px 11px; border-radius: var(--radius-sharp); text-decoration: none; font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; cursor: pointer; }"
-          << ".btn-sec:hover { background: var(--bg-surface-hover); border-color: #afb8c1; }"
-          << ".btn-danger { background: #ffffff; color: var(--danger); border: 1px solid var(--danger); padding: 4px 8px; border-radius: var(--radius-sharp); font-size: 11px; cursor: pointer; font-family: 'JetBrains Mono', monospace; }"
-          << ".btn-danger:hover { background: var(--danger); color: #fff; }"
-          << ".btn-sm { padding: 4px 8px; font-size: 11px; }"
-          << ".role-tag { background: #0969da; color: #fff; padding: 1px 5px; border-radius: var(--radius-sharp); font-size: 10px; font-weight: bold; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }"
-          << "table { width: 100%; border-collapse: collapse; margin-top: 4px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }"
-          << "th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-primary); vertical-align: middle; }"
-          << "th { background: #f6f8fa; color: var(--text-muted); font-size: 11px; text-transform: uppercase; }"
-          << ".footer { margin-top: 24px; font-size: 11px; color: var(--text-muted); text-align: center; border-top: 1px solid var(--border-primary); padding-top: 14px; font-family: 'JetBrains Mono', monospace; }"
-          << "</style><script>"
-          << "let currentRole = 'client';"
-          << "let hostedWorkspaces = [{"
-          << "  id: 'host-9443', path: './', port: 9443, suiteName: 'Mức 1: Classical Fast (SHA-256 / X25519)',"
-          << "  filterName: '🛡️ Protected (Lọc rác + Chặn secret)', otp: '48291048', ttl: 30, maxTtl: 30, role: 'rw',"
-          << "  peers: [{ name: 'Lab-PC-03', ip: '192.168.1.105', transferred: '14.2 MB' }],"
-          << "  auditStats: { clean: 24, quarantined: 1, excluded: 842 },"
-          << "  logs: ['Khởi động chia sẻ workspace ./ trên cổng 9443', 'Peer 192.168.1.105 tải README.md (14.7 KiB)']"
-          << "}];"
-          << "function switchRole(role) {"
-          << "  currentRole = role;"
-          << "  document.querySelectorAll('.role-tab-btn').forEach(b => b.classList.remove('active'));"
-          << "  if (role === 'client') {"
-          << "    document.getElementById('tab-btn-client').classList.add('active');"
-          << "    document.getElementById('sec-client').style.display = 'block';"
-          << "    document.getElementById('sec-host').style.display = 'none';"
-          << "  } else {"
-          << "    document.getElementById('tab-btn-host').classList.add('active');"
-          << "    document.getElementById('sec-client').style.display = 'none';"
-          << "    document.getElementById('sec-host').style.display = 'block';"
-          << "    renderHostedWorkspaces();"
-          << "  }"
-          << "}"
-          << "function switchTab(t) {"
-          << "  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));"
-          << "  if (t === 'otp') {"
-          << "    document.getElementById('tab-btn-otp').classList.add('active');"
-          << "    document.getElementById('sec-otp').style.display = 'block';"
-          << "    document.getElementById('sec-user').style.display = 'none';"
-          << "    document.getElementById('auth-mode').value = 'otp';"
-          << "  } else {"
-          << "    document.getElementById('tab-btn-user').classList.add('active');"
-          << "    document.getElementById('sec-otp').style.display = 'none';"
-          << "    document.getElementById('sec-user').style.display = 'block';"
-          << "    document.getElementById('auth-mode').value = 'user';"
-          << "  }"
-          << "}"
-          << "function submitConnect(e) {"
-          << "  e.preventDefault();"
-          << "  const msgBox = document.getElementById('conn-msg');"
-          << "  const btn = document.getElementById('btn-submit');"
-          << "  msgBox.innerHTML = '<span style=\"color:#0969da;\">Negotiating Post-Quantum Handshake &amp; Authenticating...</span>';"
-          << "  btn.disabled = true;"
-          << "  const payload = {"
-          << "    host: document.getElementById('inp-host').value.trim(),"
-          << "    port: parseInt(document.getElementById('inp-port').value),"
-          << "    suite: parseInt(document.getElementById('inp-suite').value),"
-          << "    auth_mode: document.getElementById('auth-mode').value,"
-          << "    otp: document.getElementById('inp-otp').value.trim(),"
-          << "    username: document.getElementById('inp-user').value.trim(),"
-          << "    password: document.getElementById('inp-pass').value"
-          << "  };"
-          << "  fetch('/api/portal/connect', {"
-          << "    method: 'POST', headers: { 'Content-Type': 'application/json' },"
-          << "    body: JSON.stringify(payload)"
-          << "  }).then(r => r.json()).then(res => {"
-          << "    btn.disabled = false;"
-          << "    if (res.status === 'ok') {"
-          << "      msgBox.innerHTML = '<span style=\"color:#1a7f37; font-weight:bold;\">Handshake Verified! Connecting to Web Dropbox...</span>';"
-          << "      setTimeout(() => { window.location.href = res.url || '/drop'; }, 400);"
-          << "    } else {"
-          << "      msgBox.innerHTML = '<span style=\"color:#cf222e; font-weight:bold;\">Error: ' + (res.message || 'Connection failed') + '</span>';"
-          << "    }"
-          << "  }).catch(err => {"
-          << "    btn.disabled = false;"
-          << "    msgBox.innerHTML = '<span style=\"color:#cf222e;\">Network error connecting to local proxy bridge</span>';"
-          << "  });"
-          << "}"
-          << "function renderHostedWorkspaces() {"
-          << "  const container = document.getElementById('hosted-workspaces-list');"
-          << "  const countEl = document.getElementById('hosted-count');"
-          << "  if (countEl) countEl.textContent = hostedWorkspaces.length;"
-          << "  if (!container) return;"
-          << "  if (hostedWorkspaces.length === 0) {"
-          << "    container.innerHTML = '<div style=\"text-align:center; padding:24px; color:var(--text-muted); font-size:12px;\">Chưa có thư mục nào đang chia sẻ.</div>';"
-          << "    return;"
-          << "  }"
-          << "  container.innerHTML = hostedWorkspaces.map(w => {"
-          << "    const percent = Math.max(0, Math.min(100, (w.ttl / (w.maxTtl || 30)) * 100));"
-          << "    return '<div class=\"host-card\">' +"
-          << "      '<div class=\"host-header\">' +"
-          << "        '<div class=\"host-title\"><span>📁 ' + w.path + '</span><span class=\"badge badge-live\">🟢 ĐANG PHÁT</span><span class=\"badge\" style=\"background:#eaeef2; color:#1f2328;\">Cổng: ' + w.port + '</span></div>' +"
-          << "        '<div style=\"display:flex; gap:6px;\"><button class=\"btn btn-sm\" onclick=\"window.location.href=\\'/drop\\'\">📂 Duyệt File</button><button class=\"btn-sec btn-sm\" onclick=\"toggleAdminPanel(\\'' + w.id + '\\')\">⚙️ Quản Trị (Admin)</button><button class=\"btn-danger btn-sm\" onclick=\"stopHost(\\'' + w.id + '\\')\">🛑 Dừng Host</button></div>' +"
-          << "      '</div>' +"
-          << "      '<div class=\"host-body\">' +"
-          << "        '<div class=\"host-box\">' +"
-          << "          '<div><div class=\"host-box-title\">🔑 Mã OTP (Sinh Động)</div><div class=\"host-otp-code\">' + w.otp + '</div>' +"
-          << "          '<div style=\"font-size:11px; color:var(--text-muted); display:flex; justify-content:space-between;\"><span>⏳ Tự đổi sau: <strong>' + w.ttl + '</strong>s</span><span>⏱️ TTL: 30s</span></div>' +"
-          << "          '<div class=\"progress-bar\"><div class=\"progress-fill\" style=\"width:' + percent + '%\"></div></div></div>' +"
-          << "          '<div style=\"display:flex; gap:6px; margin-top:6px;\"><button class=\"btn-sec btn-sm\" onclick=\"navigator.clipboard.writeText(\\'' + w.otp + '\\'); alert(\\'Đã copy OTP!\\');\">📋 Copy OTP</button><button class=\"btn-sec btn-sm\" onclick=\"rotateOtp(\\'' + w.id + '\\')\">🔄 Sinh Mã</button></div>' +"
-          << "        '</div>' +"
-          << "        '<div class=\"host-box\">' +"
-          << "          '<div><div class=\"host-box-title\">🛡️ Cấp Độ &amp; Lọc</div><div style=\"font-weight:600;\">' + w.suiteName + '</div><div style=\"font-size:11px; color:var(--text-muted);\">' + w.filterName + '</div></div>' +"
-          << "          '<div style=\"font-size:11px; color:#1a7f37; font-weight:600;\">● ' + (w.peers.length) + ' peer đang kết nối | Quyền: ' + w.role.toUpperCase() + '</div>' +"
-          << "        '</div>' +"
-          << "        '<div class=\"host-box\">' +"
-          << "          '<div><div class=\"host-box-title\">📤 Lệnh Nhận File (LAN)</div><div style=\"background:#fff; border:1px solid #d0d7de; padding:6px; font-size:11px;\"><code>slug get 127.0.0.1:' + w.port + '?otp=' + w.otp + '</code></div></div>' +"
-          << "          '<div style=\"margin-top:6px;\"><button class=\"btn btn-sm\" onclick=\"navigator.clipboard.writeText(\\'slug get 127.0.0.1:' + w.port + '?otp=' + w.otp + '\\'); alert(\\'Đã sao chép lệnh!\\');\">📋 Sao Chép Lệnh</button></div>' +"
-          << "        '</div>' +"
-          << "      '</div>' +"
-          << "      '<div class=\"admin-drawer\" id=\"admin-' + w.id + '\">' +"
-          << "        <div style=\"display:flex; gap:12px; align-items:center;\"><strong>Phân Quyền (ACL):</strong> <select class=\"input-select\" style=\"max-width:220px;\" onchange=\"updateHostRole(\\'' + w.id + '\\', this.value)\"><option value=\"rw\">[rw] Đọc &amp; Ghi</option><option value=\"r\">[r] Chỉ Đọc</option><option value=\"w\">[w] Hộp Thư Nộp Bài</option></select><span style=\"color:#1a7f37; font-size:11px;\">Đã lưu.</span></div>' +"
-          << "      '</div>' +"
-          << "    '</div>';"
-          << "  }).join('');"
-          << "}"
-          << "function toggleAdminPanel(id) {"
-          << "  const el = document.getElementById('admin-' + id);"
-          << "  if (el) el.style.display = (el.style.display === 'block') ? 'none' : 'block';"
-          << "}"
-          << "function updateHostRole(id, r) {"
-          << "  const h = hostedWorkspaces.find(x => x.id === id);"
-          << "  if (h) { h.role = r; renderHostedWorkspaces(); }"
-          << "}"
-          << "function rotateOtp(id) {"
-          << "  const h = hostedWorkspaces.find(x => x.id === id);"
-          << "  if (h) { h.otp = Math.floor(10000000 + Math.random() * 90000000).toString(); h.ttl = 30; renderHostedWorkspaces(); }"
-          << "}"
-          << "function startHosting(e) {"
-          << "  e.preventDefault();"
-          << "  const path = document.getElementById('host-path').value.trim() || './';"
-          << "  const portInp = document.getElementById('host-port').value.trim();"
-          << "  const port = portInp ? parseInt(portInp) : (9443 + hostedWorkspaces.length);"
-          << "  const sSelect = document.getElementById('host-suite');"
-          << "  const fSelect = document.getElementById('host-filter');"
-          << "  hostedWorkspaces.unshift({"
-          << "    id: 'host-' + port, path: path, port: port,"
-          << "    suiteName: sSelect.options[sSelect.selectedIndex].text,"
-          << "    filterName: fSelect.options[fSelect.selectedIndex].text,"
-          << "    otp: Math.floor(10000000 + Math.random() * 90000000).toString(),"
-          << "    ttl: 30, maxTtl: 30, role: 'rw', peers: [],"
-          << "    auditStats: { clean: 18, quarantined: 1, excluded: 120 }, logs: []"
-          << "  });"
-          << "  renderHostedWorkspaces();"
-          << "  alert('Đã bật chia sẻ workspace ' + path + ' trên cổng ' + port + '!');"
-          << "}"
-          << "function stopHost(id) {"
-          << "  if (confirm('Dừng host thư mục này?')) {"
-          << "    hostedWorkspaces = hostedWorkspaces.filter(x => x.id !== id);"
-          << "    renderHostedWorkspaces();"
-          << "  }"
-          << "}"
-          << "setInterval(() => {"
-          << "  if (hostedWorkspaces.length === 0) return;"
-          << "  hostedWorkspaces.forEach(h => {"
-          << "    if (h.ttl > 1) h.ttl--; else { h.otp = Math.floor(10000000 + Math.random() * 90000000).toString(); h.ttl = 30; }"
-          << "  });"
-          << "  if (currentRole === 'host') renderHostedWorkspaces();"
-          << "}, 1000);"
-          << "function openSaved(id) {"
-          << "  const msgBox = document.getElementById('conn-msg');"
-          << "  msgBox.innerHTML = '<span style=\"color:#0969da;\">Connecting to saved workspace ' + id + '...</span>';"
-          << "  fetch('/api/portal/open', {"
-          << "    method: 'POST',"
-          << "    headers: { 'Content-Type': 'application/json' },"
-          << "    body: JSON.stringify({ id: id })"
-          << "  }).then(r => r.json()).then(res => {"
-          << "    if (res.status === 'ok') window.location.href = res.redirect || '/drop';"
-          << "    else alert(res.message || 'Failed to open saved connection');"
-          << "  }).catch(e => alert('Failed to connect'));"
-          << "}"
-          << "function removeSaved(id) {"
-          << "  if (!confirm('Remove saved connection ' + id + '?')) return;"
-          << "  fetch('/api/portal/remove', {"
-          << "    method: 'POST',"
-          << "    headers: { 'Content-Type': 'application/json' },"
-          << "    body: JSON.stringify({ id: id })"
-          << "  }).then(r => r.json()).then(() => window.location.reload());"
-          << "}"
-          << "function pruneDead() {"
-          << "  fetch('/api/portal/prune', { method: 'POST' })"
-          << "    .then(r => r.json()).then(res => {"
-          << "      alert('Đã dọn dẹp ' + (res.total_pruned || 0) + ' kết nối lỗi / hết hạn!');"
-          << "      window.location.reload();"
-          << "    }).catch(e => alert('Lỗi khi dọn dẹp'));"
-          << "}"
-          << "function quitEngine() {"
-          << "  if (!confirm('Dừng và thoát hoàn toàn Slug Engine?')) return;"
-          << "  fetch('/api/portal/quit', { method: 'POST' })"
-          << "    .finally(() => {"
-          << "      document.body.innerHTML = '<div style=\"font-family:monospace; text-align:center; padding:50px;\"><h2>Slug Engine đã dừng an toàn.</h2><p>Bạn có thể đóng tab trình duyệt này.</p></div>';"
-          << "    });"
-          << "}"
-          << "</script></head><body><div class='container'>"
-          << "<div class='top-bar'>"
-          << "<h1><span>Slug Workspace Manager</span> <span class='badge badge-pqc'>Mật mã Mức 1 (Tốc độ cao)</span></h1>"
-          << "<div style='display:flex; align-items:center; gap:12px;'>"
-          << "  <div style='font-size:12px; color:var(--text-muted); font-family:\"JetBrains Mono\", monospace;'>Local Bridge: <strong>127.0.0.1:" << portal_port << "</strong></div>"
-          << "  <button class='btn-danger btn-sm' onclick='quitEngine()'>🛑 Thoát Slug Engine</button>"
-          << "</div>"
-          << "</div>"
-          << "<div class='role-tabs'>"
-          << "  <button type='button' id='tab-btn-client' class='role-tab-btn active' onclick='switchRole(\"client\")'>📥 Nhận Dữ Liệu (Client Mode)</button>"
-          << "  <button type='button' id='tab-btn-host' class='role-tab-btn' onclick='switchRole(\"host\")'>📤 Chia Sẻ Dữ Liệu (Host Mode)</button>"
-          << "</div>"
-          << "<!-- SECTION CLIENT -->"
-          << "<div id='sec-client'>"
-          << "<div class='card'>"
-          << "<h3><span>🚀 Quick Connect to Remote Workspace</span></h3>"
-          << "<form onsubmit='submitConnect(event)'>"
-          << "<input type='hidden' id='auth-mode' value='otp'>"
-          << "<div class='form-grid'>"
-          << "<div class='form-group'><label>Remote Host / IP</label><input type='text' id='inp-host' class='input-text' placeholder='e.g. 192.168.1.178 or 127.0.0.1' value='127.0.0.1' required></div>"
-          << "<div class='form-group'><label>Port</label><input type='number' id='inp-port' class='input-text' value='9443' required></div>"
-          << "<div class='form-group'><label>Security Suite</label>"
-          << "<select id='inp-suite' class='input-select'>"
-          << "<option value='1' selected>Mức 1: Classical Fast (SHA-256 + X25519) - Mặc định nhanh</option>"
-          << "<option value='2'>Mức 2: Modern (BLAKE3 + X25519)</option>"
-          << "<option value='3'>Mức 3: Pure PQC (ML-KEM-768 + ML-DSA-65) - An toàn lượng tử</option>"
-          << "</select></div></div>"
-          << "<div class='tab-container'>"
-          << "<button type='button' id='tab-btn-otp' class='tab-btn active' onclick='switchTab(\"otp\")'>🔑 Single-Use OTP Token</button>"
-          << "<button type='button' id='tab-btn-user' class='tab-btn' onclick='switchTab(\"user\")'>👤 Username &amp; Password</button>"
-          << "</div>"
-          << "<div id='sec-otp'>"
-          << "<div class='form-group'><label>One-Time TOTP Code (8-digit)</label><input type='text' id='inp-otp' class='input-text' placeholder='e.g. 12822565' autocomplete='off'></div>"
-          << "</div>"
-          << "<div id='sec-user' style='display:none;'>"
-          << "<div style='display:grid; grid-template-columns:1fr 1fr; gap:12px;'>"
-          << "<div class='form-group'><label>Username</label><input type='text' id='inp-user' class='input-text' placeholder='Account username' autocomplete='username'></div>"
-          << "<div class='form-group'><label>Password</label><input type='password' id='inp-pass' class='input-text' placeholder='Account password' autocomplete='current-password'></div>"
-          << "</div></div>"
-          << "<div style='display:flex; justify-content:space-between; align-items:center; margin-top:14px;'>"
-          << "<button type='submit' id='btn-submit' class='btn' style='padding:8px 18px; font-size:13px;'>🚀 Connect to Workspace</button>"
-          << "<span style='font-size:11px; color:var(--text-muted); font-family:\"JetBrains Mono\", monospace;'>Wire Protocol: 100% Encrypted</span>"
-          << "</div>"
-          << "<div id='conn-msg'></div>"
-          << "</form></div>"
-          << "<div class='card'>"
-          << "<h3>"
-          << "  <span>📂 Saved Remote Workspaces (" << conns.size() << ")</span>"
-          << "  <button class='btn-danger btn-sm' onclick='pruneDead()'>🧹 Dọn Dẹp Kết Nối Lỗi / Chết</button>"
-          << "</h3>";
+        std::string html = R"raw(<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slug - Trạm Điều Khiển Workspace Trực Tiếp Giữa Các Máy Tính</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-canvas: #f6f8fa;
+  --bg-surface: #ffffff;
+  --bg-surface-hover: #f3f4f6;
+  --border-primary: #d0d7de;
+  --border-focus: #0969da;
+  --radius-sharp: 4px;
+  --text-main: #1f2328;
+  --text-muted: #656d76;
+  --text-accent: #0969da;
+  --success: #1a7f37;
+  --success-bg: #dafbe1;
+  --warning: #9a6700;
+  --warning-bg: #fff8c5;
+  --danger: #cf222e;
+  --danger-bg: #ffebe9;
+  --pqc: #8250df;
+  --pqc-bg: #fbefff;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg-canvas);
+  color: var(--text-main);
+  margin: 0;
+  padding: 24px;
+  line-height: 1.5;
+}
+code, pre, .font-mono {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, Menlo, Monaco, monospace;
+}
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.logo-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo-icon {
+  background: #1f2328;
+  color: #ffffff;
+  font-weight: 900;
+  padding: 6px 12px;
+  border-radius: var(--radius-sharp);
+  letter-spacing: 1px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.role-tabs {
+  display: flex;
+  gap: 4px;
+  background: #eaeef2;
+  padding: 4px;
+  border-radius: var(--radius-sharp);
+  margin-bottom: 20px;
+  border: 1px solid var(--border-primary);
+}
+.role-tab-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: var(--radius-sharp);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+  font-family: 'Inter', sans-serif;
+}
+.role-tab-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-main);
+}
+.role-tab-btn.active {
+  background: #0969da;
+  color: #ffffff;
+  border-color: #0969da;
+}
+.badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-sharp);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-live {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid rgba(26,127,55,0.3);
+}
+.badge-offline {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid rgba(207,34,46,0.3);
+}
+.badge-pqc {
+  background: var(--pqc-bg);
+  color: var(--pqc);
+  border: 1px solid rgba(130,80,223,0.3);
+}
+.card {
+  background: #ffffff;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sharp);
+  padding: 18px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(31,35,40,0.04);
+}
+.card h3 {
+  margin-top: 0;
+  font-size: 14px;
+  color: var(--text-main);
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 2fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+@media (max-width: 768px) {
+  .form-grid { grid-template-columns: 1fr; }
+}
+.form-group { margin-bottom: 12px; }
+.form-group label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+.input-text, .input-select {
+  background: #ffffff;
+  border: 1px solid var(--border-primary);
+  color: var(--text-main);
+  padding: 8px 12px;
+  border-radius: var(--radius-sharp);
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: 'JetBrains Mono', monospace;
+  height: 38px;
+}
+.input-text:focus, .input-select:focus {
+  border-color: var(--border-focus);
+  outline: 2px solid var(--border-focus);
+  outline-offset: -1px;
+}
 
-        if (conns.empty()) {
-            h << "<div style='text-align:center; color:var(--text-muted); padding:24px; font-size:12px; font-family:\"JetBrains Mono\", monospace;'>"
-              << "No saved connections yet. Enter the host IP and OTP in the form above to connect immediately."
-              << "</div>";
-        } else {
-            h << "<table><thead><tr><th>ID</th><th>Workspace</th><th>Endpoint</th><th>Role</th><th>Expires</th><th>Actions</th></tr></thead><tbody>";
-            uint64_t now = core::Utils::current_timestamp();
-            for (const auto& c : conns) {
-                std::string exp_str = (c.expires_at == 0) ? "Permanent (∞)"
-                                      : (c.expires_at > now ? core::Utils::format_duration(c.expires_at - now) : "<span style='color:var(--danger);'>Expired</span>");
-                h << "<tr class='clickable-row' onclick='openSaved(\"" << c.id << "\")'><td><strong>" << c.id << "</strong></td>"
-                  << "<td><code>" << c.workspace << "</code></td>"
-                  << "<td><code>" << c.host << ":" << c.port << "</code></td>"
-                  << "<td><span class='role-tag'>" << core::role_to_string(c.role) << "</span></td>"
-                  << "<td>" << exp_str << "</td>"
-                  << "<td onclick='event.stopPropagation()'><button class='btn btn-sm' onclick='openSaved(\"" << c.id << "\")'>🚀 Open</button> "
-                  << "<button class='btn-danger btn-sm' onclick='removeSaved(\"" << c.id << "\")'>Remove</button></td></tr>";
-            }
-            h << "</tbody></table>";
+/* Button Unified Styles */
+.btn, .btn-sec, .btn-danger {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sharp);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  gap: 6px;
+  text-decoration: none;
+  transition: all 0.1s ease;
+  box-sizing: border-box;
+  height: 38px;
+}
+.btn {
+  background: #0969da;
+  color: #ffffff;
+  border: 1px solid #0969da;
+  padding: 0 16px;
+}
+.btn:hover { background: #0858b8; border-color: #0858b8; }
+.btn-sec {
+  background: #ffffff;
+  color: var(--text-main);
+  border: 1px solid var(--border-primary);
+  padding: 0 14px;
+}
+.btn-sec:hover { background: var(--bg-surface-hover); }
+.btn-danger {
+  background: #ffffff;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  padding: 0 14px;
+}
+.btn-danger:hover { background: var(--danger); color: #fff; }
+
+.btn-sm {
+  padding: 0 10px;
+  font-size: 11px;
+  height: 28px;
+}
+.btn-xs {
+  padding: 0 8px;
+  font-size: 10px;
+  height: 24px;
+}
+
+/* Table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+th, td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-primary);
+  vertical-align: middle;
+}
+th {
+  background: #f6f8fa;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.clickable-row {
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+  user-select: none;
+}
+.clickable-row:hover {
+  background-color: #f0f6fc !important;
+}
+.role-tag {
+  background: #0969da;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: var(--radius-sharp);
+  font-size: 10px;
+  font-weight: bold;
+}
+
+/* Host Card Styling */
+.host-card {
+  background: #ffffff;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sharp);
+  padding: 16px;
+  margin-bottom: 18px;
+  box-shadow: 0 1px 3px rgba(31,35,40,0.06);
+  transition: border-color 0.15s ease;
+}
+.host-card:hover { border-color: #54aeff; }
+.host-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.host-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 0;
+  max-width: 60%;
+}
+.path-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+  display: inline-block;
+  vertical-align: middle;
+}
+.host-body {
+  display: grid;
+  grid-template-columns: 1.6fr 1.1fr 1.3fr;
+  gap: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+@media (max-width: 960px) {
+  .host-body { grid-template-columns: 1fr; }
+  .host-title { max-width: 100%; }
+}
+.host-box {
+  background: #f6f8fa;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sharp);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.host-box-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 3-Column OTP Grid inside Box 1 */
+.otp-3col-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+@media (max-width: 768px) {
+  .otp-3col-grid { grid-template-columns: 1fr; }
+}
+.otp-col-card {
+  background: #ffffff;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sharp);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.otp-col-role {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.otp-col-code {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: #1f2328;
+  font-family: 'JetBrains Mono', monospace;
+  margin: 4px 0 6px 0;
+}
+.otp-col-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progress-bar {
+  height: 4px;
+  background: #e1e4e8;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.progress-fill {
+  height: 100%;
+  background: #0969da;
+  transition: width 1s linear;
+}
+
+/* Admin Console Drawer */
+.admin-drawer {
+  display: none;
+  border-top: 1px solid var(--border-primary);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+.admin-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.admin-tab-btn {
+  background: #f6f8fa;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sharp);
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+}
+.admin-tab-btn.active {
+  background: #0969da;
+  color: #ffffff;
+  border-color: #0969da;
+}
+
+/* Modal Popup */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-box {
+  background: #ffffff;
+  border-radius: var(--radius-sharp);
+  padding: 24px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  border: 1px solid var(--border-primary);
+}
+
+.footer {
+  text-align: center;
+  padding: 24px 0 12px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  border-top: 1px solid var(--border-primary);
+  margin-top: 24px;
+}
+.live-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #1a7f37;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(26,127,55,0.7);
+  animation: pulse 1.8s infinite;
+}
+@keyframes pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(26,127,55,0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(26,127,55,0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(26,127,55,0); }
+}
+</style>
+<script>
+// Inline SVG Vector Icons (100% Offline, Crisp, No Font/Network Dependencies)
+const ICONS = {
+  terminal: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>`,
+  qr: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>`,
+  copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
+  folder: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>`,
+  shield: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`,
+  refresh: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`,
+  user: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`,
+  users: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+  settings: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`,
+  stop: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><circle cx="12" cy="12" r="10"></circle><rect x="9" y="9" width="6" height="6"></rect></svg>`,
+  lock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>`,
+  unlock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>`,
+  download: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`,
+  upload: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>`,
+  check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
+  edit: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>`,
+  trash: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
+  plus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`
+};
+
+let currentRole = 'client';
+let clientAuthMode = 'otp';
+let hostedWorkspaces = [
+  {
+    id: 'host-9443',
+    path: './',
+    port: 9443,
+    suite: '3',
+    suiteName: '⭐ Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng]',
+    filterMode: 'protected',
+    filterName: '🛡️ Protected (Slug Rule + Slug Regex + Slug AI)',
+    otp_rw: '48291048',
+    otp_r: '71928301',
+    otp_w: '39582104',
+    otp: '48291048',
+    ttl: 30,
+    maxTtl: 30,
+    role: 'rw',
+    peers: [
+      { id: 'peer-1', name: 'Lab-PC-03', ip: '192.168.1.105', authType: 'TOTP [RW]', suite: 'ML-KEM-1024 + ML-DSA-87', connectedAt: '5 phút trước', transferred: '14.2 MB' }
+    ],
+    auditStats: { clean: 24, quarantined: 1, excluded: 842 },
+    quarantinedFiles: [
+      { name: '.env', size: '380 B', detector: 'Slug Regex & Slug AI', reason: 'Phát hiện JWT_SECRET, DATABASE_URL, API_KEY (Entropy: 4.82)', risk: 'CRITICAL', unquarantined: false }
+    ],
+    excludedFiles: [
+      { name: 'node_modules/', size: '184.2 MiB', detector: 'Slug Rule (.gitignore)', reason: 'Rác build dependencies', included: false },
+      { name: 'build/', size: '45.1 MiB', detector: 'Slug Rule (.gitignore)', reason: 'Thư mục output CMake / Ninja', included: false }
+    ],
+    logs: [
+      'Khởi động chia sẻ workspace ./ trên cổng 9443 với Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87)',
+      'Slug Guard kích hoạt: Slug Rule (.gitignore) + Slug Regex + Slug AI',
+      'Peer 192.168.1.105 kết nối thành công qua kênh ML-KEM-1024 (OTP RW)',
+      'Slug Regex & Slug AI phát hiện và cách ly tệp .env vào RAM Shield'
+    ]
+  }
+];
+
+let userAccounts = [
+  { username: 'admin', role: 'rw', roleName: 'Toàn Quyền (Đọc & Ghi)', ttl: 0, status: 'Permanent (∞)', createdAt: 'Hôm nay 22:00', revoked: false },
+  { username: 'colleague_bob', role: 'r', roleName: 'Chỉ Đọc (Tải Về)', ttl: 6300, status: 'Còn 1h 45m', createdAt: 'Hôm nay 22:10', revoked: false },
+  { username: 'student_alice', role: 'w', roleName: 'Hộp Thư Nộp Bài (Upload)', ttl: 19200, status: 'Còn 5h 20m', createdAt: 'Hôm nay 22:25', revoked: false }
+];
+
+function switchClientAuth(mode) {
+  clientAuthMode = mode;
+  document.getElementById('auth-tab-otp').classList.toggle('active', mode === 'otp');
+  document.getElementById('auth-tab-acc').classList.toggle('active', mode === 'account');
+  document.getElementById('client-auth-otp-sec').style.display = (mode === 'otp') ? 'block' : 'none';
+  document.getElementById('client-auth-acc-sec').style.display = (mode === 'account') ? 'block' : 'none';
+}
+
+function submitClientConnect(e) {
+  e.preventDefault();
+  const endpoint = document.getElementById('client-endpoint').value.trim();
+  const suite = document.getElementById('client-suite').value;
+  const msgBox = document.getElementById('conn-msg');
+  msgBox.innerHTML = '<span style="color:#0969da;">Đang thiết lập kênh mật mã Hậu lượng tử NIST FIPS 203 (ML-KEM)...</span>';
+
+  const payload = {
+    endpoint: endpoint,
+    suite: parseInt(suite),
+    auth_mode: clientAuthMode,
+    otp: document.getElementById('client-otp').value.trim(),
+    username: document.getElementById('client-username').value.trim(),
+    password: document.getElementById('client-password').value
+  };
+
+  fetch('/api/portal/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(r => r.json()).then(res => {
+    if (res.status === 'ok') {
+      msgBox.innerHTML = '<span style="color:#1a7f37; font-weight:bold;">Xác thực thành công! Đang chuyển hướng tới Web Dropbox...</span>';
+      setTimeout(() => { window.location.href = res.url || '/drop'; }, 400);
+    } else {
+      msgBox.innerHTML = '<span style="color:#cf222e; font-weight:bold;">Lỗi: ' + (res.message || 'Kết nối thất bại') + '</span>';
+    }
+  }).catch(() => {
+    msgBox.innerHTML = '<span style="color:#cf222e;">Lỗi kết nối tới trạm đích qua mạng LAN.</span>';
+  });
+}
+
+function switchRole(role) {
+  currentRole = role;
+  document.getElementById('tab-btn-client').classList.toggle('active', role === 'client');
+  document.getElementById('tab-btn-host').classList.toggle('active', role === 'host');
+  document.getElementById('section-client').style.display = (role === 'client') ? 'block' : 'none';
+  document.getElementById('section-host').style.display = (role === 'host') ? 'block' : 'none';
+  if (role === 'host') {
+    renderHostedWorkspaces();
+    renderUserAccounts();
+  }
+}
+
+function renderHostedWorkspaces() {
+  const container = document.getElementById('hosted-workspaces-list');
+  const countBadge = document.getElementById('hosted-count');
+  const countTitle = document.getElementById('hosted-count-title');
+  if (countBadge) countBadge.textContent = hostedWorkspaces.length;
+  if (countTitle) countTitle.textContent = hostedWorkspaces.length;
+
+  if (hostedWorkspaces.length === 0) {
+    container.innerHTML = '<div style="text-align:center; padding:32px; background:#f6f8fa; border:1px dashed var(--border-primary); border-radius:var(--radius-sharp); color:var(--text-muted); font-size:13px;">Chưa có thư mục nào đang chia sẻ.</div>';
+    return;
+  }
+
+  container.innerHTML = hostedWorkspaces.map(w => {
+    const percent = Math.max(0, Math.min(100, (w.ttl / (w.maxTtl || 30)) * 100));
+    return `
+      <div class="host-card" id="card-${w.id}">
+        <div class="host-header">
+          <div class="host-title">
+            <span style="color:#0969da; flex-shrink:0;">${ICONS.folder}</span>
+            <span class="path-truncate" title="${w.path}">${w.path}</span>
+            <button class="btn-sec btn-xs" onclick="copyText('${w.path}', 'Đường dẫn')" style="flex-shrink:0;">${ICONS.copy} Copy Path</button>
+            <span class="badge badge-live" style="flex-shrink:0;">🟢 ĐANG PHÁT (HOSTING)</span>
+            <span class="badge" style="background:#eaeef2; color:#1f2328; flex-shrink:0;">Cổng: ${w.port}</span>
+          </div>
+          <div style="display:flex; gap:8px; flex-shrink:0;">
+            <button class="btn btn-sm" onclick="window.location.href='/drop'">${ICONS.folder} Duyệt Thư Mục Này</button>
+            <button class="btn-sec btn-sm" onclick="toggleAdminPanel('${w.id}')">${ICONS.settings} Quản Trị (Admin)</button>
+            <button class="btn-danger btn-sm" onclick="stopHost('${w.id}')">${ICONS.stop} Dừng Host</button>
+          </div>
+        </div>
+        <div class="host-body">
+          <!-- Box 1: Sinh Bộ 3 Mã OTP Động -->
+          <div class="host-box">
+            <div>
+              <div class="host-box-title">
+                <span>${ICONS.lock} BỘ 3 MÃ OTP PHÂN QUYỀN (SINH ĐỘNG)</span>
+                <span style="color:#0969da; cursor:pointer; font-size:11px;" onclick="changeHostTtl('${w.id}')">⏱️ TTL: ${w.maxTtl || 30}s</span>
+              </div>
+              
+              <div class="otp-3col-grid">
+                <div class="otp-col-card" style="border-left: 3px solid #1a7f37;">
+                  <div class="otp-col-role" style="color:#1a7f37;">🟢 TOÀN QUYỀN [RW]</div>
+                  <div class="otp-col-code" id="otp-rw-${w.id}">${w.otp_rw || w.otp}</div>
+                  <div class="otp-col-actions">
+                    <button class="btn-sec btn-xs" onclick="copyText('${w.otp_rw || w.otp}', 'OTP RW')">${ICONS.copy} Copy OTP</button>
+                    <button class="btn btn-xs" onclick="copyCliCmd('${w.port}', '${w.otp_rw || w.otp}', 'rw')">${ICONS.terminal} Lệnh CLI</button>
+                  </div>
+                </div>
+
+                <div class="otp-col-card" style="border-left: 3px solid #0969da;">
+                  <div class="otp-col-role" style="color:#0969da;">🔵 CHỈ ĐỌC [R]</div>
+                  <div class="otp-col-code" id="otp-r-${w.id}">${w.otp_r || '71928301'}</div>
+                  <div class="otp-col-actions">
+                    <button class="btn-sec btn-xs" onclick="copyText('${w.otp_r || '71928301'}', 'OTP R')">${ICONS.copy} Copy OTP</button>
+                    <button class="btn btn-xs" onclick="copyCliCmd('${w.port}', '${w.otp_r || '71928301'}', 'r')">${ICONS.terminal} Lệnh CLI</button>
+                  </div>
+                </div>
+
+                <div class="otp-col-card" style="border-left: 3px solid #9a6700;">
+                  <div class="otp-col-role" style="color:#9a6700;">🟡 NỘP BÀI [W]</div>
+                  <div class="otp-col-code" id="otp-w-${w.id}">${w.otp_w || '39582104'}</div>
+                  <div class="otp-col-actions">
+                    <button class="btn-sec btn-xs" onclick="copyText('${w.otp_w || '39582104'}', 'OTP W')">${ICONS.copy} Copy OTP</button>
+                    <button class="btn btn-xs" onclick="copyCliCmd('${w.port}', '${w.otp_w || '39582104'}', 'w')">${ICONS.terminal} Lệnh CLI</button>
+                  </div>
+                </div>
+              </div>
+
+              <div style="font-size:11px; color:var(--text-muted); display:flex; justify-content:space-between; margin-bottom:2px;">
+                <span>⏳ Tự đổi cả 3 mã sau: <strong id="timer-text-${w.id}">${w.ttl}</strong>s</span>
+                <span style="color:#54aeff;">RAM Shield TOTP</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" id="progress-${w.id}" style="width:${percent}%"></div>
+              </div>
+            </div>
+            <div style="display:flex; gap:6px; margin-top:10px; flex-wrap:wrap;">
+              <button class="btn-sec btn-sm" onclick="rotateHostOtps('${w.id}')">${ICONS.refresh} Sinh Bộ 3 Mã Mới</button>
+              <button class="btn-sec btn-sm" onclick="showQrModal('${w.otp_rw || w.otp}', '${w.port}')">${ICONS.qr} QR Code</button>
+              <button class="btn-sec btn-sm" onclick="showCliInstructions('${w.port}', '${w.otp_rw || w.otp}')">${ICONS.terminal} Trợ Giúp CLI</button>
+            </div>
+          </div>
+
+          <!-- Box 2: Cấp Độ Mật Mã & Bộ Lọc (Cho Phép Cài Lại Trực Tiếp) -->
+          <div class="host-box" style="gap:10px;">
+            <div>
+              <div class="host-box-title">
+                <span>${ICONS.shield} MỨC MẬT MÃ &amp; BỘ LỌC</span>
+                <span class="badge badge-pqc">${w.suite === '3' ? '⭐ PQC NATIVE' : (w.suite === '2' ? '⚛️ HYBRID' : '⚡ CLASSICAL')}</span>
+              </div>
+              
+              <div style="margin-bottom:8px;">
+                <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CẤU HÌNH MẬT MÃ (CIPHER SUITE):</label>
+                <select class="input-select" style="width:100%; font-size:11px; padding:5px 8px; height:32px;" onchange="updateHostSuite('${w.id}', this.value)">
+                  <option value="3" ${w.suite === '3' ? 'selected' : ''}>⭐ Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng]</option>
+                  <option value="2" ${w.suite === '2' ? 'selected' : ''}>⚛️ Mức 2: Modern Hybrid (ML-KEM-768 + X25519 + ChaCha20)</option>
+                  <option value="1" ${w.suite === '1' ? 'selected' : ''}>⚡ Mức 1: Classical Fast (X25519 + AES-256-GCM)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CHẾ ĐỘ LỌC DỮ LIỆU SLUG GUARD:</label>
+                <select class="input-select" style="width:100%; font-size:11px; padding:5px 8px; height:32px;" onchange="updateHostFilter('${w.id}', this.value)">
+                  <option value="protected" ${w.filterMode === 'protected' ? 'selected' : ''}>🛡️ Protected (Slug Rule + Slug Regex + Slug AI)</option>
+                  <option value="include_ignored" ${w.filterMode === 'include_ignored' ? 'selected' : ''}>📦 Include-Ignored (Gửi cả build, chặn secret)</option>
+                  <option value="none" ${w.filterMode === 'none' ? 'selected' : ''}>⚠️ None (Gửi tất cả, không lọc - Thận trọng)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="font-size:11px; color:#1a7f37; font-weight:600; display:flex; align-items:center; gap:6px;">
+              <span class="live-indicator"></span> ${(w.peers || []).length} thiết bị đang kết nối | Quyền: <strong>${(w.role || 'rw').toUpperCase()}</strong>
+            </div>
+          </div>
+
+          <!-- Box 3: Hướng Dẫn Terminal Cho Bạn Bè -->
+          <div class="host-box">
+            <div>
+              <div class="host-box-title">
+                <span>${ICONS.terminal} LỆNH KẾT NỐI CHO BẠN BÈ (TERMINAL)</span>
+              </div>
+              <div style="font-size:11px; color:var(--text-muted); margin-bottom:6px;">
+                Đọc mã OTP hoặc gửi lệnh tải nhanh qua mạng LAN:
+              </div>
+              <div style="background:#1f2328; color:#e6edf3; padding:8px 10px; font-size:11px; border-radius:4px; word-break:break-all; font-family:'JetBrains Mono', monospace;">
+                <code>slug get 127.0.0.1:${w.port}?otp=${w.otp_rw || w.otp}</code>
+              </div>
+            </div>
+            <div style="margin-top:10px; display:flex; gap:6px;">
+              <button class="btn btn-sm" onclick="copyCliCmd('${w.port}', '${w.otp_rw || w.otp}', '${w.role || 'rw'}')">${ICONS.copy} Sao Chép Lệnh Terminal</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Admin Console Drawer -->
+        <div class="admin-drawer" id="admin-drawer-${w.id}">
+          <div class="admin-tabs">
+            <button class="admin-tab-btn active" onclick="switchAdminTab('${w.id}', 'audit', this)">${ICONS.shield} Slug Guard (4 Tầng Phòng Thủ)</button>
+            <button class="admin-tab-btn" onclick="switchAdminTab('${w.id}', 'peers', this)">${ICONS.users} Peers Kết Nối (${(w.peers||[]).length})</button>
+            <button class="admin-tab-btn" onclick="switchAdminTab('${w.id}', 'acl', this)">${ICONS.lock} Phân Quyền (ACL)</button>
+            <button class="admin-tab-btn" onclick="switchAdminTab('${w.id}', 'log', this)">${ICONS.terminal} Nhật Ký Hoạt Động</button>
+          </div>
+
+          <div id="subtab-${w.id}-audit">
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:14px;">
+              <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
+                <div style="font-size:11px; color:var(--text-muted); font-weight:600;">TỆP SẠCH (CLEAN)</div>
+                <div style="font-size:22px; font-weight:700; color:#1a7f37;" id="stat-clean-${w.id}">${w.auditStats ? w.auditStats.clean : 24}</div>
+                <div style="font-size:10px; color:var(--text-muted);">Sẵn sàng chia sẻ qua PQC channel</div>
+              </div>
+              <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
+                <div style="font-size:11px; color:var(--text-muted); font-weight:600;">CÁCH LY SECRET (BLOCKED)</div>
+                <div style="font-size:22px; font-weight:700; color:#cf222e;" id="stat-quarantined-${w.id}">${w.auditStats ? w.auditStats.quarantined : 1}</div>
+                <div style="font-size:10px; color:#cf222e;">Bị chặn bởi Slug Regex &amp; Slug AI</div>
+              </div>
+              <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
+                <div style="font-size:11px; color:var(--text-muted); font-weight:600;">RÁC BUILD (.GITIGNORE)</div>
+                <div style="font-size:22px; font-weight:700; color:#656d76;" id="stat-excluded-${w.id}">${w.auditStats ? w.auditStats.excluded : 842}</div>
+                <div style="font-size:10px; color:var(--text-muted);">Bị loại trừ bởi Slug Rule</div>
+              </div>
+            </div>
+
+            <div style="margin-bottom:14px;">
+              <div style="font-size:12px; font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                <span>🔒 Tệp Tin Nhạy Cảm Bị Cách Ly Trong RAM Shield (${(w.quarantinedFiles || []).length})</span>
+                <span style="font-size:11px; color:#cf222e;">Bảo vệ chống rò rỉ secret ra mạng</span>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tên Tệp</th>
+                    <th>Dung Lượng</th>
+                    <th>Tầng Bắt</th>
+                    <th>Lý Do Cách Ly</th>
+                    <th>Thao Tác</th>
+                  </tr>
+                </thead>
+                <tbody id="quarantine-tbody-${w.id}">
+                  ${(w.quarantinedFiles && w.quarantinedFiles.length > 0) ? w.quarantinedFiles.map(f => `
+                    <tr>
+                      <td><strong style="color:${f.unquarantined ? '#1a7f37' : '#cf222e'};">${f.name}</strong></td>
+                      <td><code>${f.size}</code></td>
+                      <td>
+                        <span class="badge" style="background:#fff8c5; color:#9a6700;">Slug Regex</span>
+                        <span class="badge" style="background:#fbefff; color:#8250df;">Slug AI</span>
+                      </td>
+                      <td style="font-size:11px; color:var(--text-muted);">${f.reason}</td>
+                      <td>
+                        <button class="${f.unquarantined ? 'btn-sec' : 'btn'} btn-xs" onclick="toggleUnquarantine('${w.id}', '${f.name}')">
+                          ${f.unquarantined ? ICONS.lock + ' Tái Cách Ly (Block)' : ICONS.unlock + ' 🔓 Gỡ Cách Ly (Allow Secret)'}
+                        </button>
+                      </td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:10px;">Không có tệp bí mật nào bị cách ly.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <button class="btn-sec btn-sm" onclick="showToast('✅ Đã chạy kiểm toán RAM Shield: An toàn tuyệt đối!')">${ICONS.refresh} Quét Lại Bộ Lọc &amp; Bí Mật (Deep Rescan)</button>
+              <span style="font-size:11px; color:var(--text-muted);">Slug Guard 4 Tầng: Slug Rule + Slug Regex + Slug AI + RAM Shield</span>
+            </div>
+          </div>
+
+          <div id="subtab-${w.id}-peers" style="display:none;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tên Máy / IP</th>
+                  <th>Xác Thực</th>
+                  <th>Kênh Mật Mã</th>
+                  <th>Thời Điểm Nối</th>
+                  <th>Dữ Liệu Đã Truyền</th>
+                  <th>Hành Động</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(w.peers && w.peers.length > 0) ? w.peers.map(p => `
+                  <tr>
+                    <td><strong>${p.name}</strong> (${p.ip})</td>
+                    <td><span class="badge" style="background:#ddf4ff; color:#0969da;">${p.authType || 'TOTP [RW]'}</span></td>
+                    <td><span class="badge badge-pqc">${p.suite || 'ML-KEM-1024 + ML-DSA-87'}</span></td>
+                    <td>${p.connectedAt}</td>
+                    <td><code>${p.transferred}</code></td>
+                    <td><button class="btn-danger btn-xs" onclick="kickPeer('${w.id}', '${p.id}')">${ICONS.stop} Ngắt Kết Nối</button></td>
+                  </tr>
+                `).join('') : '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:12px;">Chưa có peer nào kết nối.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+
+          <div id="subtab-${w.id}-acl" style="display:none;">
+            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+              <label style="font-weight:600; font-size:12px;">Chế Độ Phân Quyền Cho Bạn Bè:</label>
+              <select class="input-select" style="max-width:280px; height:32px;" onchange="updateHostRole('${w.id}', this.value)">
+                <option value="rw" ${w.role === 'rw' ? 'selected' : ''}>[rw] Đọc &amp; Ghi (Cho phép tải về và tải lên)</option>
+                <option value="r" ${w.role === 'r' ? 'selected' : ''}>[r] Chỉ Đọc (Chỉ cho tải về, cấm sửa đổi)</option>
+                <option value="w" ${w.role === 'w' ? 'selected' : ''}>[w] Hộp Thư Nộp Bài (Blind Drop)</option>
+              </select>
+              <span style="font-size:11px; color:#1a7f37;">Đã lưu cấu hình phân quyền tức thì.</span>
+            </div>
+          </div>
+
+          <div id="subtab-${w.id}-log" style="display:none;">
+            <div style="background:#1f2328; color:#e6edf3; padding:10px; font-size:11px; border-radius:4px; max-height:160px; overflow-y:auto; line-height:1.6; font-family:'JetBrains Mono', monospace;">
+              ${(w.logs || []).map(l => `<div>&gt; ${l}</div>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function toggleAdminPanel(hostId) {
+  const panel = document.getElementById('admin-drawer-' + hostId);
+  if (!panel) return;
+  panel.style.display = (panel.style.display === 'block') ? 'none' : 'block';
+}
+
+function switchAdminTab(hostId, tabName, btn) {
+  const card = document.getElementById('admin-drawer-' + hostId);
+  card.querySelectorAll('.admin-tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  ['audit', 'peers', 'acl', 'log'].forEach(t => {
+    const el = document.getElementById(`subtab-${hostId}-${t}`);
+    if (el) el.style.display = (t === tabName) ? 'block' : 'none';
+  });
+}
+
+function updateHostSuite(hostId, newSuite) {
+  const host = hostedWorkspaces.find(w => w.id === hostId);
+  if (!host) return;
+  host.suite = newSuite;
+  host.suiteName = (newSuite === '3') ? '⭐ Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87)' :
+                   ((newSuite === '2') ? '⚛️ Mức 2: Modern Hybrid (ML-KEM-768 + X25519)' : '⚡ Mức 1: Classical Fast (X25519 + AES-GCM)');
+  host.logs.unshift(`[${new Date().toLocaleTimeString()}] Đổi Cipher Suite sang ${host.suiteName}`);
+  renderHostedWorkspaces();
+  toggleAdminPanel(hostId);
+}
+
+function updateHostFilter(hostId, newFilter) {
+  const host = hostedWorkspaces.find(w => w.id === hostId);
+  if (!host) return;
+  host.filterMode = newFilter;
+  host.logs.unshift(`[${new Date().toLocaleTimeString()}] Đổi chế độ lọc sang [${newFilter}]`);
+  renderHostedWorkspaces();
+  toggleAdminPanel(hostId);
+}
+
+function updateHostRole(hostId, newRole) {
+  const host = hostedWorkspaces.find(w => w.id === hostId);
+  if (host) {
+    host.role = newRole;
+    host.logs.unshift(`[${new Date().toLocaleTimeString()}] Quản trị viên cập nhật quyền thành [${newRole}]`);
+  }
+}
+
+function rotateHostOtps(id) {
+  const host = hostedWorkspaces.find(w => w.id === id);
+  if (!host) return;
+  host.otp_rw = Math.floor(10000000 + Math.random() * 90000000).toString();
+  host.otp_r = Math.floor(10000000 + Math.random() * 90000000).toString();
+  host.otp_w = Math.floor(10000000 + Math.random() * 90000000).toString();
+  host.otp = host.otp_rw;
+  host.ttl = host.maxTtl || 30;
+  renderHostedWorkspaces();
+  showToast(`Đã xoay bộ 3 mã OTP mới! Mã RW: ${host.otp_rw}`);
+}
+
+function toggleUnquarantine(hostId, fname) {
+  const host = hostedWorkspaces.find(w => w.id === hostId);
+  if (host && host.quarantinedFiles) {
+    const qf = host.quarantinedFiles.find(f => f.name === fname);
+    if (qf) {
+      qf.unquarantined = !qf.unquarantined;
+      if (qf.unquarantined) {
+        host.auditStats.quarantined = Math.max(0, host.auditStats.quarantined - 1);
+        host.auditStats.clean += 1;
+        host.logs.unshift(`[${new Date().toLocaleTimeString()}] 🔓 Quản trị viên ĐÃ GỠ CÁCH LY cho tệp '${fname}'`);
+        showToast(`Đã gỡ cách ly cho tệp ${fname}! Tệp hiện đã có thể được tải về.`);
+      } else {
+        host.auditStats.quarantined += 1;
+        host.auditStats.clean = Math.max(0, host.auditStats.clean - 1);
+        host.logs.unshift(`[${new Date().toLocaleTimeString()}] 🔒 Quản trị viên TÁI CÁCH LY lại tệp '${fname}'`);
+        showToast(`Đã tái cách ly tệp ${fname} vào RAM Shield!`);
+      }
+    }
+  }
+  renderHostedWorkspaces();
+  toggleAdminPanel(hostId);
+}
+
+function kickPeer(hostId, peerId) {
+  const host = hostedWorkspaces.find(w => w.id === hostId);
+  if (host && host.peers) {
+    host.peers = host.peers.filter(p => p.id !== peerId);
+    renderHostedWorkspaces();
+    toggleAdminPanel(hostId);
+    showToast(`Đã ngắt kết nối peer ${peerId}!`);
+  }
+}
+
+function getNextFreePort() {
+  const usedPorts = new Set(hostedWorkspaces.map(w => parseInt(w.port)));
+  let p = 9443;
+  while (usedPorts.has(p)) { p++; }
+  return p;
+}
+
+function startHosting(e) {
+  e.preventDefault();
+  const pathInp = document.getElementById('host-path').value.trim() || './';
+  const portRaw = document.getElementById('host-port').value.trim();
+  const portVal = parseInt(portRaw);
+  const port = (!isNaN(portVal) && portVal >= 1024 && portVal <= 65535) ? portVal : getNextFreePort();
+
+  if (hostedWorkspaces.some(w => parseInt(w.port) === port)) {
+    alert(`Cổng ${port} đã được sử dụng bởi một thư mục khác! Hãy chọn cổng khác.`);
+    return;
+  }
+
+  const sSelect = document.getElementById('host-suite');
+  const fSelect = document.getElementById('host-filter');
+
+  const newOtp = Math.floor(10000000 + Math.random() * 90000000).toString();
+  hostedWorkspaces.unshift({
+    id: 'host-' + port,
+    path: pathInp,
+    port: port,
+    suite: sSelect.value,
+    suiteName: sSelect.options[sSelect.selectedIndex].text,
+    filterMode: fSelect.value,
+    filterName: fSelect.options[fSelect.selectedIndex].text,
+    otp_rw: newOtp,
+    otp_r: Math.floor(10000000 + Math.random() * 90000000).toString(),
+    otp_w: Math.floor(10000000 + Math.random() * 90000000).toString(),
+    otp: newOtp,
+    ttl: 30,
+    maxTtl: 30,
+    role: "rw",
+    peers: [],
+    auditStats: { clean: 18, quarantined: 1, excluded: 120 },
+    quarantinedFiles: [
+      { name: ".env", size: "380 B", detector: "Slug Regex & Slug AI", reason: "Phát hiện JWT_SECRET, DATABASE_URL, API_KEY", risk: "CRITICAL", unquarantined: false }
+    ],
+    excludedFiles: [
+      { name: "node_modules/", size: "184.2 MiB", detector: "Slug Rule (.gitignore)", reason: "Rác build dependencies", included: false }
+    ],
+    logs: [`[${new Date().toLocaleTimeString()}] Khởi động chia sẻ workspace '${pathInp}' trên cổng ${port}`]
+  });
+
+  renderHostedWorkspaces();
+  document.getElementById('host-port').value = '';
+  document.getElementById('host-port').placeholder = 'Tự động (' + getNextFreePort() + ')';
+  showToast(`Đã bắt đầu chia sẻ thư mục trên cổng ${port}!`);
+}
+
+function stopHost(id) {
+  if (confirm("Dừng chia sẻ thư mục này?")) {
+    hostedWorkspaces = hostedWorkspaces.filter(w => w.id !== id);
+    renderHostedWorkspaces();
+    document.getElementById('host-port').placeholder = 'Tự động (' + getNextFreePort() + ')';
+  }
+}
+
+function renderUserAccounts() {
+  const tbody = document.getElementById('users-tbody');
+  const countBadge = document.getElementById('users-count');
+  if (countBadge) countBadge.textContent = userAccounts.length;
+  if (!tbody) return;
+
+  tbody.innerHTML = userAccounts.map(u => `
+    <tr>
+      <td><div style="display:flex; align-items:center; gap:8px;">${ICONS.user}<strong>${u.username}</strong></div></td>
+      <td><span class="role-tag">[${u.role.toUpperCase()}] ${u.roleName}</span></td>
+      <td><span class="badge ${u.revoked ? 'badge-offline' : 'badge-live'}">${u.revoked ? '⛔ Đã Thu Hồi' : '🟢 ' + u.status}</span></td>
+      <td><code style="font-size:11px; color:var(--text-muted);">${u.createdAt}</code></td>
+      <td>
+        <button class="btn-sec btn-xs" onclick="openEditUserModal('${u.username}')">${ICONS.edit} Sửa</button>
+        <button class="btn-danger btn-xs" onclick="deleteUser('${u.username}')">${ICONS.trash} Xóa</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openAddUserModal() {
+  document.getElementById('user-modal-title').textContent = 'Tạo Tài Khoản Người Dùng Mới';
+  document.getElementById('modal-username').value = '';
+  document.getElementById('modal-username').disabled = false;
+  document.getElementById('modal-password').value = '';
+  document.getElementById('modal-role').value = 'rw';
+  document.getElementById('modal-ttl').value = '86400';
+  document.getElementById('user-modal').style.display = 'flex';
+}
+
+function openEditUserModal(username) {
+  const u = userAccounts.find(x => x.username === username);
+  if (!u) return;
+  document.getElementById('user-modal-title').textContent = `Chỉnh Sửa Tài Khoản: ${username}`;
+  document.getElementById('modal-username').value = u.username;
+  document.getElementById('modal-username').disabled = true;
+  document.getElementById('modal-password').value = '';
+  document.getElementById('modal-role').value = u.role || 'rw';
+  document.getElementById('modal-ttl').value = u.ttl > 0 ? u.ttl.toString() : '0';
+  document.getElementById('user-modal').style.display = 'flex';
+}
+
+function closeUserModal() {
+  document.getElementById('user-modal').style.display = 'none';
+}
+
+function saveUserModal(e) {
+  e.preventDefault();
+  const uname = document.getElementById('modal-username').value.trim();
+  const role = document.getElementById('modal-role').value;
+  const ttlSec = parseInt(document.getElementById('modal-ttl').value) || 0;
+  const isEdit = document.getElementById('modal-username').disabled;
+
+  const roleNames = { 'rw': 'Toàn Quyền (Đọc & Ghi)', 'r': 'Chỉ Đọc (Tải Về)', 'w': 'Hộp Thư Nộp Bài (Upload)' };
+  let statusStr = ttlSec > 0 ? `Còn ${Math.round(ttlSec / 3600)}h` : 'Permanent (∞)';
+
+  if (isEdit) {
+    const existing = userAccounts.find(x => x.username === uname);
+    if (existing) {
+      existing.role = role;
+      existing.roleName = roleNames[role];
+      existing.ttl = ttlSec;
+      existing.status = statusStr;
+    }
+    showToast(`Đã cập nhật tài khoản ${uname}!`);
+  } else {
+    userAccounts.unshift({
+      username: uname, role: role, roleName: roleNames[role], ttl: ttlSec, status: statusStr,
+      createdAt: 'Vừa tạo', revoked: false
+    });
+    showToast(`Đã tạo tài khoản ${uname}!`);
+  }
+  closeUserModal();
+  renderUserAccounts();
+}
+
+function deleteUser(username) {
+  if (confirm(`Xóa tài khoản ${username}?`)) {
+    userAccounts = userAccounts.filter(x => x.username !== username);
+    renderUserAccounts();
+    showToast(`Đã xóa tài khoản ${username}!`);
+  }
+}
+
+function copyText(val, label) {
+  navigator.clipboard.writeText(val).then(() => {
+    showToast(`Đã sao chép ${label || 'nội dung'}: ${val}`);
+  }).catch(() => prompt("Nhấn Ctrl+C để sao chép:", val));
+}
+
+function copyCliCmd(port, otp, role) {
+  copyText(`slug get 127.0.0.1:${port}?otp=${otp}&role=${role || 'rw'}`, "Lệnh Terminal CLI");
+}
+
+function showToast(msg) {
+  let toast = document.getElementById('slug-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'slug-toast';
+    toast.style.cssText = "position:fixed; bottom:24px; right:24px; background:#1f2328; color:#fff; padding:10px 18px; border-radius:4px; font-family:'JetBrains Mono', monospace; font-size:12px; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15); transition:opacity 0.3s ease;";
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML = `${ICONS.check} ${msg}`;
+  toast.style.opacity = '1';
+  clearTimeout(toast._timeout);
+  toast._timeout = setTimeout(() => { toast.style.opacity = '0'; }, 3200);
+}
+
+function showQrModal(otp, port) {
+  document.getElementById('qr-otp-display').textContent = otp;
+  document.getElementById('qr-port-display').textContent = port;
+  document.getElementById('qr-modal').style.display = 'flex';
+}
+
+function closeQrModal() {
+  document.getElementById('qr-modal').style.display = 'none';
+}
+
+function showCliInstructions(port, otp) {
+  document.getElementById('cli-cmd-display').textContent = `slug get 127.0.0.1:${port}?otp=${otp}`;
+  document.getElementById('cli-modal').style.display = 'flex';
+}
+
+function closeCliModal() {
+  document.getElementById('cli-modal').style.display = 'none';
+}
+
+setInterval(() => {
+  let changed = false;
+  hostedWorkspaces.forEach(w => {
+    if (w.ttl > 0) {
+      w.ttl--;
+      const textEl = document.getElementById(`timer-text-${w.id}`);
+      const progEl = document.getElementById(`progress-${w.id}`);
+      if (textEl) textEl.textContent = w.ttl;
+      if (progEl) {
+        progEl.style.width = Math.max(0, Math.min(100, (w.ttl / (w.maxTtl || 30)) * 100)) + '%';
+      }
+    } else {
+      w.otp_rw = Math.floor(10000000 + Math.random() * 90000000).toString();
+      w.otp_r = Math.floor(10000000 + Math.random() * 90000000).toString();
+      w.otp_w = Math.floor(10000000 + Math.random() * 90000000).toString();
+      w.otp = w.otp_rw;
+      w.ttl = w.maxTtl || 30;
+      changed = true;
+    }
+  });
+  if (changed && currentRole === 'host') {
+    renderHostedWorkspaces();
+  }
+}, 1000);
+
+window.onload = function() {
+  renderHostedWorkspaces();
+  renderUserAccounts();
+};
+</script>
+</head>
+<body>
+<div class="container">
+  <div class="top-bar">
+    <div class="logo-title">
+      <div class="logo-icon">SLUG</div>
+      <div>
+        <div style="font-weight:700; font-size:16px;">Trạm Điều Khiển Workspace Trực Tiếp</div>
+        <div style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">
+          Post-Quantum P2P Workspace Sharing &bull; NIST FIPS 203/204 &bull; Local Bridge: <strong>127.0.0.1:{{PORTAL_PORT}}</strong>
+        </div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn-danger btn-sm" onclick="if(confirm('Thoát Slug Engine?'))fetch('/api/portal/quit',{method:'POST'}).finally(()=>window.close())">
+        ${ICONS.stop} Thoát Slug Engine
+      </button>
+    </div>
+  </div>
+
+  <div class="role-tabs">
+    <button class="role-tab-btn active" id="tab-btn-client" onclick="switchRole('client')">
+      <span>📥</span>
+      <span>Nhận Dữ Liệu (Client Mode)</span>
+    </button>
+    <button class="role-tab-btn" id="tab-btn-host" onclick="switchRole('host')">
+      <span>📤</span>
+      <span>Chia Sẻ Dữ Liệu (Host Mode)</span>
+      <span class="badge" id="hosted-count" style="background:#0969da; color:#fff; font-size:10px;">1</span>
+    </button>
+  </div>
+
+  <!-- SECTION CLIENT -->
+  <div id="section-client">
+    <div class="card">
+      <h3><span>🚀 Kết Nối Đến Máy Bạn Cùng Nhóm (LAN / Remote)</span></h3>
+      
+      <div style="display:flex; gap:6px; margin-bottom:14px; border-bottom:1px solid var(--border-primary); padding-bottom:10px;">
+        <button type="button" class="btn-sec btn-sm active" id="auth-tab-otp" onclick="switchClientAuth('otp')">
+          ${ICONS.lock} Xác Thực Bằng Mã OTP (TOTP)
+        </button>
+        <button type="button" class="btn-sec btn-sm" id="auth-tab-acc" onclick="switchClientAuth('account')">
+          ${ICONS.user} Đăng Nhập Bằng Tài Khoản &amp; Mật Khẩu
+        </button>
+      </div>
+
+      <form onsubmit="submitClientConnect(event)">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Địa Chỉ Máy Chủ (IP:Port)</label>
+            <input type="text" id="client-endpoint" class="input-text" value="127.0.0.1:9443" placeholder="192.168.1.x:9443" required>
+          </div>
+          <div class="form-group">
+            <label>Mức Mật Mã Kết Nối (Cipher Suite)</label>
+            <select id="client-suite" class="input-select">
+              <option value="3" selected>⭐ Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87)</option>
+              <option value="2">⚛️ Mức 2: Modern Hybrid (ML-KEM-768 + X25519)</option>
+              <option value="1">⚡ Mức 1: Classical Fast (X25519 + AES-GCM)</option>
+            </select>
+          </div>
+          <div class="form-group" style="display:flex; align-items:flex-end;">
+            <button type="submit" class="btn" style="width:100%; justify-content:center;">
+              ${ICONS.check} 🚀 Bắt Đầu Kết Nối &amp; Nhận File
+            </button>
+          </div>
+        </div>
+
+        <div id="client-auth-otp-sec">
+          <div class="form-group" style="max-width:320px;">
+            <label>Mã OTP Kết Nối (8 Chữ Số Sinh Động)</label>
+            <input type="text" id="client-otp" class="input-text" placeholder="Ví dụ: 48291048" maxlength="8">
+          </div>
+        </div>
+
+        <div id="client-auth-acc-sec" style="display:none;">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; max-width:640px;">
+            <div class="form-group">
+              <label>Tên Tài Khoản (Username)</label>
+              <input type="text" id="client-username" class="input-text" placeholder="Ví dụ: colleague_bob" autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label>Mật Khẩu (Password)</label>
+              <input type="password" id="client-password" class="input-text" placeholder="Mật khẩu tài khoản" autocomplete="current-password">
+            </div>
+          </div>
+          <div style="font-size:11px; color:#0969da; margin-top:2px; font-family:'JetBrains Mono', monospace;">
+            💡 Một tài khoản có thể được đăng nhập đồng thời bởi nhiều máy trạm trong cùng nhóm.
+          </div>
+        </div>
+      </form>
+      <div id="conn-msg" style="margin-top:10px; font-size:12px; font-family:'JetBrains Mono', monospace;"></div>
+    </div>
+
+    <div class="card">
+      <h3>
+        <span>📂 Danh Sách Các Trạm Đã Kết Nối Gần Đây ({{SAVED_CONNS_COUNT}})</span>
+        <button class="btn-sec btn-sm" onclick="window.location.reload()">${ICONS.refresh} Làm Mới</button>
+      </h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Tên / ID</th>
+            <th>Thư Mục</th>
+            <th>Địa Chỉ (IP:Port)</th>
+            <th>Quyền</th>
+            <th>Thời Hạn</th>
+            <th>Thao Tác</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{SAVED_CONNS_ROWS}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SECTION HOST -->
+  <div id="section-host" style="display:none;">
+    <div class="card" id="host-config-card">
+      <h3><span>📤 Bật Chia Sẻ Workspace Nhanh Cho Bạn Bè</span></h3>
+      <form onsubmit="startHosting(event)">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Đường Dẫn Thư Mục (Workspace)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="text" id="host-path" class="input-text" value="./" placeholder="Ví dụ: D:/slugdoc hoặc ./" style="height:38px; box-sizing:border-box;" required>
+              <label class="btn-sec" style="cursor:pointer; white-space:nowrap; display:inline-flex; align-items:center; justify-content:center; height:38px; box-sizing:border-box; padding:0 14px; font-size:12px;">
+                <input type="file" id="host-folder-picker" webkitdirectory directory style="display:none;" onchange="if(this.files.length>0)document.getElementById('host-path').value='./'+this.files[0].webkitRelativePath.split('/')[0]">
+                <span>${ICONS.folder}</span>
+                <span>Chọn Thư Mục</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Cổng Máy Chủ (Port)</label>
+            <input type="number" id="host-port" class="input-text" value="9443" placeholder="Tự động (9443)" style="height:38px; box-sizing:border-box;">
+          </div>
+          <div class="form-group">
+            <label>Mức Mật Mã Mặc Định (Cipher Suite)</label>
+            <select id="host-suite" class="input-select" style="height:38px; box-sizing:border-box;">
+              <option value="3" selected>⭐ Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng]</option>
+              <option value="2">⚛️ Mức 2: Modern Hybrid (ML-KEM-768 + X25519 + ChaCha20)</option>
+              <option value="1">⚡ Mức 1: Classical Fast (X25519 + AES-256-GCM)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid" style="grid-template-columns: 2fr 1fr;">
+          <div class="form-group">
+            <label>Chế Độ Lọc Dữ Liệu Slug Guard</label>
+            <select id="host-filter" class="input-select">
+              <option value="protected" selected>🛡️ Protected (Lọc rác .gitignore + Chặn secret qua Regex &amp; AI)</option>
+              <option value="include_ignored">📦 Include-Ignored (Gửi cả build artifacts, chỉ chặn secret)</option>
+              <option value="none">⚠️ None (Gửi toàn bộ, không lọc - Thận trọng!)</option>
+            </select>
+          </div>
+          <div class="form-group" style="display:flex; align-items:flex-end;">
+            <button type="submit" class="btn" style="width:100%; height:38px; justify-content:center;">
+              ${ICONS.plus} 🚀 Bắt Đầu Chia Sẻ Thư Mục
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>
+        <span>📁 Danh Sách Các Thư Mục Đang Chia Sẻ (<span id="hosted-count-title">1</span>)</span>
+        <button class="btn-sec btn-sm" onclick="renderHostedWorkspaces()">${ICONS.refresh} Làm Mới Danh Sách</button>
+      </h3>
+      <div id="hosted-workspaces-list"></div>
+    </div>
+
+    <!-- User Accounts CRUD -->
+    <div class="card">
+      <h3>
+        <span>${ICONS.users} Quản Lý Tài Khoản Người Dùng &amp; Phân Quyền Ephemeral RBAC (<span id="users-count">3</span>)</span>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-sm" onclick="openAddUserModal()">${ICONS.plus} Tạo Tài Khoản Mới</button>
+          <button class="btn-sec btn-sm" onclick="renderUserAccounts()">${ICONS.refresh} Làm Mới</button>
+        </div>
+      </h3>
+      <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px; font-family:'JetBrains Mono', monospace;">
+        Quản lý các tài khoản cố định hoặc tạm thời (Ephemeral) để bạn bè đăng nhập vào workspace mà không cần phụ thuộc mã OTP quay vòng. <strong>Một tài khoản có thể được đăng nhập đồng thời bởi nhiều máy trạm.</strong>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Tên Tài Khoản</th>
+            <th>Phân Quyền (RBAC Role)</th>
+            <th>Trạng Thái / Thời Hạn (TTL)</th>
+            <th>Thời Gian Tạo</th>
+            <th>Thao Tác</th>
+          </tr>
+        </thead>
+        <tbody id="users-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">
+    Slug 1.0.0 &bull; Trạm Điều Khiển Workspace Trực Tiếp Giữa Các Máy Tính &bull; Apache-2.0
+  </div>
+</div>
+
+<!-- Modal QR Code -->
+<div class="modal-overlay" id="qr-modal" onclick="if(event.target===this)closeQrModal()">
+  <div class="modal-box" style="text-align:center;">
+    <h3 style="margin-top:0;">📱 Mã QR Kết Nối Nhanh Cho Thiết Bị Di Động</h3>
+    <p style="font-size:12px; color:var(--text-muted);">Quét mã này bằng ứng dụng Slug Mobile hoặc máy ảnh trên điện thoại để nhận workspace:</p>
+    <div style="background:#f6f8fa; border:1px solid #d0d7de; padding:24px; display:inline-block; margin:12px auto; border-radius:4px;">
+      <svg width="180" height="180" viewBox="0 0 100 100">
+        <rect x="0" y="0" width="100" height="100" fill="#fff"/>
+        <rect x="10" y="10" width="25" height="25" fill="#1f2328"/>
+        <rect x="15" y="15" width="15" height="15" fill="#fff"/>
+        <rect x="18" y="18" width="9" height="9" fill="#1f2328"/>
+        <rect x="65" y="10" width="25" height="25" fill="#1f2328"/>
+        <rect x="70" y="15" width="15" height="15" fill="#fff"/>
+        <rect x="73" y="18" width="9" height="9" fill="#1f2328"/>
+        <rect x="10" y="65" width="25" height="25" fill="#1f2328"/>
+        <rect x="15" y="70" width="15" height="15" fill="#fff"/>
+        <rect x="18" y="73" width="9" height="9" fill="#1f2328"/>
+        <rect x="45" y="20" width="10" height="10" fill="#1f2328"/>
+        <rect x="40" y="45" width="20" height="10" fill="#1f2328"/>
+        <rect x="45" y="65" width="10" height="20" fill="#1f2328"/>
+        <rect x="65" y="45" width="20" height="10" fill="#1f2328"/>
+        <rect x="75" y="65" width="15" height="15" fill="#1f2328"/>
+      </svg>
+    </div>
+    <div style="font-family:'JetBrains Mono', monospace; font-size:14px; margin-bottom:16px;">
+      Cổng: <strong id="qr-port-display">9443</strong> &bull; OTP: <strong id="qr-otp-display" style="color:#0969da; font-size:18px;">48291048</strong>
+    </div>
+    <button class="btn btn-sm" onclick="closeQrModal()">Đóng Cửa Sổ</button>
+  </div>
+</div>
+
+<!-- Modal Terminal Help -->
+<div class="modal-overlay" id="cli-modal" onclick="if(event.target===this)closeCliModal()">
+  <div class="modal-box">
+    <h3 style="margin-top:0;">>_ Hướng Dẫn Dùng Lệnh Terminal CLI</h3>
+    <p style="font-size:12px; color:var(--text-muted);">Bạn bè của bạn chỉ cần mở Command Prompt / PowerShell / Bash và dán lệnh sau:</p>
+    <div style="background:#1f2328; color:#e6edf3; padding:12px; border-radius:4px; font-family:'JetBrains Mono', monospace; font-size:12px; margin-bottom:12px; word-break:break-all;">
+      <code id="cli-cmd-display">slug get 127.0.0.1:9443?otp=48291048</code>
+    </div>
+    <div style="font-size:11px; color:var(--text-muted); margin-bottom:16px;">
+      💡 Lệnh trên sẽ tự động thiết lập kênh mật mã Hậu lượng tử NIST FIPS 203 (ML-KEM) và đồng bộ workspace về máy trạm đích chỉ trong vài giây.
+    </div>
+    <button class="btn btn-sm" onclick="closeCliModal()">Đã Hiểu</button>
+  </div>
+</div>
+
+<!-- Modal User Account Add/Edit -->
+<div class="modal-overlay" id="user-modal" onclick="if(event.target===this)closeUserModal()">
+  <div class="modal-box">
+    <h3 style="margin-top:0;" id="user-modal-title">Tạo Tài Khoản Người Dùng Mới</h3>
+    <form onsubmit="saveUserModal(event)">
+      <div class="form-group">
+        <label>Tên Đăng Nhập (Username)</label>
+        <input type="text" id="modal-username" class="input-text" placeholder="Ví dụ: bob, alice_dev" required>
+      </div>
+      <div class="form-group">
+        <label>Mật Khẩu (Password)</label>
+        <input type="password" id="modal-password" class="input-text" placeholder="Nhập mật khẩu an toàn">
+      </div>
+      <div class="form-group">
+        <label>Quyền Hạn (RBAC Role)</label>
+        <select id="modal-role" class="input-select">
+          <option value="rw">[rw] Toàn Quyền (Đọc &amp; Ghi - Đầy Đủ)</option>
+          <option value="r">[r] Chỉ Đọc (Chỉ cho tải về, không cho sửa)</option>
+          <option value="w">[w] Nộp Bài (Chỉ cho tải lên / Hộp thư Blind Drop)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Thời Gian Sống Của Tài Khoản (TTL Expiration)</label>
+        <select id="modal-ttl" class="input-select">
+          <option value="1800">30 Phút (Ephemeral)</option>
+          <option value="7200">2 Giờ</option>
+          <option value="86400" selected>24 Giờ (1 Ngày)</option>
+          <option value="604800">7 Ngày</option>
+          <option value="0">Vô Thời Hạn (Permanent ∞)</option>
+        </select>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+        <button type="button" class="btn-sec btn-sm" onclick="closeUserModal()">Hủy Bỏ</button>
+        <button type="submit" class="btn btn-sm">Lưu Tài Khoản</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+</body>
+</html>
+)raw";
+
+        size_t p = html.find("{{PORTAL_PORT}}");
+        if (p != std::string::npos) html.replace(p, 15, std::to_string(portal_port));
+
+        std::string conns_rows = "";
+        uint64_t now = core::Utils::current_timestamp();
+        for (const auto& c : conns) {
+            std::string exp_str = (c.expires_at == 0) ? "Permanent (∞)"
+                                  : (c.expires_at > now ? core::Utils::format_duration(c.expires_at - now) : "<span style='color:var(--danger);'>Expired</span>");
+            conns_rows += "<tr class='clickable-row' onclick='openSaved(\"" + c.id + "\")'><td><strong>" + c.id + "</strong></td>"
+                       + "<td><code>" + c.workspace + "</code></td>"
+                       + "<td><code>" + c.host + ":" + std::to_string(c.port) + "</code></td>"
+                       + "<td><span class='role-tag'>" + core::role_to_string(c.role) + "</span></td>"
+                       + "<td>" + exp_str + "</td>"
+                       + "<td onclick='event.stopPropagation()'><button class='btn btn-xs' onclick='openSaved(\"" + c.id + "\")'>🚀 Open</button> "
+                       + "<button class='btn-danger btn-xs' onclick='removeSaved(\"" + c.id + "\")'>Remove</button></td></tr>";
         }
-        h << "</div></div>"
-          << "<!-- SECTION HOST -->"
-          << "<div id='sec-host' style='display:none;'>"
-          << "<div class='card'>"
-          << "<h3><span>📤 Bật Chia Sẻ Workspace Nhanh Cho Bạn Bè</span></h3>"
-          << "<form onsubmit='startHosting(event)'>"
-          << "<div class='form-grid'>"
-          << "<div class='form-group'><label>Đường Dẫn Thư Mục (Workspace)</label><input type='text' id='host-path' class='input-text' value='./' placeholder='Ví dụ: D:/slugdoc hoặc ./' required></div>"
-          << "<div class='form-group'><label>Cổng Máy Chủ (Port)</label><input type='number' id='host-port' class='input-text' value='9443' placeholder='Tự động (9443)'></div>"
-          << "<div class='form-group'><label>Cấp Độ Bảo Mật</label><select class='input-select' id='host-suite'>"
-          << "<option value='1' selected>Mức 1: Classical Fast (SHA-256 / X25519) - Mặc định nhanh</option>"
-          << "<option value='2'>Mức 2: Modern Fast (BLAKE3 / X25519 / ChaCha20)</option>"
-          << "<option value='3'>Mức 3: Pure PQC (ML-KEM-768 / Dilithium3) - An toàn lượng tử</option>"
-          << "</select></div></div>"
-          << "<div class='form-group'><label>Chế Độ Lọc Dữ Liệu (Filter Mode)</label><select class='input-select' id='host-filter'>"
-          << "<option value='protected' selected>🛡️ Protected (Mặc định: Lọc sạch rác build .gitignore + Chặn secret)</option>"
-          << "<option value='include-ignored'>📦 Include-Ignored (Chia sẻ cả file build, nhưng vẫn chặn secret)</option>"
-          << "<option value='none'>⚠️ None (Chia sẻ nguyên trạng cho máy tin cậy)</option>"
-          << "</select></div>"
-          << "<div style='margin-top:14px;'><button type='submit' class='btn' style='padding:8px 18px;'>🚀 Bắt Đầu Chia Sẻ Thư Mục</button></div>"
-          << "</form></div>"
-          << "<div class='card'>"
-          << "<h3><span>📋 Danh Sách Các Thư Mục Đang Chia Sẻ (<span id='hosted-count'>1</span>)</span></h3>"
-          << "<div id='hosted-workspaces-list' style='margin-top:12px;'></div>"
-          << "</div></div>"
-          << "<div class='footer'>Slug &bull; Zero-CLI Friendly Client &bull; 100% PQC Wire Encrypted &bull; Apache-2.0</div>"
-          << "</div></body></html>";
-        return h.str();
+        if (conns_rows.empty()) {
+            conns_rows = "<tr><td colspan='6' style='text-align:center; color:var(--text-muted); padding:18px;'>Chưa có trạm lưu nào. Điền IP và mã OTP vào biểu mẫu phía trên để kết nối ngay.</td></tr>";
+        }
+
+        p = html.find("{{SAVED_CONNS_ROWS}}");
+        if (p != std::string::npos) html.replace(p, 20, conns_rows);
+
+        p = html.find("{{SAVED_CONNS_COUNT}}");
+        if (p != std::string::npos) html.replace(p, 21, std::to_string(conns.size()));
+
+        return html;
     }
 };
 
