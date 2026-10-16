@@ -19,7 +19,7 @@ public:
     PolicyEngine(std::filesystem::path workspace_root, std::filesystem::path rules_file = {});
 
     // Evaluate whether a file should be transferred or skipped
-    FilterDecision evaluate(const std::filesystem::path& relative_path, bool is_dir, std::string_view content = {}) const;
+    FilterDecision evaluate(const std::filesystem::path& relative_path, bool is_dir, std::string_view content = {}, bool ignore_gitignore = false) const;
 
     HierarchicalGitignore& gitignore() { return gitignore_; }
     const HierarchicalGitignore& gitignore() const { return gitignore_; }

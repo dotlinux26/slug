@@ -65,7 +65,7 @@ Toàn bộ hệ thống CLI của Slug tuân thủ nghiêm ngặt chuẩn POSIX/
 SLUG THE ESSENTIAL 9 CORE CLI
 
 [HOST WORKSPACE]
-  slug add [path]             Khởi tạo và host workspace an toàn (-p <port>, -s <suite>, -t <ttl>, --ai)
+  slug add [path]             Khởi tạo và host workspace (-p, -s, -t, --ai, --filter-mode, --no-filter, -d)
   slug status [-p <port>]     Kiểm tra danh sách hoặc chi tiết server đang chạy (-s rút gọn)
   slug totp [-p <port>]       Xem bảng 3 mã OTP phân quyền hoặc xuất mã nhanh (-r <role> --code-only)
   slug stop [-p <port>|--all] Dừng server cụ thể hoặc toàn bộ server đang mở
@@ -116,6 +116,11 @@ Màn hình terminal sẽ xuất hiện bảng thông số và dòng hướng d�
 Connect (One-Shot): slug get 192.168.1.107:9443?otp=12822565
 +----------------------------------------------------------------------------+
 ```
+
+> **Tùy chọn Chế độ Lọc Nội dung (`--filter-mode`):**
+> * `--filter-mode protected` *(Mặc định)*: Áp dụng đầy đủ `.gitignore`, `rules.conf`, phát hiện secret và cách ly (quarantine).
+> * `--include-ignored`: Bỏ qua `.gitignore` (truyền cả thư mục build/deps), nhưng vẫn áp dụng luật chặn secret của host.
+> * `--no-filter` *(hoặc `--filter-mode none`)*: Chế độ truyền thô không lọc nội dung cho đồng đội tin cậy (vẫn bảo vệ chống path traversal và cô lập metadata `.slug/`).
 
 **Bước 2: Trên máy khách (Client):**
 Người nhận chỉ cần gõ đúng một câu lệnh để tải toàn bộ thư mục về máy đích:

@@ -56,9 +56,14 @@ struct VfsResolveResult {
 
 class SlugVFS {
 public:
-    explicit SlugVFS(std::filesystem::path server_root_path, bool enable_ai = false);
+    explicit SlugVFS(std::filesystem::path server_root_path,
+                     bool enable_ai = false,
+                     FilterMode filter_mode = FilterMode::PROTECTED);
 
     const std::filesystem::path& server_root() const { return server_root_; }
+
+    FilterMode filter_mode() const { return filter_mode_; }
+    void set_filter_mode(FilterMode mode) { filter_mode_ = mode; }
 
     // Converts any input path (e.g. "src/main.cpp", "/src/main.cpp", "\\src\\main.cpp")
     // to a standardized virtual path starting with "/"
@@ -82,6 +87,7 @@ public:
 private:
     std::filesystem::path server_root_;
     bool enable_ai_{false};
+    FilterMode filter_mode_{FilterMode::PROTECTED};
     policy::PolicyEngine policy_engine_;
     std::unique_ptr<ai::StatefulAuditIndex> audit_index_;
 };

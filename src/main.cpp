@@ -376,6 +376,9 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
                                     -s, --suite <1|2|3|pqc> (Default: 3 pure-pqc)
                                     -t, --ttl <duration>    (Default: 24h, inf for permanent)
                                     -a, --ai                (Enable Stateful AI Secret Guard)
+                                    --filter-mode <mode>    (protected [default], include-ignored, none)
+                                    --no-filter             (Raw transfer: disable gitignore & quarantine)
+                                    --include-ignored       (Transfer gitignored files but enforce rules)
                                     -d, --daemon            (Run as background daemon)
 
     status                   Inspect active workspaces, ports, suites, and realtime OTPs
@@ -464,6 +467,7 @@ int cmd_add(int argc, char* argv[]) {
     core::SuiteID suite = core::suite_from_string(default_suite_name);
     uint64_t ttl_sec = 86400;
     bool enable_ai = false;
+    core::FilterMode filter_mode = core::FilterMode::PROTECTED;
     bool daemon = false;
     bool is_internal_worker = false;
 
@@ -477,6 +481,12 @@ int cmd_add(int argc, char* argv[]) {
             ttl_sec = core::Utils::parse_ttl(argv[++i]);
         } else if (arg == "-a" || arg == "--ai" || arg == "-ai") {
             enable_ai = true;
+        } else if (arg == "--filter-mode" && i + 1 < argc) {
+            filter_mode = core::filter_mode_from_string(argv[++i]);
+        } else if (arg == "--no-filter" || arg == "--raw") {
+            filter_mode = core::FilterMode::NONE;
+        } else if (arg == "--include-ignored" || arg == "--all") {
+            filter_mode = core::FilterMode::INCLUDE_IGNORED;
         } else if (arg == "--daemon" || arg == "-d") {
             daemon = true;
         } else if (arg == "--internal-worker") {
@@ -521,7 +531,9 @@ int cmd_add(int argc, char* argv[]) {
         std::string cmdline = "\"" + exe + "\" add \"" + folder_path + "\" -p " + std::to_string(port) +
                               " -s " + core::suite_to_string(suite) +
                               " -t " + std::to_string(ttl_sec) +
-                              (enable_ai ? " -a" : "") + " --internal-worker";
+                              (enable_ai ? " -a" : "") +
+                              " --filter-mode " + core::filter_mode_to_string(filter_mode) +
+                              " --internal-worker";
         STARTUPINFOA si{};
         PROCESS_INFORMATION pi{};
         si.cb = sizeof(si);
@@ -536,6 +548,7 @@ int cmd_add(int argc, char* argv[]) {
             std::cout << "    Workspace: " << folder_path << std::endl;
             std::cout << "    Port:      " << port << std::endl;
             std::cout << "    Crypto:    " << core::suite_to_string(suite) << std::endl;
+            std::cout << "    Filter:    " << core::filter_mode_to_string(filter_mode) << std::endl;
             return 0;
         } else {
             std::cerr << "[-] Failed to spawn background worker process (error " << GetLastError() << ")." << std::endl;
@@ -551,8 +564,15 @@ int cmd_add(int argc, char* argv[]) {
 
     print_banner();
     std::cout << "[*] Initializing Workspace at: " << std::filesystem::absolute(folder_path).string() << std::endl;
+    if (filter_mode == core::FilterMode::NONE) {
+        std::cout << "[!] WARNING: Workspace hosted with --filter-mode none." << std::endl;
+        std::cout << "    Content quarantine and .gitignore filters are DISABLED for this session." << std::endl;
+        std::cout << "    All files (except internal .slug metadata) will be accessible to authenticated peers." << std::endl;
+    } else if (filter_mode == core::FilterMode::INCLUDE_IGNORED) {
+        std::cout << "[*] Filter Mode: include-ignored (.gitignore disabled, rules & secret quarantine active)." << std::endl;
+    }
 
-    if (!core::WorkspaceManager::instance().add_workspace(folder_path, port, suite, ttl_sec, enable_ai)) {
+    if (!core::WorkspaceManager::instance().add_workspace(folder_path, port, suite, ttl_sec, enable_ai, filter_mode)) {
 #if defined(SLUG_PLATFORM_POSIX)
         if (daemon && pipefd[1] >= 0) {
             char fail[] = "FAIL";
@@ -578,6 +598,7 @@ int cmd_add(int argc, char* argv[]) {
     std::cout << "  Port:            " << port << std::endl;
     std::cout << "  Crypto Suite:    " << core::suite_to_string(suite) << std::endl;
     std::cout << "  AI Secret Guard: " << (enable_ai ? "ENABLED (Stateful BLAKE3 Audit)" : "OFF") << std::endl;
+    std::cout << "  Filter Mode:     " << core::filter_mode_to_string(filter_mode) << std::endl;
     std::cout << "  Session TTL:     " << core::Utils::format_duration(ttl_sec) << std::endl;
     auto print_dynamic_panel = [&](uint32_t current_rem, const std::string& crw, const std::string& cr, const std::string& cw, bool clear_trailing) {
         std::string clr = clear_trailing ? "\033[K\n" : "\n";
@@ -918,6 +939,7 @@ int cmd_status(int argc, char* argv[]) {
                   << std::endl;
 
         std::cout << "  Path:      " << norm_path.string() << std::endl;
+        std::cout << "  Filter:    " << core::filter_mode_to_string(w.filter_mode) << std::endl;
         if (!live_r.empty() && !live_w.empty()) {
             std::cout << "  Role OTPs: [rw] " << live_rw << " | [r] " << live_r << " | [w] " << live_w << " (Rotates in " << rem << "s)" << std::endl;
         }

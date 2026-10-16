@@ -8,7 +8,7 @@ PolicyEngine::PolicyEngine(std::filesystem::path workspace_root, std::filesystem
     gitignore_.scan_and_load_all(workspace_root_);
 }
 
-FilterDecision PolicyEngine::evaluate(const std::filesystem::path& relative_path, bool is_dir, std::string_view content) const {
+FilterDecision PolicyEngine::evaluate(const std::filesystem::path& relative_path, bool is_dir, std::string_view content, bool ignore_gitignore) const {
     std::string proto_path = platform::PathUtils::to_protocol_path(relative_path);
 
     // 1. Mandatory isolation: .slug/ and .git/ internal metadata are unconditionally blocked
@@ -26,8 +26,8 @@ FilterDecision PolicyEngine::evaluate(const std::filesystem::path& relative_path
         }
     }
 
-    // 3. Hierarchical .gitignore evaluation
-    if (gitignore_.is_ignored(relative_path, is_dir)) {
+    // 3. Hierarchical .gitignore evaluation (skipped if ignore_gitignore is true)
+    if (!ignore_gitignore && gitignore_.is_ignored(relative_path, is_dir)) {
         return {false, "gitignore", "Ignored by .gitignore"};
     }
 

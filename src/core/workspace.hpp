@@ -17,6 +17,7 @@ struct WorkspaceInfo {
     std::filesystem::path path;
     SuiteID suite{SuiteID::SUITE_3_PURE_PQC};
     bool ai_enabled{false};
+    FilterMode filter_mode{FilterMode::PROTECTED};
     uint64_t ttl_seconds{86400};
     uint32_t pid{0};
     std::string totp_code;
@@ -32,7 +33,8 @@ public:
                        uint16_t port = kDefaultPort,
                        SuiteID suite = SuiteID::SUITE_3_PURE_PQC,
                        uint64_t ttl_seconds = 86400,
-                       bool enable_ai = false);
+                       bool enable_ai = false,
+                       FilterMode filter_mode = FilterMode::PROTECTED);
 
     // Stops a workspace on a given port
     bool stop_workspace(uint16_t port);

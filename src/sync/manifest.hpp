@@ -37,13 +37,16 @@ struct WorkspaceManifest {
     void compute_root_hash();
 };
 
+#include "src/core/types.hpp"
+
 class ManifestBuilder {
 public:
     static WorkspaceManifest build(
         const std::filesystem::path& workspace_root,
         uint64_t epoch = 1,
         uint8_t suite_id = 3,
-        bool enable_ai = false);
+        bool enable_ai = false,
+        core::FilterMode filter_mode = core::FilterMode::PROTECTED);
 };
 
 } // namespace slug::sync

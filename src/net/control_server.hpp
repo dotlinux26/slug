@@ -50,7 +50,8 @@ public:
                   uint16_t port = core::kDefaultPort,
                   core::SuiteID suite_id = core::SuiteID::SUITE_3_PURE_PQC,
                   uint64_t cert_ttl = 86400,
-                  bool enable_ai = false);
+                  bool enable_ai = false,
+                  core::FilterMode filter_mode = core::FilterMode::PROTECTED);
     ~ControlServer();
 
     bool start();
@@ -64,6 +65,7 @@ public:
     core::AuditLogger& audit_logger() { return audit_logger_; }
     bool is_running() const { return running_; }
     bool ai_enabled() const { return enable_ai_; }
+    core::FilterMode filter_mode() const { return filter_mode_; }
     uint64_t cert_ttl() const { return cert_ttl_; }
 
     std::optional<SessionState> get_session(uint32_t session_id) const;
@@ -99,6 +101,7 @@ private:
     core::AuditLogger audit_logger_;
     crypto::KemKeyPair server_kem_;
     crypto::SigKeyPair server_sig_;
+    core::FilterMode filter_mode_{core::FilterMode::PROTECTED};
     core::SlugVFS vfs_;
 
     mutable std::mutex session_mutex_;

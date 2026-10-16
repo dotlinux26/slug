@@ -119,7 +119,8 @@ WorkspaceManifest ManifestBuilder::build(
     const fs::path& workspace_root,
     uint64_t epoch,
     uint8_t suite_id,
-    bool enable_ai) {
+    bool enable_ai,
+    core::FilterMode filter_mode) {
 
     WorkspaceManifest manifest;
     manifest.epoch = epoch;
@@ -140,11 +141,20 @@ WorkspaceManifest ManifestBuilder::build(
         fs::path rel = entry.path().lexically_relative(workspace_root);
         std::string proto_path = platform::PathUtils::to_protocol_path(rel);
 
-        // Step 1: Policy evaluation (Rules + Gitignore)
-        auto decision = policy_engine.evaluate(rel, false);
-        if (!decision.is_allowed) {
-            manifest.skipped.push_back({proto_path, decision.reason, "RULE_OR_GITIGNORE_BLOCKED"});
+        // Mandatory isolation: .slug and .git metadata are strictly protected ALWAYS
+        if (platform::PathUtils::is_internal_slug_path(rel)) {
+            manifest.skipped.push_back({proto_path, "Internal Slug or Git metadata is strictly protected", "MANDATORY_INTERNAL"});
             continue;
+        }
+
+        // Step 1: Policy evaluation (Rules + Gitignore)
+        if (filter_mode != core::FilterMode::NONE) {
+            bool ignore_gi = (filter_mode == core::FilterMode::INCLUDE_IGNORED);
+            auto decision = policy_engine.evaluate(rel, false, {}, ignore_gi);
+            if (!decision.is_allowed) {
+                manifest.skipped.push_back({proto_path, decision.reason, "RULE_OR_GITIGNORE_BLOCKED"});
+                continue;
+            }
         }
 
         // Read file content for BLAKE3 hashing and AI checking
@@ -156,8 +166,8 @@ WorkspaceManifest ManifestBuilder::build(
 
         std::string current_hash = crypto::Blake3::hash_hex(*file_data);
 
-        // Step 2: Stateful AI & Smart Filter Audit evaluation (only active when enable_ai is true)
-        if (enable_ai) {
+        // Step 2: Stateful AI & Smart Filter Audit evaluation (only active when enable_ai is true and filter_mode != NONE)
+        if (enable_ai && filter_mode != core::FilterMode::NONE) {
             core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
 
             if (cached_status == core::AuditStatus::AI_FLAGGED) {

@@ -16,15 +16,17 @@ ControlServer::ControlServer(std::filesystem::path workspace_root,
                              uint16_t port,
                              core::SuiteID suite_id,
                              uint64_t cert_ttl,
-                             bool enable_ai)
+                             bool enable_ai,
+                             core::FilterMode filter_mode)
     : workspace_root_(std::move(workspace_root)),
       port_(port),
       suite_id_(suite_id),
       cert_ttl_(cert_ttl),
       enable_ai_(enable_ai),
+      filter_mode_(filter_mode),
       acl_manager_(workspace_root_ / ".slug" / "acl.db"),
       audit_logger_(workspace_root_ / ".slug" / "audit.log"),
-      vfs_(workspace_root_, enable_ai_) {
+      vfs_(workspace_root_, enable_ai_, filter_mode_) {
 
     suite_ = crypto::ICryptoSuite::create(suite_id_);
     server_kem_ = suite_->generate_kem_keypair();
@@ -46,7 +48,12 @@ bool ControlServer::start() {
     running_ = true;
     worker_thread_ = std::make_unique<std::thread>(&ControlServer::run_accept_loop, this);
     audit_logger_.log("system", "SERVER_START", workspace_root_.string(),
-                      "Server started on port " + std::to_string(port_) + " with " + suite_->name());
+                      "Server started on port " + std::to_string(port_) + " with " + suite_->name() +
+                      " (filter_mode=" + core::filter_mode_to_string(filter_mode_) + ")");
+    if (filter_mode_ == core::FilterMode::NONE) {
+        audit_logger_.log("host_admin", "HOST_SHARE_UNFILTERED", "",
+                          "Workspace started with --filter-mode none (Content filtering disabled)", true);
+    }
     return true;
 }
 
@@ -545,7 +552,7 @@ std::string ControlServer::get_or_build_manifest_json() {
         return cached_manifest_json_;
     }
 
-    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_);
+    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_);
     cached_manifest_json_ = manifest.to_json();
     manifest_cached_at_ = now;
     manifest_dirty_ = false;

@@ -94,6 +94,27 @@ inline AuditStatus audit_status_from_string(std::string_view s) {
     return AuditStatus::UNKNOWN;
 }
 
+enum class FilterMode : uint8_t {
+    PROTECTED       = 0, // Default: .gitignore + rules.conf + secret detection + quarantine
+    INCLUDE_IGNORED = 1, // Ignore .gitignore (shares build/, node_modules/), but still enforces rules.conf & secret/AI quarantine
+    NONE            = 2  // Raw/No-filter: shares all files without gitignore or content quarantine (except internal .slug/.git metadata & anti-traversal)
+};
+
+inline std::string filter_mode_to_string(FilterMode m) {
+    switch (m) {
+        case FilterMode::PROTECTED:       return "protected";
+        case FilterMode::INCLUDE_IGNORED: return "include-ignored";
+        case FilterMode::NONE:            return "none";
+    }
+    return "protected";
+}
+
+inline FilterMode filter_mode_from_string(std::string_view s) {
+    if (s == "none" || s == "raw" || s == "no-filter" || s == "off") return FilterMode::NONE;
+    if (s == "include-ignored" || s == "all" || s == "ignored") return FilterMode::INCLUDE_IGNORED;
+    return FilterMode::PROTECTED;
+}
+
 constexpr uint16_t kDefaultPort = 9443;
 constexpr size_t kDefaultChunkSize = 64 * 1024; // 64 KiB logic chunk
 constexpr size_t kXChaCha20Poly1305NonceSize = 24;

@@ -49,6 +49,7 @@ static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p, bool
                 wi.path = fs::path(item.value("path", ""));
                 wi.suite = suite_from_string(item.value("suite", "3"));
                 wi.ai_enabled = item.value("ai_enabled", false);
+                wi.filter_mode = filter_mode_from_string(item.value("filter_mode", "protected"));
                 wi.ttl_seconds = item.value("ttl_seconds", 86400ULL);
                 wi.pid = item.value("pid", 0U);
 
@@ -70,6 +71,7 @@ static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p, bool
             obj["path"] = item.path.string();
             obj["suite"] = suite_to_short_name(item.suite);
             obj["ai_enabled"] = item.ai_enabled;
+            obj["filter_mode"] = filter_mode_to_string(item.filter_mode);
             obj["ttl_seconds"] = item.ttl_seconds;
             obj["pid"] = item.pid;
             j.push_back(obj);
@@ -108,6 +110,7 @@ void WorkspaceManager::update_registry(const WorkspaceInfo& info, bool remove) {
         obj["path"] = item.path.string();
         obj["suite"] = suite_to_short_name(item.suite);
         obj["ai_enabled"] = item.ai_enabled;
+        obj["filter_mode"] = filter_mode_to_string(item.filter_mode);
         obj["ttl_seconds"] = item.ttl_seconds;
         obj["pid"] = item.pid;
         j.push_back(obj);
@@ -120,7 +123,8 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
                                     uint16_t port,
                                     SuiteID suite,
                                     uint64_t ttl_seconds,
-                                    bool enable_ai) {
+                                    bool enable_ai,
+                                    FilterMode filter_mode) {
 
     std::error_code ec;
     fs::path canonical_path = fs::canonical(folder_path, ec);
@@ -154,7 +158,7 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
         return false;
     }
 
-    auto ctrl = std::make_shared<net::ControlServer>(canonical_path, port, suite, ttl_seconds, enable_ai);
+    auto ctrl = std::make_shared<net::ControlServer>(canonical_path, port, suite, ttl_seconds, enable_ai, filter_mode);
     if (!ctrl->start()) {
         std::cerr << "Error: Failed to bind server to port " << port << std::endl;
         return false;
@@ -165,9 +169,9 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     ctrl->set_web_server(web.get());
     web->start();
 
-    if (enable_ai) {
+    if (enable_ai && filter_mode != FilterMode::NONE) {
         // Initial scan on startup to populate index.db and detect flagged secrets immediately
-        sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true);
+        sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode);
     }
 
     WorkspaceInfo wi;
@@ -175,6 +179,7 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     wi.path = canonical_path;
     wi.suite = suite;
     wi.ai_enabled = enable_ai;
+    wi.filter_mode = filter_mode;
     wi.ttl_seconds = ttl_seconds;
 #if defined(SLUG_PLATFORM_POSIX)
     wi.pid = static_cast<uint32_t>(getpid());

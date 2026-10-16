@@ -8,8 +8,9 @@ namespace slug::core {
 
 namespace fs = std::filesystem;
 
-SlugVFS::SlugVFS(fs::path server_root_path, bool enable_ai)
+SlugVFS::SlugVFS(fs::path server_root_path, bool enable_ai, FilterMode filter_mode)
     : enable_ai_(enable_ai),
+      filter_mode_(filter_mode),
       policy_engine_(server_root_path, server_root_path / ".slug" / "rules.conf") {
     std::error_code ec;
     server_root_ = fs::canonical(server_root_path, ec);
@@ -107,9 +108,10 @@ VfsResolveResult SlugVFS::resolve_and_jail(std::string_view virtual_path, Role r
     }
 
     // 5. Policy filter & AI check
-    if (!rel.empty()) {
+    if (!rel.empty() && filter_mode_ != FilterMode::NONE) {
         bool is_dir = fs::is_directory(canonical_target, ec);
-        auto dec = policy_engine_.evaluate(rel, is_dir);
+        bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
+        auto dec = policy_engine_.evaluate(rel, is_dir, {}, ignore_gi);
         if (!dec.is_allowed) {
             res.status = VfsStatus::FILTERED;
             res.error_message = "File filtered by rule: " + dec.reason;
@@ -150,11 +152,14 @@ std::pair<VfsStatus, std::vector<VfsEntry>> SlugVFS::list_directory(std::string_
         bool is_dir = item.is_directory(ec);
 
         // Filter evaluation
-        auto dec = policy_engine_.evaluate(rel_p.string(), is_dir);
-        if (!dec.is_allowed) continue;
+        if (filter_mode_ != FilterMode::NONE) {
+            bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
+            auto dec = policy_engine_.evaluate(rel_p.string(), is_dir, {}, ignore_gi);
+            if (!dec.is_allowed) continue;
 
-        if (enable_ai_ && audit_index_ && !is_dir) {
-            if (audit_index_->is_flagged(rel_p.string())) continue;
+            if (enable_ai_ && audit_index_ && !is_dir) {
+                if (audit_index_->is_flagged(rel_p.string())) continue;
+            }
         }
 
         VfsEntry e;
