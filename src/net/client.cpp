@@ -294,14 +294,15 @@ std::optional<std::vector<uint8_t>> SlugClient::fetch_chunk(const std::string& r
 
 bool SlugClient::pull(const fs::path& local_target_dir,
                       const sync::DeltaSyncOptions& options,
-                      std::function<void(const std::string&)> log_callback) {
+                      std::function<void(const std::string&)> log_callback,
+                      const std::optional<sync::WorkspaceManifest>& cached_manifest) {
 
     auto log = [&](const std::string& m) {
         if (log_callback) log_callback(m);
         else std::cout << m << std::endl;
     };
 
-    auto manifest_opt = fetch_manifest();
+    auto manifest_opt = cached_manifest ? cached_manifest : fetch_manifest();
     if (!manifest_opt) {
         log("Error: Failed to fetch workspace manifest");
         return false;
@@ -392,6 +393,75 @@ bool SlugClient::pull(const fs::path& local_target_dir,
 
     log("Pull complete! Transferred " + core::Utils::format_size(plan.bytes_to_transfer) +
         ", saved " + core::Utils::format_size(plan.bytes_saved) + " (Git-like Delta Sync)");
+    return true;
+}
+
+bool SlugClient::get_file(const std::string& remote_path,
+                          const fs::path& local_dest,
+                          std::function<void(const std::string&)> log_callback) {
+    auto log = [&](const std::string& m) {
+        if (log_callback) log_callback(m);
+        else std::cout << m << std::endl;
+    };
+
+    auto manifest_opt = fetch_manifest();
+    if (!manifest_opt) {
+        log("Error: Failed to fetch workspace manifest");
+        return false;
+    }
+
+    const auto& manifest = *manifest_opt;
+    const sync::ManifestFileEntry* target_entry = nullptr;
+    for (const auto& f : manifest.files) {
+        if (f.relative_path == remote_path) {
+            target_entry = &f;
+            break;
+        }
+    }
+
+    if (!target_entry) {
+        for (const auto& s : manifest.skipped) {
+            if (s.relative_path == remote_path) {
+                log("Error: File '" + remote_path + "' is unavailable (" + s.reason + " - " + s.status + ")");
+                return false;
+            }
+        }
+        log("Error: Remote file '" + remote_path + "' not found in workspace");
+        return false;
+    }
+
+    std::vector<uint8_t> file_buf(target_entry->size);
+    for (const auto& chunk : target_entry->chunks) {
+        auto chunk_data = fetch_chunk(target_entry->relative_path, chunk.index);
+        if (!chunk_data) {
+            log("Error: Failed to download chunk " + std::to_string(chunk.index) + " for " + remote_path);
+            return false;
+        }
+        uint64_t offset = chunk.offset;
+        if (offset + chunk_data->size() > file_buf.size()) {
+            file_buf.resize(offset + chunk_data->size());
+        }
+        std::memcpy(file_buf.data() + offset, chunk_data->data(), chunk_data->size());
+    }
+
+    std::string computed_hash = crypto::Blake3::hash_hex(file_buf);
+    if (computed_hash != target_entry->file_blake3_hash) {
+        log("Error: Hash verification failed for " + remote_path);
+        return false;
+    }
+
+    fs::path final_dest = local_dest;
+    if (fs::is_directory(final_dest)) {
+        final_dest = final_dest / fs::path(remote_path).filename();
+    }
+    platform::PathUtils::ensure_directory(final_dest.parent_path());
+
+    if (!platform::PathUtils::write_binary_file_atomic(final_dest, file_buf)) {
+        log("Error: Failed to write downloaded file to " + final_dest.string());
+        return false;
+    }
+
+    log("Downloaded: " + remote_path + " -> " + final_dest.string() + " (" + core::Utils::format_size(target_entry->size) + ") [BLAKE3: " + computed_hash.substr(0, 12) + "...]");
     return true;
 }
 

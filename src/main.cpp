@@ -90,6 +90,9 @@ static std::string get_host_lan_ip() {
     close(sock);
     return p ? std::string(p) : "127.0.0.1";
 }
+static bool is_terminal_interactive() {
+    return isatty(STDIN_FILENO) != 0;
+}
 #else
 static std::string read_hidden_password(const std::string& prompt) {
     std::cout << prompt << std::flush;
@@ -111,6 +114,13 @@ static std::string read_confirmed_hidden_password(const std::string& prompt) {
     }
 }
 static std::string get_host_lan_ip() { return "127.0.0.1"; }
+static bool is_terminal_interactive() {
+#if defined(_WIN32)
+    return _isatty(_fileno(stdin)) != 0;
+#else
+    return true;
+#endif
+}
 #endif
 
 static void open_browser(const std::string& url) {
@@ -209,16 +219,22 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
                                           recheck [--all]   (Rescan modified files)
 
   [CLIENT WORKSPACE SYNC]
-    get <ENDPOINT?otp=CODE>  One-shot connect and pull remote workspace into local directory
-                             Examples: slug get 192.168.1.107:9443?otp=12822565
-                                       slug get 192.168.1.107:9443?otp=12822565 ./target_dir
+    connect -i <ip> -p <port> Authenticate to remote workspace and save connection certificate
+    ls [subpath]             Browse remote workspace items with statuses (Available, Excluded, Quarantined)
+                             Flags: -r, --recursive         (List all files recursively)
+                                    -c, --conn <id>         (Target specific connection)
 
-    pull [target_dir] [id]   Differential sync using BLAKE3 chunking (Git-like delta sync)
-                             Flags: --dry-run               (Preview changes without downloading)
+    get <file> [local_dest]  Download ONLY the specified single file (never whole workspace)
+                             Examples: slug get src/main.rs ./main.rs
+                                       slug get 192.168.1.107:9443?otp=12822565 src/main.rs
+
+    pull [scope] [--to <dir>] Differential delta sync with transfer plan preview (Git-like delta sync)
+                             Flags: -y, --yes               (Bypass transfer plan confirmation)
+                                    --dry-run               (Preview changes without downloading)
                                     --only <pattern>        (Selective pull, e.g. "src/*")
                                     --prune                 (Remove deleted local files)
 
-    push <file> [dest] [id]  Upload file to remote workspace (requires 'w' or 'rw' role)
+    push <file> [dest]       Upload file to remote workspace (requires 'w' or 'rw' role)
 
   [SYSTEM UTILITIES]
     conn <list|use|prune|rm> Manage saved client connections (alias: connections)
@@ -972,9 +988,24 @@ int cmd_conn(int argc, char* argv[]) {
 
 int cmd_list(int argc, char* argv[]) {
     std::string explicit_id = "";
-    if (argc >= 3 && argv[2][0] != '-') {
-        explicit_id = argv[2];
+    std::string subpath = "";
+    bool recursive = false;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-r" || arg == "--recursive") {
+            recursive = true;
+        } else if (arg == "-c" || arg == "--conn") {
+            if (i + 1 < argc) explicit_id = argv[++i];
+        } else if (arg.front() != '-') {
+            if (arg.rfind("conn_", 0) == 0 && explicit_id.empty()) {
+                explicit_id = arg;
+            } else if (subpath.empty()) {
+                subpath = arg;
+            }
+        }
     }
+
     auto conn_opt = core::ConnectionManager::instance().resolve_connection(explicit_id);
     if (!conn_opt) {
         std::cerr << "[-] No active connection. Connect first with: slug connect -i <host> -p <port> -o <otp>" << std::endl;
@@ -1007,28 +1038,146 @@ int cmd_list(int argc, char* argv[]) {
 
     const auto& manifest = *manifest_opt;
 
+    std::string norm_sub = subpath;
+    while (!norm_sub.empty() && norm_sub.front() == '/') norm_sub.erase(0, 1);
+    while (!norm_sub.empty() && norm_sub.back() == '/') norm_sub.pop_back();
+
     std::cout << "\nREMOTE WORKSPACE: " << conn.workspace << " (" << conn.id << " @ " << conn.host << ":" << conn.port << ")" << std::endl;
-    std::cout << "Role: " << core::role_to_string(conn.role) << " | Crypto: " << client.negotiated_suite_name() << "\n" << std::endl;
+    std::cout << "Scope: " << (norm_sub.empty() ? "[root]" : norm_sub) << " | Role: " << core::role_to_string(conn.role) << " | Crypto: " << client.negotiated_suite_name() << "\n" << std::endl;
 
     std::cout << std::left
-              << std::setw(12) << "[SIZE]"
-              << std::setw(18) << "[BLAKE3 HASH]"
-              << "[FILE PATH]"
+              << std::setw(32) << "NAME"
+              << std::setw(10) << "TYPE"
+              << std::setw(12) << "SIZE"
+              << "STATUS"
               << std::endl;
-    std::cout << std::string(72, '-') << std::endl;
+    std::cout << std::string(80, '-') << std::endl;
 
-    uint64_t total_size = 0;
-    for (const auto& f : manifest.files) {
-        total_size += f.size;
-        std::string hash_trunc = (f.file_blake3_hash.size() > 14) ? (f.file_blake3_hash.substr(0, 14) + "..") : f.file_blake3_hash;
+    struct Row {
+        bool is_dir;
+        std::string name;
+        uint64_t size{0};
+        std::string type;
+        std::string status;
+    };
+    std::vector<Row> rows;
+    std::set<std::string> seen_dirs;
+    std::map<std::string, uint64_t> dir_sizes;
+
+    auto format_skipped_status = [](const sync::ManifestSkippedEntry& s) -> std::string {
+        if (s.status == "AI_FLAGGED") {
+            return "Quarantined (AI Secret Guard: " + s.reason + ")";
+        }
+        if (s.status == "RULE_OR_GITIGNORE_BLOCKED") {
+            if (s.reason.find("gitignore") != std::string::npos) {
+                return "Excluded (gitignore)";
+            }
+            return "Blocked (policy: " + s.reason + ")";
+        }
+        return "Excluded (" + s.reason + ")";
+    };
+
+    if (recursive) {
+        for (const auto& f : manifest.files) {
+            if (norm_sub.empty() || f.relative_path.rfind(norm_sub + "/", 0) == 0 || f.relative_path == norm_sub) {
+                rows.push_back({false, f.relative_path, f.size, "file", "Available"});
+            }
+        }
+        for (const auto& s : manifest.skipped) {
+            if (norm_sub.empty() || s.relative_path.rfind(norm_sub + "/", 0) == 0 || s.relative_path == norm_sub) {
+                rows.push_back({false, s.relative_path, 0, "file", format_skipped_status(s)});
+            }
+        }
+    } else {
+        for (const auto& f : manifest.files) {
+            std::string p = f.relative_path;
+            if (norm_sub.empty()) {
+                size_t slash = p.find('/');
+                if (slash != std::string::npos) {
+                    std::string dname = p.substr(0, slash);
+                    dir_sizes[dname] += f.size;
+                    if (seen_dirs.insert(dname).second) {
+                        rows.push_back({true, dname + "/", 0, "folder", "Available"});
+                    }
+                } else {
+                    rows.push_back({false, p, f.size, "file", "Available"});
+                }
+            } else {
+                if (p.rfind(norm_sub + "/", 0) == 0) {
+                    std::string rem = p.substr(norm_sub.size() + 1);
+                    size_t slash = rem.find('/');
+                    if (slash != std::string::npos) {
+                        std::string dname = rem.substr(0, slash);
+                        std::string full_d = norm_sub + "/" + dname;
+                        dir_sizes[full_d] += f.size;
+                        if (seen_dirs.insert(full_d).second) {
+                            rows.push_back({true, dname + "/", 0, "folder", "Available"});
+                        }
+                    } else {
+                        rows.push_back({false, rem, f.size, "file", "Available"});
+                    }
+                }
+            }
+        }
+
+        for (auto& r : rows) {
+            if (r.is_dir) {
+                std::string full_d = norm_sub.empty() ? r.name.substr(0, r.name.size() - 1) : (norm_sub + "/" + r.name.substr(0, r.name.size() - 1));
+                r.size = dir_sizes[full_d];
+            }
+        }
+
+        for (const auto& s : manifest.skipped) {
+            std::string p = s.relative_path;
+            std::string st = format_skipped_status(s);
+            if (norm_sub.empty()) {
+                size_t slash = p.find('/');
+                if (slash != std::string::npos) {
+                    std::string dname = p.substr(0, slash);
+                    if (seen_dirs.insert(dname).second) {
+                        rows.push_back({true, dname + "/", 0, "folder", st});
+                    }
+                } else {
+                    rows.push_back({false, p, 0, "file", st});
+                }
+            } else {
+                if (p.rfind(norm_sub + "/", 0) == 0) {
+                    std::string rem = p.substr(norm_sub.size() + 1);
+                    size_t slash = rem.find('/');
+                    if (slash != std::string::npos) {
+                        std::string dname = rem.substr(0, slash);
+                        if (seen_dirs.insert(dname).second) {
+                            rows.push_back({true, dname + "/", 0, "folder", st});
+                        }
+                    } else {
+                        rows.push_back({false, rem, 0, "file", st});
+                    }
+                }
+            }
+        }
+    }
+
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        return a.name < b.name;
+    });
+
+    for (const auto& r : rows) {
+        std::string sz = (r.size > 0) ? core::Utils::format_size(r.size) : "-";
         std::cout << std::left
-                  << std::setw(12) << core::Utils::format_size(f.size)
-                  << std::setw(18) << hash_trunc
-                  << f.relative_path
+                  << std::setw(32) << r.name
+                  << std::setw(10) << r.type
+                  << std::setw(12) << sz
+                  << r.status
                   << std::endl;
     }
-    std::cout << std::string(72, '-') << std::endl;
-    std::cout << "Total: " << manifest.files.size() << " file(s) (" << core::Utils::format_size(total_size) << ")\n" << std::endl;
+
+    uint64_t total_avail = 0;
+    for (const auto& f : manifest.files) total_avail += f.size;
+
+    std::cout << std::string(80, '-') << std::endl;
+    std::cout << "Total: " << manifest.files.size() << " available file(s) (" << core::Utils::format_size(total_avail) << ") | "
+              << manifest.skipped.size() << " excluded/quarantined item(s)\n" << std::endl;
 
     return 0;
 }
@@ -1037,9 +1186,13 @@ int cmd_pull(int argc, char* argv[]) {
     std::string ip = "";
     uint16_t port = core::kDefaultPort;
     std::string totp, user, pass;
-    std::string target_dir = "./pulled_workspace";
+    std::string target_dir = "";
+    std::string remote_scope = "";
     std::string conn_id = "";
+    bool bypass_confirm = false;
     sync::DeltaSyncOptions opts;
+
+    std::vector<std::string> pos_args;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -1048,6 +1201,10 @@ int cmd_pull(int argc, char* argv[]) {
         else if (arg == "-o" || arg == "--otp") { if (i + 1 < argc) totp = argv[++i]; }
         else if (arg == "-u" || arg == "--user") { if (i + 1 < argc) user = argv[++i]; }
         else if (arg == "-P" || arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
+        else if (arg == "-c" || arg == "--conn") { if (i + 1 < argc) conn_id = argv[++i]; }
+        else if (arg == "--to") { if (i + 1 < argc) target_dir = argv[++i]; }
+        else if (arg == "-s" || arg == "--scope") { if (i + 1 < argc) remote_scope = argv[++i]; }
+        else if (arg == "-y" || arg == "--yes") bypass_confirm = true;
         else if (arg == "--dry-run") opts.dry_run = true;
         else if (arg == "--prune") opts.prune = true;
         else if (arg == "--only" && i + 1 < argc) opts.only_pattern = argv[++i];
@@ -1055,12 +1212,36 @@ int cmd_pull(int argc, char* argv[]) {
         else if (arg == "--max-size" && i + 1 < argc) {
             opts.max_size_bytes = std::stoull(argv[++i]);
         } else if (arg.front() != '-') {
-            if (target_dir == "./pulled_workspace") {
-                target_dir = arg;
-            } else {
-                conn_id = arg;
+            pos_args.push_back(arg);
+        }
+    }
+
+    // Disambiguate positional arguments
+    for (const auto& a : pos_args) {
+        if (a.rfind("conn_", 0) == 0 && conn_id.empty()) {
+            conn_id = a;
+        } else if (a.front() == '/' || core::Utils::starts_with(a, "./") || core::Utils::starts_with(a, "../")) {
+            if (target_dir.empty()) target_dir = a;
+            else if (remote_scope.empty()) remote_scope = a;
+        } else {
+            if (!target_dir.empty() && remote_scope.empty()) {
+                remote_scope = a;
+            } else if (remote_scope.empty() && (a.find('/') != std::string::npos || a.back() == '/')) {
+                remote_scope = a;
+            } else if (target_dir.empty()) {
+                target_dir = a;
+            } else if (remote_scope.empty()) {
+                remote_scope = a;
             }
         }
+    }
+
+    if (target_dir.empty()) {
+        target_dir = "./pulled_workspace";
+    }
+
+    if (!remote_scope.empty() && opts.only_pattern.empty()) {
+        opts.only_pattern = (remote_scope.back() == '/') ? (remote_scope + "*") : (remote_scope + "/*");
     }
 
     net::SlugClient client;
@@ -1112,23 +1293,88 @@ int cmd_pull(int argc, char* argv[]) {
         }
     }
 
+    auto manifest_opt = client.fetch_manifest();
+    if (!manifest_opt) {
+        std::cerr << "[-] Failed to retrieve workspace manifest from remote." << std::endl;
+        return 1;
+    }
+
+    auto plan = sync::DeltaCalculator::compute_plan(*manifest_opt, target_dir, opts);
+
+    uint64_t selected_size = 0;
+    for (const auto& d : plan.file_deltas) {
+        selected_size += d.total_size;
+    }
+
+    size_t excluded_count = 0;
+    size_t quarantined_count = 0;
+    for (const auto& s : manifest_opt->skipped) {
+        if (!remote_scope.empty()) {
+            if (s.relative_path.rfind(remote_scope, 0) != 0) continue;
+        }
+        if (s.status == "AI_FLAGGED") quarantined_count++;
+        else excluded_count++;
+    }
+
+    std::cout << "\n--- Workspace Transfer Plan Preview ---" << std::endl;
+    std::cout << "Remote scope:        " << (remote_scope.empty() ? "[all / root]" : remote_scope) << std::endl;
+    std::cout << "Local destination:   " << target_dir << std::endl;
+    std::cout << "Files selected:      " << plan.file_deltas.size() << " (" << core::Utils::format_size(selected_size) << ")" << std::endl;
+    std::cout << "Files excluded:      " << excluded_count << " (gitignore / policy)" << std::endl;
+    std::cout << "Files quarantined:   " << quarantined_count << " (AI Secret Guard)" << std::endl;
+    std::cout << "Estimated download:  " << core::Utils::format_size(plan.bytes_to_transfer) << std::endl;
+    std::cout << "Overwriting:         " << plan.count_modified << " local file(s)" << std::endl;
+    std::cout << "---------------------------------------" << std::endl;
+
+    if (opts.dry_run) {
+        std::cout << "[*] Dry-run complete. No files transferred.\n" << std::endl;
+        return 0;
+    }
+
+    bool auto_proceed = bypass_confirm || !is_terminal_interactive();
+    if (!auto_proceed) {
+        std::cout << "Proceed with transfer? [y/N]: " << std::flush;
+        std::string ans;
+        if (!std::getline(std::cin, ans) || (ans != "y" && ans != "Y" && ans != "yes" && ans != "Yes")) {
+            std::cout << "[*] Transfer cancelled by user.\n" << std::endl;
+            return 0;
+        }
+    }
+
     std::cout << "[*] Starting Delta Sync into " << target_dir << "..." << std::endl;
-    bool ok = client.pull(target_dir, opts);
+    bool ok = client.pull(target_dir, opts, nullptr, manifest_opt);
     return ok ? 0 : 1;
 }
 
 int cmd_get(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: slug get <ENDPOINT?otp=CODE | URL> [dest_dir] [-o <otp>] [-u <user>] [-P <pass>]" << std::endl;
-        std::cerr << "Example: slug get 192.168.1.107:9443?otp=12822565" << std::endl;
+        std::cerr << "[-] Error: 'slug get' requires a specific remote file path to download." << std::endl;
+        std::cerr << "Usage: slug get <remote_path> [local_dest]" << std::endl;
+        std::cerr << "       slug get <ENDPOINT?otp=CODE> <remote_path> [local_dest]" << std::endl;
+        std::cerr << "\nExamples:" << std::endl;
+        std::cerr << "  slug get src/main.rs ./main.rs" << std::endl;
+        std::cerr << "  slug get 192.168.1.107:9443?otp=12822565 src/main.rs" << std::endl;
+        std::cerr << "\nTo browse remote files:  slug ls" << std::endl;
+        std::cerr << "To pull workspace files: slug pull" << std::endl;
         return 1;
     }
 
-    std::string raw_target = argv[2];
-    std::string dest_dir = "";
+    std::string arg1 = argv[2];
+    std::string remote_path = "";
+    std::string local_dest = "";
     std::string ip = "";
     uint16_t port = core::kDefaultPort;
     std::string totp, user, pass, ticket;
+    std::string conn_id = "";
+
+    bool arg1_is_endpoint = (arg1.find("?otp=") != std::string::npos ||
+                             arg1.find("?token=") != std::string::npos ||
+                             core::Utils::starts_with(arg1, "slug://") ||
+                             core::Utils::starts_with(arg1, "http://") ||
+                             core::Utils::starts_with(arg1, "https://") ||
+                             (arg1.find(':') != std::string::npos && arg1.find('/') == std::string::npos));
+
+    std::vector<std::string> remaining_pos;
 
     for (int i = 3; i < argc; ++i) {
         std::string arg = argv[i];
@@ -1137,136 +1383,165 @@ int cmd_get(int argc, char* argv[]) {
         else if (arg == "-P" || arg == "--pass" || arg == "--password" || arg == "-W") { if (i + 1 < argc) pass = argv[++i]; }
         else if (arg == "-p" || arg == "--port") { if (i + 1 < argc) port = static_cast<uint16_t>(std::stoi(argv[++i])); }
         else if (arg == "-i" || arg == "--host") { if (i + 1 < argc) ip = argv[++i]; }
+        else if (arg == "-c" || arg == "--conn") { if (i + 1 < argc) conn_id = argv[++i]; }
         else if (arg.front() != '-') {
-            if (dest_dir.empty()) dest_dir = arg;
+            remaining_pos.push_back(arg);
         }
     }
 
-    std::string endpoint = raw_target;
-    if (core::Utils::starts_with(endpoint, "slug://")) endpoint = endpoint.substr(7);
-    else if (core::Utils::starts_with(endpoint, "http://")) endpoint = endpoint.substr(7);
-    else if (core::Utils::starts_with(endpoint, "https://")) endpoint = endpoint.substr(8);
+    if (arg1_is_endpoint) {
+        std::string endpoint = arg1;
+        if (core::Utils::starts_with(endpoint, "slug://")) endpoint = endpoint.substr(7);
+        else if (core::Utils::starts_with(endpoint, "http://")) endpoint = endpoint.substr(7);
+        else if (core::Utils::starts_with(endpoint, "https://")) endpoint = endpoint.substr(8);
 
-    size_t qpos = endpoint.find('?');
-    std::string query = "";
-    if (qpos != std::string::npos) {
-        query = endpoint.substr(qpos + 1);
-        endpoint = endpoint.substr(0, qpos);
-    }
-    size_t slashpos = endpoint.find('/');
-    if (slashpos != std::string::npos) {
-        endpoint = endpoint.substr(0, slashpos);
-    }
-
-    if (!endpoint.empty()) {
-        size_t colon = endpoint.rfind(':');
-        if (colon != std::string::npos) {
-            ip = endpoint.substr(0, colon);
-            try {
-                port = static_cast<uint16_t>(std::stoi(endpoint.substr(colon + 1)));
-            } catch (...) {}
-        } else {
-            ip = endpoint;
+        size_t qpos = endpoint.find('?');
+        std::string query = "";
+        if (qpos != std::string::npos) {
+            query = endpoint.substr(qpos + 1);
+            endpoint = endpoint.substr(0, qpos);
         }
-    }
+        size_t slashpos = endpoint.find('/');
+        if (slashpos != std::string::npos) {
+            endpoint = endpoint.substr(0, slashpos);
+        }
 
-    if (!query.empty()) {
-        std::stringstream ss(query);
-        std::string token;
-        while (std::getline(ss, token, '&')) {
-            size_t eq = token.find('=');
-            if (eq != std::string::npos) {
-                std::string k = token.substr(0, eq);
-                std::string v = token.substr(eq + 1);
-                if (k == "otp" || k == "token") {
-                    if (totp.empty()) totp = v;
-                } else if (k == "user" || k == "username") {
-                    if (user.empty()) user = v;
-                } else if (k == "pass" || k == "password") {
-                    if (pass.empty()) pass = v;
-                } else if (k == "ticket") {
-                    if (ticket.empty()) ticket = v;
+        if (!endpoint.empty()) {
+            size_t colon = endpoint.rfind(':');
+            if (colon != std::string::npos) {
+                ip = endpoint.substr(0, colon);
+                try {
+                    port = static_cast<uint16_t>(std::stoi(endpoint.substr(colon + 1)));
+                } catch (...) {}
+            } else {
+                ip = endpoint;
+            }
+        }
+
+        if (!query.empty()) {
+            std::stringstream ss(query);
+            std::string token;
+            while (std::getline(ss, token, '&')) {
+                size_t eq = token.find('=');
+                if (eq != std::string::npos) {
+                    std::string k = token.substr(0, eq);
+                    std::string v = token.substr(eq + 1);
+                    if (k == "otp" || k == "token") { if (totp.empty()) totp = v; }
+                    else if (k == "user" || k == "username") { if (user.empty()) user = v; }
+                    else if (k == "pass" || k == "password") { if (pass.empty()) pass = v; }
+                    else if (k == "ticket") { if (ticket.empty()) ticket = v; }
                 }
             }
         }
+
+        if (!remaining_pos.empty()) {
+            remote_path = remaining_pos[0];
+            if (remaining_pos.size() > 1) local_dest = remaining_pos[1];
+        }
+    } else {
+        remote_path = arg1;
+        if (!remaining_pos.empty()) {
+            local_dest = remaining_pos[0];
+        }
     }
 
-    if (ip.empty()) ip = "127.0.0.1";
+    if (local_dest.empty() && !remote_path.empty()) {
+        local_dest = std::filesystem::path(remote_path).filename().string();
+    }
 
     net::SlugClient client;
-    std::cout << "[*] One-Shot Client connecting to " << ip << ":" << port << "..." << std::endl;
-    if (!client.connect(ip, port)) {
-        std::cerr << "[-] Connection failed to " << ip << ":" << port << std::endl;
-        return 1;
-    }
-    std::cout << "[+] Handshake OK! Negotiated: " << client.negotiated_suite_name() << std::endl;
 
-    net::ClientAuthResult auth;
-    if (!totp.empty()) {
-        std::cout << "[*] Authenticating with single-use OTP: " << totp << "..." << std::endl;
-        auth = client.authenticate_totp(totp);
-    } else if (!user.empty()) {
-        if (pass.empty()) {
-            pass = read_hidden_password("Enter password for '" + user + "': ");
+    if (!ip.empty()) {
+        std::cout << "[*] Connecting to " << ip << ":" << port << "..." << std::endl;
+        if (!client.connect(ip, port)) {
+            std::cerr << "[-] Connection failed to " << ip << ":" << port << std::endl;
+            return 1;
         }
-        std::cout << "[*] Authenticating with account '" << user << "'..." << std::endl;
-        auth = client.authenticate_user(user, pass);
-    } else if (!ticket.empty()) {
-        std::cout << "[*] Authenticating with session certificate ticket..." << std::endl;
-        auth = client.authenticate_ticket(ticket);
+
+        net::ClientAuthResult auth;
+        if (!totp.empty()) {
+            auth = client.authenticate_totp(totp);
+        } else if (!user.empty()) {
+            if (pass.empty()) pass = read_hidden_password("Enter password for '" + user + "': ");
+            auth = client.authenticate_user(user, pass);
+        } else if (!ticket.empty()) {
+            auth = client.authenticate_ticket(ticket);
+        } else {
+            std::cerr << "[-] Authentication credential missing in link. Pass ?otp=<code> or -o <code>." << std::endl;
+            return 1;
+        }
+
+        if (!auth.success) {
+            std::cerr << "[-] " << auth.message << std::endl;
+            return 1;
+        }
+
+        auto conns = core::ConnectionManager::instance().list_connections();
+        int max_idx = 0;
+        for (const auto& c : conns) {
+            if (c.id.rfind("conn_", 0) == 0) {
+                try {
+                    int idx = std::stoi(c.id.substr(5));
+                    if (idx > max_idx) max_idx = idx;
+                } catch (...) {}
+            }
+        }
+        std::string new_id = "conn_" + std::to_string(max_idx + 1);
+
+        core::ConnectionInfo ci;
+        ci.id = new_id;
+        ci.host = ip;
+        ci.port = port;
+        ci.workspace = auth.workspace_name.empty() ? "workspace" : auth.workspace_name;
+        ci.identity = user.empty() ? ("get_client_" + ip) : user;
+        ci.role = auth.role;
+        ci.ticket = auth.web_ticket;
+        ci.created_at = core::Utils::current_timestamp();
+        ci.expires_at = (auth.ttl > 0) ? (ci.created_at + auth.ttl) : 0;
+        core::ConnectionManager::instance().save_connection(ci);
+        core::ConnectionManager::instance().set_active_connection(new_id);
+
+        std::cout << "[+] Authentication succeeded! Saved connection context as: " << new_id << " (" << ci.workspace << ")" << std::endl;
+
+        if (remote_path.empty()) {
+            std::cout << "\n[-] Notice: 'slug get' downloads a specific single file, not the whole workspace." << std::endl;
+            std::cout << "    To browse remote files:  slug ls" << std::endl;
+            std::cout << "    To pull workspace files: slug pull" << std::endl;
+            std::cout << "    To get a specific file:  slug get <file_path> [local_dest]" << std::endl;
+            return 0;
+        }
     } else {
-        std::cerr << "[-] Authentication credential missing in link. Pass ?otp=<code> or -o <code>." << std::endl;
-        return 1;
-    }
+        auto conn_opt = core::ConnectionManager::instance().resolve_connection(conn_id);
+        if (!conn_opt) {
+            std::cerr << "[-] No active connection. Connect first with 'slug connect' or pass magic link." << std::endl;
+            return 1;
+        }
+        const auto& conn = *conn_opt;
+        if (conn.role == core::Role::WRITE_ONLY) {
+            std::cerr << "[-] Permission Denied: Connection '" << conn.id << "' has Write-Only role. File downloading is not permitted." << std::endl;
+            return 1;
+        }
 
-    if (!auth.success) {
-        std::cerr << "[-] " << auth.message << std::endl;
-        return 1;
-    }
+        if (!client.connect(conn.host, conn.port)) {
+            std::cerr << "[-] Connection failed to " << conn.host << ":" << conn.port << std::endl;
+            return 1;
+        }
 
-    std::cout << "[+] Authentication succeeded! Role: [" << core::role_to_string(auth.role) << "]" << std::endl;
-
-    auto conns = core::ConnectionManager::instance().list_connections();
-    int max_idx = 0;
-    for (const auto& c : conns) {
-        if (c.id.rfind("conn_", 0) == 0) {
-            try {
-                int idx = std::stoi(c.id.substr(5));
-                if (idx > max_idx) max_idx = idx;
-            } catch (...) {}
+        auto auth = client.authenticate_ticket(conn.ticket);
+        if (!auth.success) {
+            std::cerr << "[-] Ticket expired or invalid (" << auth.message << "). Please reconnect." << std::endl;
+            return 1;
         }
     }
-    std::string new_id = "conn_" + std::to_string(max_idx + 1);
 
-    core::ConnectionInfo ci;
-    ci.id = new_id;
-    ci.host = ip;
-    ci.port = port;
-    ci.workspace = auth.workspace_name.empty() ? "workspace" : auth.workspace_name;
-    ci.identity = user.empty() ? ("get_client_" + ip) : user;
-    ci.role = auth.role;
-    ci.ticket = auth.web_ticket;
-    ci.created_at = core::Utils::current_timestamp();
-    ci.expires_at = (auth.ttl > 0) ? (ci.created_at + auth.ttl) : 0;
-    core::ConnectionManager::instance().save_connection(ci);
-    core::ConnectionManager::instance().set_active_connection(new_id);
-
-    std::string target_dir = dest_dir;
-    if (target_dir.empty()) {
-        target_dir = "./" + ci.workspace;
-    }
-
-    std::cout << "[*] Starting One-Shot Sync into " << target_dir << "..." << std::endl;
-    sync::DeltaSyncOptions opts;
-    bool sync_ok = client.pull(target_dir, opts);
-    if (!sync_ok) {
-        std::cerr << "[-] Failed to synchronize remote workspace." << std::endl;
+    if (remote_path.empty()) {
+        std::cerr << "[-] Error: Please specify the remote file path to download (e.g. slug get src/main.rs)." << std::endl;
         return 1;
     }
 
-    std::cout << "\n[+] One-Shot Get completed! Workspace files pulled into: " << target_dir << std::endl;
-    std::cout << "[+] Connection context saved as: " << new_id << " (Use 'slug pull' or 'slug push' for future syncs)" << std::endl;
-    return 0;
+    std::cout << "[*] Downloading single file: " << remote_path << " -> " << local_dest << "..." << std::endl;
+    bool ok = client.get_file(remote_path, local_dest);
+    return ok ? 0 : 1;
 }
 
 int cmd_completion(int argc, char* argv[]) {

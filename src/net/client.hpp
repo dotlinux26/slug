@@ -47,10 +47,16 @@ public:
     // Fetches remote workspace manifest
     std::optional<sync::WorkspaceManifest> fetch_manifest();
 
+    // Downloads a single specified file into local_dest
+    bool get_file(const std::string& remote_path,
+                  const std::filesystem::path& local_dest,
+                  std::function<void(const std::string& msg)> log_callback = nullptr);
+
     // Performs incremental delta pull into local_dir
     bool pull(const std::filesystem::path& local_target_dir,
               const sync::DeltaSyncOptions& options,
-              std::function<void(const std::string& msg)> log_callback = nullptr);
+              std::function<void(const std::string& msg)> log_callback = nullptr,
+              const std::optional<sync::WorkspaceManifest>& cached_manifest = std::nullopt);
 
     // Pushes local file to remote workspace
     bool push(const std::filesystem::path& local_file,

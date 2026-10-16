@@ -166,14 +166,17 @@ echo -e "\n${BOLD}--- TEST SUITE 3: Single-Use TOTP One-Time-Bind & Burn ---${NC
 assert_success "$BIN connect -i 127.0.0.1 -p $TEST_PORT -o $TOTP" "First connection with valid TOTP succeeds"
 assert_failure "$BIN connect -i 127.0.0.1 -p $TEST_PORT -o $TOTP" "Second connection with same TOTP rejected (Token Burned!)"
 
-# Verify slug totp command and slug get (One-Shot Sync with Read-Only OTP)
+# Verify slug totp command and slug get (Single-File Download with Read-Only OTP)
 TOTP_RO=$($BIN totp -p $TEST_PORT -r r --code-only | tr -d '[:space:]')
 assert_success "[ ${#TOTP_RO} -eq 8 ]" "Command 'slug totp -p <port> -r r --code-only' returns valid 8-digit OTP"
 
-ONE_SHOT_DIR="$TEST_DIR/oneshot_get"
-assert_success "$BIN get '127.0.0.1:$TEST_PORT?otp=$TOTP_RO' '$ONE_SHOT_DIR'" "One-Shot 'slug get <ip:port?otp=code>' connects and syncs workspace in 1 command"
-assert_success "[ -f '$ONE_SHOT_DIR/src/main.rs' ]" "One-Shot synced legitimate file src/main.rs"
-assert_success "[ ! -f '$ONE_SHOT_DIR/build/main.o' ]" "One-Shot skipped gitignored file build/main.o"
+ONE_SHOT_FILE="$TEST_DIR/single_file_main.rs"
+assert_success "$BIN get '127.0.0.1:$TEST_PORT?otp=$TOTP_RO' src/main.rs '$ONE_SHOT_FILE'" "Single-file 'slug get <url> <file>' downloads only specified file"
+assert_success "[ -f '$ONE_SHOT_FILE' ] && grep -q 'Hello from Slug' '$ONE_SHOT_FILE'" "Downloaded single file contains correct content"
+
+# Verify slug ls technical explorer
+LS_OUTPUT=$($BIN ls)
+assert_success "echo '$LS_OUTPUT' | grep -q 'src/' && echo '$LS_OUTPUT' | grep -q 'Available'" "Command 'slug ls' renders technical explorer with folders and Available status"
 
 # ==============================================================================
 # TEST SUITE 4: Ephemeral User Accounts & RBAC
@@ -211,8 +214,8 @@ mkdir -p "$PULL_DIR"
 DRY_RUN_OUT=$($BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123 --dry-run)
 assert_success "echo '$DRY_RUN_OUT' | grep -i -q 'dry-run'" "Dry-run execution previews transfer"
 
-# Actual pull
-assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Pull workspace as 'alice'"
+# Actual pull with confirmation bypass (-y)
+assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123 -y" "Pull workspace as 'alice'"
 
 # Verify legitimate files transferred
 assert_success "[ -f '$PULL_DIR/src/main.rs' ] && grep -q 'Hello from Slug' '$PULL_DIR/src/main.rs'" "Safe file src/main.rs synchronized"
@@ -223,9 +226,18 @@ assert_success "[ ! -f '$PULL_DIR/build/main.o' ]" "Gitignored file build/main.o
 assert_success "[ ! -f '$PULL_DIR/tests/id_rsa.pem' ]" "Rule-blocked file tests/id_rsa.pem correctly skipped"
 assert_success "[ ! -f '$PULL_DIR/tests/leaked_token.ts' ]" "AI-flagged file tests/leaked_token.ts correctly shielded"
 
+# Test Selective Scope Pull (only 'src' scope pulled)
+SELECTIVE_DIR="$TEST_DIR/selective_src"
+assert_success "$BIN pull src/ --to "$SELECTIVE_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123 -y" "Selective pull of scope 'src/' with --to flag"
+assert_success "[ -f '$SELECTIVE_DIR/src/main.rs' ] && [ ! -f '$SELECTIVE_DIR/docs/spec.md' ]" "Selective pull only fetched files inside 'src/' scope"
+
+# Test Single-File Get via active connection
+assert_success "$BIN get docs/spec.md '$TEST_DIR/get_spec.md'" "Single-file 'slug get <file> <dest>' via active connection"
+assert_success "[ -f '$TEST_DIR/get_spec.md' ]" "Single file downloaded via active connection"
+
 # Test Incremental Delta Sync (only modified/new files transferred)
 echo 'pub fn helper() {}' > "$WORKSPACE_DIR/src/helper.rs"
-PULL_DELTA_OUT=$($BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123)
+PULL_DELTA_OUT=$($BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123 -y)
 assert_success "echo '$PULL_DELTA_OUT' | grep -q 'Synced: src/helper.rs' && echo '$PULL_DELTA_OUT' | grep -q 'saved' && [ -f '$PULL_DIR/src/helper.rs' ]" "Delta Sync transferred helper.rs and reported saved bytes"
 
 # ==============================================================================
@@ -264,7 +276,7 @@ assert_success "echo '$AUDIT_LIST' | grep -q 'leaked_token.ts.*AI_FLAGGED'" "Aud
 assert_success "$BIN audit allow tests/leaked_token.ts --reason 'Safe mock token for lab testing' -p $TEST_PORT" "Whitelist false-positive with user override"
 
 # Re-pull: previously blocked file should now be synchronized
-assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123" "Re-pull after user whitelist approval"
+assert_success "$BIN pull "$PULL_DIR" -i 127.0.0.1 -p $TEST_PORT -u alice -P alice_pass_123 -y" "Re-pull after user whitelist approval"
 assert_success "[ -f '$PULL_DIR/tests/leaked_token.ts' ]" "Whitelisted file successfully delivered to client"
 
 # ==============================================================================

@@ -153,13 +153,19 @@ const SlugRule* RulesManager::match(const std::string& protocol_path, std::strin
     for (const auto& r : rules_) {
         switch (r.type) {
             case RuleType::PATH: {
-                if (protocol_path == r.value || protocol_path.rfind(r.value, 0) == 0) {
+                std::string pat = r.value;
+                if (pat.rfind("./", 0) == 0) pat = pat.substr(2);
+
+                if (protocol_path == pat || protocol_path == r.value || protocol_path.rfind(pat, 0) == 0) {
+                    return &r;
+                }
+                // Check filename match (e.g. rule ".env" matches "subfolder/.env")
+                std::filesystem::path pp(protocol_path);
+                if (pp.filename().string() == pat || pp.filename().string() == r.value) {
                     return &r;
                 }
                 // Check wildcard pattern match
-                if (r.value.find('*') != std::string::npos) {
-                    std::string pat = r.value;
-                    if (pat.rfind("./", 0) == 0) pat = pat.substr(2);
+                if (pat.find('*') != std::string::npos) {
                     if (pat.back() == '*') {
                         std::string prefix = pat.substr(0, pat.size() - 1);
                         if (protocol_path.rfind(prefix, 0) == 0) return &r;

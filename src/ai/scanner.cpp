@@ -17,12 +17,19 @@ AiScanner::AiScanner(ProviderType provider, std::string endpoint, std::string mo
     : provider_(provider), endpoint_(std::move(endpoint)), model_(std::move(model)) {}
 
 bool AiScanner::is_scannable_file(const std::filesystem::path& path) {
+    std::string fname = path.filename().string();
     std::string ext = path.extension().string();
+    for (auto& c : fname) c = static_cast<char>(std::tolower(c));
     for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+
+    // Support .env and variants (.env.local, .env.production, etc.)
+    if (fname == ".env" || fname.rfind(".env.", 0) == 0 || ext == ".env") {
+        return true;
+    }
 
     static const std::vector<std::string> scannable_exts = {
         ".py", ".js", ".ts", ".jsx", ".tsx", ".cpp", ".hpp", ".c", ".h",
-        ".go", ".rs", ".java", ".json", ".yaml", ".yml", ".toml", ".env",
+        ".go", ".rs", ".java", ".json", ".yaml", ".yml", ".toml",
         ".xml", ".ini", ".conf", ".sh", ".bash", ".zsh", ".rb", ".php"
     };
 
@@ -48,8 +55,21 @@ static double calculate_entropy(std::string_view s) {
 }
 
 ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_view content, bool deep) const {
-    (void)file_path;
     ScanFinding finding;
+
+    std::string fname = std::filesystem::path(file_path).filename().string();
+    for (auto& c : fname) c = static_cast<char>(std::tolower(c));
+
+    // Direct check for environment secret files (.env, .env.local, .env.production, etc.)
+    // Exclude documentation or template examples: .env.example, .env.sample, .env.template
+    if ((fname == ".env" || fname.rfind(".env.", 0) == 0 || std::filesystem::path(file_path).extension().string() == ".env") &&
+        fname != ".env.example" && fname != ".env.sample" && fname != ".env.template") {
+        finding.has_secret = true;
+        finding.line_number = 1;
+        finding.reason = "Environment Secret File (" + fname + ")";
+        finding.matched_snippet = content.empty() ? fname : std::string(content.substr(0, std::min(content.size(), (size_t)80)));
+        return finding;
+    }
 
     // Pattern definitions
     static const std::vector<std::pair<std::regex, std::string>> rules = {
@@ -61,7 +81,7 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
         {std::regex("sk_live_[0-9a-zA-Z]{20,}"), "Stripe Live Secret Key"},
         {std::regex("sk_test_[0-9a-zA-Z]{20,}"), "Stripe Test Secret Key"},
         {std::regex("sk-[0-9a-zA-Z]{24,}"), "OpenAI / Cloud Secret Key"},
-        {std::regex("(?:secret|api_key|apikey|access_token|token|password|auth|key)\\s*[:=]\\s*['\"][A-Za-z0-9_\\-+=/]{16,}['\"]", std::regex::icase), "Hardcoded API Key / Secret String"}
+        {std::regex(R"((?:secret|api_key|apikey|access_token|token|password|passwd|auth|key)\s*[:=]\s*['"]?([A-Za-z0-9_\-+=/]{12,})['"]?)", std::regex::icase), "Hardcoded API Key / Secret String"}
     };
 
     auto lines = core::Utils::split(content, '\n');
@@ -78,6 +98,22 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
                 finding.line_number = static_cast<int>(i + 1);
                 finding.reason = desc;
                 finding.matched_snippet = core::Utils::trim(line);
+                return finding;
+            }
+        }
+
+        // Check value in KEY=VALUE or KEY: VALUE for unquoted high-entropy secrets
+        size_t eq_pos = line.find('=');
+        if (eq_pos == std::string::npos) eq_pos = line.find(':');
+        if (eq_pos != std::string::npos && eq_pos + 1 < line.size()) {
+            std::string val = core::Utils::trim(line.substr(eq_pos + 1));
+            while (!val.empty() && (val.front() == '"' || val.front() == '\'')) val = val.substr(1);
+            while (!val.empty() && (val.back() == '"' || val.back() == '\'' || val.back() == ';')) val.pop_back();
+            if (val.size() >= 20 && calculate_entropy(val) >= 4.0) {
+                finding.has_secret = true;
+                finding.line_number = static_cast<int>(i + 1);
+                finding.reason = "High-entropy Secret Token";
+                finding.matched_snippet = val.substr(0, std::min(val.size(), (size_t)8)) + "..." + (val.size() > 4 ? val.substr(val.size() - 4) : "");
                 return finding;
             }
         }

@@ -117,9 +117,10 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     if (!fs::exists(rules_file)) {
         std::string def_rules =
             "# Default Slug Rules (.slug/rules.conf)\n"
+            "<rule id=\"r_env\" action=\"block\" type=\"path\">.env</rule>\n"
             "# <rule id=\"r_pem\" action=\"block\" type=\"ext\">.key,.pem,.sqlite</rule>\n"
             "# <rule id=\"r_pvt\" action=\"block\" type=\"content\">BEGIN PRIVATE KEY</rule>\n"
-            "# <rule id=\"r_env_sample\" action=\"allow\" type=\"path\">./.env.example</rule>\n";
+            "<rule id=\"r_env_sample\" action=\"allow\" type=\"path\">./.env.example</rule>\n";
         platform::PathUtils::write_text_file_atomic(rules_file, def_rules);
     }
 
