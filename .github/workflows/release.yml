@@ -169,8 +169,7 @@ jobs:
       - name: Compile Slug Static Binary
         run: |
           set -o pipefail
-          make static -j$(nproc) 2>&1 | tee linux_compile.log
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+          if ! make static -j$(nproc) 2>&1 | tee linux_compile.log; then
             echo "================ LINUX COMPILATION ERROR LOG ================"
             cat linux_compile.log
             git config user.name "github-actions[bot]"

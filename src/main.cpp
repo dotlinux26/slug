@@ -14,6 +14,8 @@
 #include "src/platform/socket.hpp"
 #include "src/net/web_assets.hpp"
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <iomanip>
 #include <vector>
 #include <string>
@@ -2634,10 +2636,7 @@ int cmd_portal(int argc, char* argv[]) {
                 if (method == "POST") {
                     try {
                         auto j = nlohmann::json::parse(body);
-                        std::error_code ec;
-                        std::filesystem::create_directories(ai_cfg_file.parent_path(), ec);
-                        std::ofstream out(ai_cfg_file);
-                        out << j.dump(2);
+                        platform::PathUtils::write_text_file_atomic(ai_cfg_file, j.dump(2));
                         nlohmann::json res;
                         res["status"] = "ok";
                         res["message"] = "AI configuration saved to " + ai_cfg_file.string();

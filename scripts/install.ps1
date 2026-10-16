@@ -109,6 +109,11 @@ if (-not (Test-Path $InstallPath)) {
 
 $targetExe = Join-Path $InstallPath "slug.exe"
 Write-Info "Installing Slug to: $targetExe"
+
+# If an existing slug.exe is running, terminate it to release file lock
+Get-Process -Name "slug" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 250
+
 Copy-Item -Path $sourceExe -Destination $targetExe -Force
 
 # 3. Permanently Add to User PATH
@@ -176,7 +181,7 @@ try {
         $sc = $wscriptShell.CreateShortcut($path)
         $sc.TargetPath    = $targetExe
         $sc.Arguments     = "portal"
-        $sc.Description   = "Slug — P2P Secure Workspace Sharing"
+        $sc.Description   = "Slug - P2P Secure Workspace Sharing"
         $sc.IconLocation  = $iconLocation
         $sc.WorkingDirectory = $InstallPath
         $sc.Save()
