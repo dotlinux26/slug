@@ -13,6 +13,7 @@
 #include "src/platform/fs.hpp"
 #include "src/platform/socket.hpp"
 #include "src/net/web_assets.hpp"
+#include "src/policy/gitignore.hpp"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -26,6 +27,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <set>
+#include <cmath>
 
 static std::atomic<bool> g_stop_signal_received{false};
 static void signal_handler(int) {
@@ -40,6 +42,8 @@ static void signal_handler(int) {
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 
 static std::string read_hidden_password(const std::string& prompt) {
     std::cout << prompt << std::flush;
@@ -98,6 +102,7 @@ static bool is_terminal_interactive() {
     return isatty(STDIN_FILENO) != 0;
 }
 #elif defined(SLUG_PLATFORM_WINDOWS)
+#include <iphlpapi.h>
 static std::string read_hidden_password(const std::string& prompt) {
     std::cout << prompt << std::flush;
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
@@ -220,6 +225,378 @@ struct TerminalCursorRestorer {
         if (enabled) std::cout << "\033[?25h" << std::flush;
     }
 };
+
+static std::string slug_url_decode(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size()) {
+            int value = 0;
+            std::istringstream is(in.substr(i + 1, 2));
+            if (is >> std::hex >> value) {
+                out += static_cast<char>(value);
+                i += 2;
+            } else {
+                out += in[i];
+            }
+        } else if (in[i] == '+') {
+            out += ' ';
+        } else {
+            out += in[i];
+        }
+    }
+    return out;
+}
+
+static double compute_shannon_entropy(std::string_view s) {
+    if (s.empty()) return 0.0;
+    std::map<unsigned char, int> freq;
+    for (unsigned char c : s) freq[c]++;
+    double entropy = 0.0;
+    double len = static_cast<double>(s.size());
+    for (const auto& [_, count] : freq) {
+        double p = count / len;
+        entropy -= p * std::log2(p);
+    }
+    return entropy;
+}
+
+static nlohmann::json inspect_network_interfaces(uint16_t current_port = 9443) {
+    nlohmann::json res;
+    res["status"] = "ok";
+    res["timestamp"] = core::Utils::format_timestamp(core::Utils::current_timestamp());
+    res["listening_scope"] = {
+        {"ipv4", "0.0.0.0 (INADDR_ANY - All IPv4 Interfaces)"},
+        {"ipv6", ":: (IN6ADDR_ANY - All IPv6 Interfaces)"},
+        {"port", current_port},
+        {"wan_ready", true}
+    };
+
+    nlohmann::json adapters = nlohmann::json::array();
+
+#if defined(SLUG_PLATFORM_WINDOWS)
+    ULONG outBufLen = 15000;
+    std::vector<BYTE> buf(outBufLen);
+    PIP_ADAPTER_ADDRESSES pAddresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
+
+    DWORD ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS, NULL, pAddresses, &outBufLen);
+    if (ret == ERROR_BUFFER_OVERFLOW) {
+        buf.resize(outBufLen);
+        pAddresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
+        ret = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS, NULL, pAddresses, &outBufLen);
+    }
+
+    if (ret == NO_ERROR) {
+        for (PIP_ADAPTER_ADDRESSES curr = pAddresses; curr != NULL; curr = curr->Next) {
+            std::string name = "";
+            if (curr->FriendlyName) {
+                int len = WideCharToMultiByte(CP_UTF8, 0, curr->FriendlyName, -1, NULL, 0, NULL, NULL);
+                if (len > 0) {
+                    name.resize(len - 1);
+                    WideCharToMultiByte(CP_UTF8, 0, curr->FriendlyName, -1, &name[0], len, NULL, NULL);
+                }
+            }
+            std::string desc = "";
+            if (curr->Description) {
+                int len = WideCharToMultiByte(CP_UTF8, 0, curr->Description, -1, NULL, 0, NULL, NULL);
+                if (len > 0) {
+                    desc.resize(len - 1);
+                    WideCharToMultiByte(CP_UTF8, 0, curr->Description, -1, &desc[0], len, NULL, NULL);
+                }
+            }
+
+            std::string mac = "";
+            if (curr->PhysicalAddressLength > 0) {
+                std::ostringstream ss;
+                for (DWORD i = 0; i < curr->PhysicalAddressLength; ++i) {
+                    if (i > 0) ss << "-";
+                    ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(curr->PhysicalAddress[i]);
+                }
+                mac = ss.str();
+            }
+
+            nlohmann::json ipv4_list = nlohmann::json::array();
+            nlohmann::json ipv6_list = nlohmann::json::array();
+            for (PIP_ADAPTER_UNICAST_ADDRESS u = curr->FirstUnicastAddress; u != NULL; u = u->Next) {
+                if (!u->Address.lpSockaddr) continue;
+                char ip_buf[INET6_ADDRSTRLEN] = {0};
+                if (u->Address.lpSockaddr->sa_family == AF_INET) {
+                    sockaddr_in* sa4 = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr);
+                    if (inet_ntop(AF_INET, &sa4->sin_addr, ip_buf, sizeof(ip_buf))) {
+                        ipv4_list.push_back(std::string(ip_buf));
+                    }
+                } else if (u->Address.lpSockaddr->sa_family == AF_INET6) {
+                    sockaddr_in6* sa6 = reinterpret_cast<sockaddr_in6*>(u->Address.lpSockaddr);
+                    if (inet_ntop(AF_INET6, &sa6->sin6_addr, ip_buf, sizeof(ip_buf))) {
+                        ipv6_list.push_back(std::string(ip_buf));
+                    }
+                }
+            }
+
+            nlohmann::json gw_list = nlohmann::json::array();
+            for (PIP_ADAPTER_GATEWAY_ADDRESS_LH g = curr->FirstGatewayAddress; g != NULL; g = g->Next) {
+                if (!g->Address.lpSockaddr) continue;
+                char gw_buf[INET6_ADDRSTRLEN] = {0};
+                if (g->Address.lpSockaddr->sa_family == AF_INET) {
+                    sockaddr_in* sa4 = reinterpret_cast<sockaddr_in*>(g->Address.lpSockaddr);
+                    if (inet_ntop(AF_INET, &sa4->sin_addr, gw_buf, sizeof(gw_buf))) {
+                        gw_list.push_back(std::string(gw_buf));
+                    }
+                }
+            }
+
+            bool is_up = (curr->OperStatus == IfOperStatusUp);
+            if (ipv4_list.empty() && ipv6_list.empty() && !is_up) continue;
+
+            std::string type_raw = "Ethernet adapter";
+            std::string category = "Ethernet LAN";
+            std::string badge_color = "#1a7f37";
+
+            std::string combined = name + " " + desc;
+            std::string lower = combined;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+            if (curr->IfType == IF_TYPE_IEEE80211 || lower.find("wi-fi") != std::string::npos || lower.find("wireless") != std::string::npos || lower.find("wlan") != std::string::npos) {
+                type_raw = "Wireless LAN adapter";
+                category = "Wi-Fi LAN";
+                badge_color = "#1a7f37";
+            } else if (lower.find("radmin") != std::string::npos || lower.find("vpn") != std::string::npos || lower.find("tailscale") != std::string::npos || lower.find("zerotier") != std::string::npos || lower.find("wireguard") != std::string::npos) {
+                type_raw = "Ethernet adapter";
+                category = "VPN / WAN P2P";
+                badge_color = "#8250df";
+            } else if (lower.find("vmware") != std::string::npos || lower.find("virtualbox") != std::string::npos || lower.find("hyper-v") != std::string::npos || lower.find("vethernet") != std::string::npos || lower.find("virtual") != std::string::npos) {
+                type_raw = "Ethernet adapter";
+                category = "Virtual Net";
+                badge_color = "#6e7781";
+            } else if (curr->IfType == IF_TYPE_SOFTWARE_LOOPBACK || lower.find("loopback") != std::string::npos) {
+                type_raw = "Loopback adapter";
+                category = "Loopback";
+                badge_color = "#6e7781";
+            } else if (curr->IfType == IF_TYPE_TUNNEL || lower.find("tunnel") != std::string::npos || lower.find("teredo") != std::string::npos) {
+                type_raw = "Tunnel adapter";
+                category = "Global IPv6 WAN";
+                badge_color = "#0969da";
+            }
+
+            nlohmann::json ad;
+            ad["type_raw"] = type_raw;
+            ad["name"] = name.empty() ? (curr->AdapterName ? curr->AdapterName : "Adapter") : name;
+            ad["desc"] = desc;
+            ad["mac"] = mac;
+            ad["ipv4"] = ipv4_list;
+            ad["ipv6"] = ipv6_list;
+            ad["gateway"] = gw_list;
+            ad["status"] = is_up ? "Connected" : "Disconnected";
+            ad["category"] = category;
+            ad["badge_color"] = badge_color;
+            adapters.push_back(ad);
+        }
+    }
+#elif defined(SLUG_PLATFORM_POSIX)
+    struct ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) == 0 && ifaddr) {
+        std::map<std::string, nlohmann::json> if_map;
+        for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+            if (!ifa->ifa_addr) continue;
+            std::string if_name = ifa->ifa_name;
+            if (!if_map.count(if_name)) {
+                nlohmann::json ad;
+                std::string cat = "Ethernet LAN";
+                std::string col = "#1a7f37";
+                if (if_name.starts_with("wl")) { cat = "Wi-Fi LAN"; col = "#1a7f37"; }
+                else if (if_name.starts_with("lo")) { cat = "Loopback"; col = "#6e7781"; }
+                else if (if_name.starts_with("tun") || if_name.starts_with("wg") || if_name.starts_with("tailscale")) { cat = "VPN / WAN P2P"; col = "#8250df"; }
+                else if (if_name.starts_with("docker") || if_name.starts_with("br-") || if_name.starts_with("veth")) { cat = "Virtual Net"; col = "#6e7781"; }
+                ad["type_raw"] = "Network interface";
+                ad["name"] = if_name;
+                ad["desc"] = "Kernel interface " + if_name;
+                ad["mac"] = "";
+                ad["ipv4"] = nlohmann::json::array();
+                ad["ipv6"] = nlohmann::json::array();
+                ad["gateway"] = nlohmann::json::array();
+                ad["status"] = (ifa->ifa_flags & IFF_UP) ? "Connected" : "Disconnected";
+                ad["category"] = cat;
+                ad["badge_color"] = col;
+                if_map[if_name] = ad;
+            }
+            char ip_buf[INET6_ADDRSTRLEN] = {0};
+            if (ifa->ifa_addr->sa_family == AF_INET) {
+                sockaddr_in* sa4 = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
+                if (inet_ntop(AF_INET, &sa4->sin_addr, ip_buf, sizeof(ip_buf))) {
+                    if_map[if_name]["ipv4"].push_back(std::string(ip_buf));
+                }
+            } else if (ifa->ifa_addr->sa_family == AF_INET6) {
+                sockaddr_in6* sa6 = reinterpret_cast<sockaddr_in6*>(ifa->ifa_addr);
+                if (inet_ntop(AF_INET6, &sa6->sin6_addr, ip_buf, sizeof(ip_buf))) {
+                    if_map[if_name]["ipv6"].push_back(std::string(ip_buf));
+                }
+            }
+        }
+        freeifaddrs(ifaddr);
+        for (auto& [k, v] : if_map) {
+            adapters.push_back(v);
+        }
+    }
+#endif
+
+    if (adapters.empty()) {
+        std::string lip = get_host_lan_ip();
+        nlohmann::json ad;
+        ad["type_raw"] = "Primary Network adapter";
+        ad["name"] = "Default Host Interface";
+        ad["desc"] = "OS default socket route";
+        ad["mac"] = "00-00-00-00-00-00";
+        ad["ipv4"] = { lip };
+        ad["ipv6"] = nlohmann::json::array();
+        ad["gateway"] = nlohmann::json::array();
+        ad["status"] = "Connected";
+        ad["category"] = "Wi-Fi / LAN";
+        ad["badge_color"] = "#1a7f37";
+        adapters.push_back(ad);
+    }
+
+    res["active_count"] = adapters.size();
+    res["adapters"] = adapters;
+    return res;
+}
+
+static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& ws_path) {
+    nlohmann::json res;
+    res["status"] = "ok";
+    res["workspace"] = ws_path.string();
+
+    nlohmann::json quarantined = nlohmann::json::array();
+    nlohmann::json clean = nlohmann::json::array();
+    nlohmann::json excluded = nlohmann::json::array();
+
+    std::error_code ec;
+    std::filesystem::path canonical_ws = std::filesystem::absolute(ws_path, ec);
+    if (!std::filesystem::exists(canonical_ws, ec) || !std::filesystem::is_directory(canonical_ws, ec)) {
+        res["stats"] = {{"clean", 0}, {"quarantined", 0}, {"excluded", 0}};
+        res["quarantined_files"] = quarantined;
+        res["clean_files"] = clean;
+        res["excluded_files"] = excluded;
+        return res;
+    }
+
+    policy::HierarchicalGitignore gi;
+    gi.scan_and_load_all(canonical_ws);
+
+    std::filesystem::path idx_file = canonical_ws / ".slug" / "index.db";
+    ai::StatefulAuditIndex audit_idx(idx_file);
+    audit_idx.load();
+
+    ai::AiScanner scanner(ai::AiScanner::ProviderType::LOCAL_HEURISTIC);
+
+    for (std::filesystem::recursive_directory_iterator it(canonical_ws, std::filesystem::directory_options::skip_permission_denied, ec), end;
+         it != end; ++it) {
+        if (ec) { ec.clear(); continue; }
+
+        std::filesystem::path p = it->path();
+        std::filesystem::path rel_path = std::filesystem::relative(p, canonical_ws, ec);
+        std::string rel = rel_path.generic_string();
+        std::string filename = p.filename().generic_string();
+        std::string lower = rel;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+        bool is_dir = it->is_directory(ec);
+        bool is_excluded = false;
+        std::string excl_rule = "";
+
+        if (lower == ".git" || lower.starts_with(".git/") || lower.find("/.git/") != std::string::npos) {
+            is_excluded = true; excl_rule = "VCS internals (.git/)";
+        } else if (lower == "node_modules" || lower.starts_with("node_modules/") || lower.find("/node_modules/") != std::string::npos) {
+            is_excluded = true; excl_rule = "Dependencies (node_modules/)";
+        } else if (lower == "build" || lower.starts_with("build/") || lower.find("/build/") != std::string::npos ||
+                   lower == "build_win" || lower.starts_with("build_win/") ||
+                   lower == "target" || lower.starts_with("target/")) {
+            is_excluded = true; excl_rule = "Build output directory";
+        } else if (lower.ends_with(".obj") || lower.ends_with(".o") || lower.ends_with(".pdb") || lower.ends_with(".exe") || lower.ends_with(".dll")) {
+            is_excluded = true; excl_rule = "Compiled binary artifact";
+        } else if (gi.is_ignored(rel_path, is_dir)) {
+            is_excluded = true; excl_rule = "Khớp quy tắc trong .gitignore / .slugignore";
+        }
+
+        if (is_excluded) {
+            if (is_dir) {
+                it.disable_recursion_pending();
+            }
+            if (excluded.size() < 250) {
+                uintmax_t sz = 0;
+                if (!is_dir) sz = it->file_size(ec);
+                excluded.push_back({
+                    {"name", rel + (is_dir ? "/" : "")},
+                    {"size", is_dir ? "Directory" : core::Utils::format_size(sz)},
+                    {"rule", excl_rule},
+                    {"type", is_dir ? "Directory" : "File"}
+                });
+            }
+            continue;
+        }
+
+        if (is_dir) continue;
+
+        uintmax_t sz = it->file_size(ec);
+        if (sz > 5 * 1024 * 1024) {
+            clean.push_back({
+                {"name", rel},
+                {"size", core::Utils::format_size(sz)},
+                {"status", "Large File"},
+                {"note", "Bỏ qua phân tích entropy (> 5 MB)"}
+            });
+            continue;
+        }
+
+        auto data = platform::PathUtils::read_binary_file(p);
+        if (!data) continue;
+
+        std::string_view sv(reinterpret_cast<const char*>(data->data()), data->size());
+        double entropy = compute_shannon_entropy(sv);
+
+        bool allowed = false;
+        auto entry_opt = audit_idx.get_entry(rel);
+        if (entry_opt && entry_opt->status == core::AuditStatus::CLEAN && entry_opt->decision_actor == "user") {
+            allowed = true;
+        }
+
+        auto finding = scanner.scan_content(rel, sv, true);
+        if (finding.has_secret || filename.starts_with(".env") || filename.ends_with(".key") || filename.ends_with(".pem") || filename == "id_rsa") {
+            std::string reason = finding.has_secret ? finding.reason : "Tên tệp khớp khuôn mẫu credential bí mật";
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(2) << entropy;
+            reason += " (Entropy: " + ss.str() + ")";
+
+            quarantined.push_back({
+                {"name", rel},
+                {"size", core::Utils::format_size(sz)},
+                {"tiers", {"Slug Regex", "Slug AI"}},
+                {"reason", reason},
+                {"unquarantined", allowed}
+            });
+        } else {
+            if (clean.size() < 250) {
+                std::ostringstream ss;
+                ss << std::fixed << std::setprecision(2) << entropy;
+                clean.push_back({
+                    {"name", rel},
+                    {"size", core::Utils::format_size(sz)},
+                    {"status", "Clean"},
+                    {"note", "Shannon entropy: " + ss.str() + " (An Toàn)"}
+                });
+            }
+        }
+    }
+
+    res["stats"] = {
+        {"clean", clean.size()},
+        {"quarantined", quarantined.size()},
+        {"excluded", excluded.size()}
+    };
+    res["quarantined_files"] = quarantined;
+    res["clean_files"] = clean;
+    res["excluded_files"] = excluded;
+    return res;
+}
 
 using namespace slug;
 
@@ -2697,25 +3074,106 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
-            if (path == "/api/audit/workspace") {
+            if (path == "/api/network/inspect" || path == "/api/network/interfaces") {
+                auto net_info = inspect_network_interfaces(actual_port);
+                send_portal_http(sock, 200, "OK", "application/json; charset=utf-8", net_info.dump());
+                return;
+            }
+
+            if (path == "/api/host/workspaces") {
+                auto list = core::WorkspaceManager::load_registry();
+                nlohmann::json arr = nlohmann::json::array();
+                for (const auto& w : list) {
+                    nlohmann::json item;
+                    item["id"] = "host-" + std::to_string(w.port);
+                    item["port"] = w.port;
+                    item["path"] = w.path.string();
+                    item["suite"] = core::suite_to_short_name(w.suite);
+                    item["filter_mode"] = core::filter_mode_to_string(w.filter_mode);
+                    item["ai_enabled"] = w.ai_enabled;
+
+                    auto st = query_workspace_api(w.port);
+                    bool is_live = (st.is_object() && st.contains("port"));
+                    item["is_live"] = is_live;
+                    if (is_live) {
+                        item["otp_rw"] = st.value("totp_rw", st.value("totp", ""));
+                        item["otp_r"] = st.value("totp_r", "");
+                        item["otp_w"] = st.value("totp_w", "");
+                        item["otp"] = item["otp_rw"];
+                        item["ttl"] = st.value("totp_remaining_sec", 30);
+                        item["peers"] = st.value("sessions", nlohmann::json::array());
+                    } else {
+                        item["otp_rw"] = "-";
+                        item["otp_r"] = "-";
+                        item["otp_w"] = "-";
+                        item["otp"] = "-";
+                        item["ttl"] = 0;
+                        item["peers"] = nlohmann::json::array();
+                    }
+                    arr.push_back(item);
+                }
                 nlohmann::json res;
                 res["status"] = "ok";
-                res["workspace"] = "./";
-                res["stats"] = {{"clean", 24}, {"quarantined", 1}, {"excluded", 842}};
-                res["quarantined_files"] = nlohmann::json::array({
-                    {{"name", ".env"}, {"size", "380 B"}, {"tiers", {"Slug Regex", "Slug AI"}}, {"reason", "Phat hien JWT_SECRET, DATABASE_URL, API_KEY (Entropy: 4.82)"}, {"unquarantined", false}}
-                });
-                res["clean_files"] = nlohmann::json::array({
-                    {{"name", "src/main.cpp"}, {"size", "146 KB"}, {"status", "Clean"}, {"note", "C++ Source, Entropy 3.82"}},
-                    {{"name", "CMakeLists.txt"}, {"size", "1.4 KB"}, {"status", "Clean"}, {"note", "Build Config, 0 secrets"}},
-                    {{"name", "README.md"}, {"size", "5.2 KB"}, {"status", "Clean"}, {"note", "Markdown Documentation"}},
-                    {{"name", "src/net/web_assets.hpp"}, {"size", "240 KB"}, {"status", "Clean"}, {"note", "Web Portal Assets"}}
-                });
-                res["excluded_files"] = nlohmann::json::array({
-                    {{"name", "build/"}, {"size", "48.2 MB"}, {"rule", "build/ in .slugignore"}, {"type", "Directory"}},
-                    {{"name", "target/"}, {"size", "12.5 MB"}, {"rule", "target/ in .slugignore"}, {"type", "Directory"}},
-                    {{"name", "node_modules/"}, {"size", "142 MB"}, {"rule", "node_modules/ in .slugignore"}, {"type", "Directory"}}
-                });
+                res["workspaces"] = arr;
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/host/start" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string wpath = j.value("path", "./");
+                    uint16_t wport = static_cast<uint16_t>(j.value("port", 9443));
+                    std::string suite_str = j.value("suite", "3");
+                    std::string filter_str = j.value("filter", "protected");
+                    uint64_t wttl = j.value("ttl", 86400ULL);
+
+                    core::SuiteID suite = core::suite_from_string(suite_str);
+                    core::FilterMode fmode = core::filter_mode_from_string(filter_str);
+
+                    bool ok = core::WorkspaceManager::instance().add_workspace(
+                        wpath, wport, suite, wttl, true, fmode
+                    );
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
+                    res["port"] = wport;
+                    res["message"] = ok ? ("Đã bắt đầu chia sẻ workspace tại '" + wpath + "' trên cổng " + std::to_string(wport))
+                                        : "Không thể khởi động chia sẻ workspace (thư mục không hợp lệ hoặc cổng bị trùng)";
+                    send_portal_http(sock, ok ? 200 : 400, ok ? "OK" : "Bad Request", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid request body\"}");
+                }
+                return;
+            }
+
+            if (path == "/api/host/stop" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    uint16_t wport = static_cast<uint16_t>(j.value("port", 0));
+                    bool ok = false;
+                    if (wport > 0) {
+                        ok = core::WorkspaceManager::instance().stop_workspace(wport);
+                    }
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
+                    res["message"] = ok ? ("Đã dừng chia sẻ trên cổng " + std::to_string(wport)) : "Không tìm thấy workspace trên cổng này";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            }
+
+            if (path == "/api/audit/workspace") {
+                std::string target_dir = "./";
+                size_t ppos = query.find("path=");
+                if (ppos != std::string::npos) {
+                    target_dir = query.substr(ppos + 5);
+                    size_t amp = target_dir.find('&');
+                    if (amp != std::string::npos) target_dir = target_dir.substr(0, amp);
+                    target_dir = slug_url_decode(target_dir);
+                }
+                auto res = perform_real_workspace_audit(target_dir);
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 return;
             }
@@ -2723,44 +3181,208 @@ int cmd_portal(int argc, char* argv[]) {
             if (path == "/api/audit/toggle-unquarantine" && method == "POST") {
                 try {
                     auto j = nlohmann::json::parse(body);
-                    std::string fname = j.value("file", ".env");
+                    std::string fname = j.value("file", "");
+                    std::string ws = j.value("workspace", "./");
+                    std::filesystem::path idx_file = std::filesystem::path(ws) / ".slug" / "index.db";
+                    ai::StatefulAuditIndex audit_idx(idx_file);
+                    audit_idx.load();
+
+                    auto existing = audit_idx.get_entry(fname);
+                    bool was_allowed = (existing && existing->status == core::AuditStatus::CLEAN && existing->decision_actor == "user");
+
+                    if (was_allowed) {
+                        audit_idx.remove_entry(fname);
+                    } else {
+                        audit_idx.allow_file(fname, "Gỡ cách ly chủ động bởi người dùng qua Web Portal", "user");
+                    }
+                    audit_idx.save();
+
                     nlohmann::json res;
                     res["status"] = "ok";
                     res["file"] = fname;
-                    res["message"] = "Quarantine state updated for " + fname;
+                    res["unquarantined"] = !was_allowed;
+                    res["message"] = (!was_allowed ? "Đã gỡ cách ly (cho phép transit): " : "Đã tái cách ly vào RAM Shield: ") + fname;
                     send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 } catch (...) {
                     send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
                 }
+                return;
+            }
+
+            if (path == "/api/audit/recheck-all" && method == "POST") {
+                std::string ws = "./";
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    ws = j.value("workspace", "./");
+                } catch (...) {}
+
+                std::filesystem::path idx_file = std::filesystem::path(ws) / ".slug" / "index.db";
+                ai::StatefulAuditIndex audit_idx(idx_file);
+                audit_idx.load();
+                auto list = audit_idx.list_flagged_or_all(false);
+
+                ai::AiScanner scanner(ai::AiScanner::ProviderType::LOCAL_HEURISTIC);
+                int resolved = 0;
+                for (const auto& e : list) {
+                    std::filesystem::path fp = std::filesystem::path(ws) / e.file_path;
+                    auto data = platform::PathUtils::read_binary_file(fp);
+                    if (!data) continue;
+                    std::string_view sv(reinterpret_cast<const char*>(data->data()), data->size());
+                    auto finding = scanner.scan_content(e.file_path, sv, true);
+                    if (!finding.has_secret) {
+                        ai::AuditIndexEntry updated = e;
+                        updated.status = core::AuditStatus::CLEAN;
+                        updated.reason = "Secret đã được khắc phục và dọn sạch";
+                        updated.line_number = 0;
+                        audit_idx.update_entry(updated);
+                        resolved++;
+                    }
+                }
+                audit_idx.save();
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["resolved"] = resolved;
+                res["message"] = "Đã quét lại toàn bộ: " + std::to_string(resolved) + " tệp đã sạch secret.";
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/audit/allow-all" && method == "POST") {
+                std::string ws = "./";
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    ws = j.value("workspace", "./");
+                } catch (...) {}
+
+                std::filesystem::path idx_file = std::filesystem::path(ws) / ".slug" / "index.db";
+                ai::StatefulAuditIndex audit_idx(idx_file);
+                audit_idx.load();
+                auto list = audit_idx.list_flagged_or_all(true);
+                for (const auto& e : list) {
+                    audit_idx.allow_file(e.file_path, "Gỡ cách ly hàng loạt bởi người dùng qua Web Portal", "user");
+                }
+                audit_idx.save();
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["message"] = "Đã gỡ cách ly cho toàn bộ " + std::to_string(list.size()) + " tệp nhạy cảm.";
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/audit/clear" && method == "POST") {
+                std::string ws = "./";
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    ws = j.value("workspace", "./");
+                } catch (...) {}
+
+                std::filesystem::path idx_file = std::filesystem::path(ws) / ".slug" / "index.db";
+                std::error_code ec;
+                std::filesystem::remove(idx_file, ec);
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["message"] = "Đã xóa trắng bộ nhớ đệm kiểm toán (.slug/index.db).";
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 return;
             }
 
             if (path == "/api/audit/scan-file" && method == "POST") {
                 try {
                     auto j = nlohmann::json::parse(body);
-                    std::string fpath = j.value("path", "src/main.cpp");
+                    std::string fpath = j.value("path", "");
+                    if (fpath.empty()) {
+                        send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Vui lòng chọn hoặc nhập đường dẫn file cần kiểm toán.\"}");
+                        return;
+                    }
+                    std::filesystem::path fp(fpath);
+                    if (!std::filesystem::exists(fp)) {
+                        send_portal_http(sock, 404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Không tìm thấy tệp: " + fpath + "\"}");
+                        return;
+                    }
+                    auto data = platform::PathUtils::read_binary_file(fp);
+                    if (!data) {
+                        send_portal_http(sock, 500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Không thể đọc nội dung tệp: " + fpath + "\"}");
+                        return;
+                    }
+                    std::string_view sv(reinterpret_cast<const char*>(data->data()), data->size());
+                    double entropy = compute_shannon_entropy(sv);
+                    std::string blake3_hex = crypto::Blake3::hash_hex(*data);
+
+                    ai::AiScanner scanner(ai::AiScanner::ProviderType::LOCAL_HEURISTIC);
+                    auto finding = scanner.scan_content(fpath, sv, true);
+
                     nlohmann::json res;
                     res["status"] = "ok";
                     res["file"] = fpath;
-                    res["entropy"] = 3.82;
-                    res["verdict"] = "CLEAN";
-                    res["message"] = "Tep sach, khong phat hien bi mat hay khoa API.";
+                    res["size_bytes"] = data->size();
+                    res["blake3"] = blake3_hex;
+                    std::ostringstream ent_ss;
+                    ent_ss << std::fixed << std::setprecision(2) << entropy;
+                    res["entropy"] = ent_ss.str();
+                    res["verdict"] = finding.has_secret ? "QUARANTINED" : "CLEAN";
+                    res["detector"] = finding.detector;
+                    res["line_number"] = finding.line_number;
+                    res["matched_snippet"] = finding.matched_snippet;
+                    res["message"] = finding.has_secret 
+                        ? ("Phát hiện: " + finding.reason + (finding.line_number > 0 ? " tại dòng " + std::to_string(finding.line_number) : "")) 
+                        : "Tệp sạch (CLEAN) — Không phát hiện khóa API, secret entropy cao hay chuỗi nhạy cảm.";
                     send_portal_http(sock, 200, "OK", "application/json", res.dump());
-                } catch (...) {
-                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                } catch (const std::exception& e) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"" + std::string(e.what()) + "\"}");
                 }
                 return;
             }
 
             if (path == "/api/pull/dry-run") {
+                std::lock_guard<std::mutex> lk(g_portal.mtx);
                 nlohmann::json res;
                 res["status"] = "ok";
-                res["new_files"] = 14;
-                res["new_bytes"] = 1468006;
-                res["cached_files"] = 84;
-                res["cached_bytes"] = 44879052;
-                res["bandwidth_saved_pct"] = 96.8;
+                if (g_portal.client && g_portal.client->is_connected()) {
+                    auto tunnel_resp = g_portal.client->tunnel_http("GET /api/status HTTP/1.1\r\nHost: workspace\r\nConnection: close\r\n\r\n");
+                    size_t bpos = tunnel_resp.find("\r\n\r\n");
+                    if (bpos != std::string::npos) {
+                        try {
+                            auto st = nlohmann::json::parse(tunnel_resp.substr(bpos + 4));
+                            res["workspace"] = st.value("workspace", "remote");
+                        } catch (...) {}
+                    }
+                }
+                res["new_files"] = 0;
+                res["new_bytes"] = 0;
+                res["cached_files"] = 0;
+                res["cached_bytes"] = 0;
+                res["bandwidth_saved_pct"] = 100.0;
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/portal/get" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string fpath = j.value("file", "");
+                    std::string dest = j.value("dest", "");
+                    if (fpath.empty()) {
+                        send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Thiếu đường dẫn tệp cần tải\"}");
+                        return;
+                    }
+                    if (dest.empty()) {
+                        dest = "./" + std::filesystem::path(fpath).filename().string();
+                    }
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (!g_portal.client || !g_portal.client->is_connected()) {
+                        send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối tới trạm phát nào. Hãy kết nối ở Tab 1 trước.\"}");
+                        return;
+                    }
+                    bool ok = g_portal.client->get_file(fpath, dest);
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
+                    res["file"] = fpath;
+                    res["dest"] = dest;
+                    res["message"] = ok ? ("Đã tải thành công " + fpath + " -> " + dest) : ("Lỗi tải tệp: " + g_portal.client->last_error());
+                    send_portal_http(sock, ok ? 200 : 400, ok ? "OK" : "Bad Request", "application/json", res.dump());
+                } catch (const std::exception& e) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"" + std::string(e.what()) + "\"}");
+                }
                 return;
             }
 
@@ -2773,16 +3395,97 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/api/ai/test-scan" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string sample = j.value("sample", "");
+                    std::string provider_str = j.value("provider", "local_heuristic");
+                    ai::AiScanner scanner(ai::AiScanner::ProviderType::LOCAL_HEURISTIC);
+                    auto finding = scanner.scan_content("test_sample.ts", sample, true);
+                    double ent = compute_shannon_entropy(sample);
+                    std::ostringstream ss;
+                    ss << std::fixed << std::setprecision(2) << ent;
+                    nlohmann::json res;
+                    res["status"] = "ok";
+                    res["entropy"] = ss.str();
+                    res["verdict"] = finding.has_secret ? "BLOCKED" : "CLEAN";
+                    res["message"] = finding.has_secret ? finding.reason : "Tệp sạch, không phát hiện rò rỉ secret";
+                    res["model"] = j.value("model", "built-in");
+                    res["provider"] = provider_str;
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            }
+
             if (path == "/api/bench/run") {
                 bool quick = (query.find("quick=1") != std::string::npos);
                 auto rep = bench::BenchmarkEngine::run_all(quick);
                 bench::BenchmarkEngine::set_latest_report(rep);
                 auto j = rep.to_json();
+
+                double write_mb = 0.0, read_mb = 0.0, lat_ms = 0.0;
+                int iops_val = 0;
+                try {
+                    std::filesystem::path tmp_p = std::filesystem::temp_directory_path() / ("slug_bench_" + std::to_string(core::Utils::current_timestamp()) + ".tmp");
+                    size_t bench_sz = quick ? (16 * 1024 * 1024) : (32 * 1024 * 1024);
+                    std::vector<uint8_t> wbuf(1024 * 1024, 0x5A);
+
+                    auto t0 = std::chrono::high_resolution_clock::now();
+                    std::ofstream ofs(tmp_p, std::ios::binary);
+                    size_t written = 0;
+                    while (written < bench_sz && ofs.good()) {
+                        ofs.write(reinterpret_cast<const char*>(wbuf.data()), wbuf.size());
+                        written += wbuf.size();
+                    }
+                    ofs.flush();
+                    auto t1 = std::chrono::high_resolution_clock::now();
+                    ofs.close();
+
+                    double w_sec = std::max(std::chrono::duration<double>(t1 - t0).count(), 0.0001);
+                    write_mb = (bench_sz / (1024.0 * 1024.0)) / w_sec;
+
+                    std::ifstream ifs(tmp_p, std::ios::binary);
+                    t0 = std::chrono::high_resolution_clock::now();
+                    std::vector<uint8_t> rbuf(1024 * 1024);
+                    size_t read_bytes = 0;
+                    while (ifs.good() && read_bytes < bench_sz) {
+                        ifs.read(reinterpret_cast<char*>(rbuf.data()), rbuf.size());
+                        read_bytes += static_cast<size_t>(ifs.gcount());
+                        if (ifs.gcount() == 0) break;
+                    }
+                    t1 = std::chrono::high_resolution_clock::now();
+                    ifs.close();
+                    double r_sec = std::max(std::chrono::duration<double>(t1 - t0).count(), 0.0001);
+                    read_mb = (read_bytes / (1024.0 * 1024.0)) / r_sec;
+
+                    ifs.open(tmp_p, std::ios::binary);
+                    int iops_count = quick ? 200 : 500;
+                    t0 = std::chrono::high_resolution_clock::now();
+                    std::vector<char> blk(4096);
+                    for (int k = 0; k < iops_count && bench_sz > 4096; ++k) {
+                        size_t pos = (static_cast<size_t>(rand()) * 4096) % (bench_sz - 4096);
+                        ifs.seekg(pos);
+                        ifs.read(blk.data(), 4096);
+                    }
+                    t1 = std::chrono::high_resolution_clock::now();
+                    ifs.close();
+                    double iops_sec = std::max(std::chrono::duration<double>(t1 - t0).count(), 0.0001);
+                    iops_val = static_cast<int>(iops_count / iops_sec);
+                    lat_ms = (iops_sec / iops_count) * 1000.0;
+
+                    std::error_code rm_ec;
+                    std::filesystem::remove(tmp_p, rm_ec);
+                } catch (...) {
+                    write_mb = 0.0; read_mb = 0.0; iops_val = 0; lat_ms = 0.0;
+                }
+
                 j["disk"] = {
-                    {"write_mb_sec", 1284.5},
-                    {"read_mb_sec", 2268.0},
-                    {"random_4k_iops", 48200},
-                    {"latency_ms", 0.42}
+                    {"write_mb_sec", std::round(write_mb * 10.0) / 10.0},
+                    {"read_mb_sec", std::round(read_mb * 10.0) / 10.0},
+                    {"random_4k_iops", iops_val},
+                    {"latency_ms", std::round(lat_ms * 100.0) / 100.0}
                 };
                 send_portal_http(sock, 200, "OK", "application/json", j.dump());
                 return;
@@ -2823,16 +3526,6 @@ int cmd_portal(int argc, char* argv[]) {
                             }
                         }
                     }
-                }
-                if (entries.empty()) {
-                    nlohmann::json def_item;
-                    def_item["workspace_path"] = "./";
-                    def_item["file_path"] = "./.env";
-                    def_item["timestamp_str"] = "16/10/2026 22:30:15";
-                    def_item["size_bytes"] = 380;
-                    def_item["blake3"] = "a7f92b0c1e8d...";
-                    def_item["status"] = "ĐÃ NIÊM PHONG (.env.pqc)";
-                    entries.push_back(def_item);
                 }
                 res["entries"] = entries;
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());

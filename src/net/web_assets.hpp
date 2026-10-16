@@ -1872,62 +1872,92 @@ const ICONS = {
 
 let currentRole = 'client';
 let clientAuthMode = 'otp';
-let hostedWorkspaces = [
-  {
-    id: 'host-9443',
-    path: './',
-    port: 9443,
-    suite: '3',
-    suiteName: 'Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng]',
-    filterMode: 'protected',
-    filterName: 'Protected (Slug Rule + Slug Regex + Slug AI)',
-    otp_rw: '48291048',
-    otp_r: '71928301',
-    otp_w: '39582104',
-    otp: '48291048',
-    ttl: 30,
-    maxTtl: 30,
-    role: 'rw',
-    peers: [
-      { id: 'peer-1', name: 'Lab-PC-03', ip: '192.168.1.105', authType: 'TOTP [RW]', suite: 'ML-KEM-1024 + ML-DSA-87', connectedAt: '5 phút trước', transferred: '14.2 MB' }
-    ],
-    users: [
-      { username: 'admin', role: 'rw', roleName: '[RW] Toàn Quyền (Đọc & Ghi)', ttl: 0, status: 'Permanent (∞)', createdAt: 'Hôm nay 22:00', revoked: false },
-      { username: 'colleague_bob', role: 'r', roleName: '[R] Chỉ Đọc (Tải Về)', ttl: 6300, status: 'Còn 1h 45m', createdAt: 'Hôm nay 22:10', revoked: false },
-      { username: 'student_alice', role: 'w', roleName: '[W] GỬI LÊN (Chỉ Cho Tải Lên)', ttl: 19200, status: 'Còn 5h 20m', createdAt: 'Hôm nay 22:25', revoked: false }
-    ],
-    auditStats: { clean: 24, quarantined: 1, excluded: 842 },
-    quarantinedFiles: [
-      { name: '.env', size: '380 B', detector: 'Slug Regex & Slug AI', reason: 'Phát hiện JWT_SECRET, DATABASE_URL, API_KEY (Entropy: 4.82)', risk: 'CRITICAL', unquarantined: false }
-    ],
-    excludedFiles: [
-      { name: 'node_modules/', size: '184.2 MiB', detector: 'Slug Rule (.gitignore)', reason: 'Rác build dependencies', included: false },
-      { name: 'build/', size: '45.1 MiB', detector: 'Slug Rule (.gitignore)', reason: 'Thư mục output CMake / Ninja', included: false }
-    ],
-    logs: [
-      'Khởi động chia sẻ workspace ./ trên cổng 9443 với Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87)',
-      'Slug Guard kích hoạt: Slug Rule (.gitignore) + Slug Regex + Slug AI',
-      'Peer 192.168.1.105 kết nối thành công qua kênh ML-KEM-1024 (OTP RW)',
-      'Slug Regex & Slug AI phát hiện và cách ly tệp .env vào RAM Shield'
-    ]
-  }
-];
+let hostedWorkspaces = [];
+let inactiveWorkspaces = [];
 
-// Danh sách các workspace đã từng host (lưu trong .slug và registry.json)
-let inactiveWorkspaces = [
-  {
-    id: 'saved-backend',
-    path: 'D:/slugdoc/backend',
-    port: 9444,
-    suite: '2',
-    suiteName: 'Mức 2: Modern Hybrid (ML-KEM-768 + X25519)',
-    filterMode: 'protected',
-    hasSlugDir: true,
-    userCount: 4,
-    ruleCount: 12,
-    lastHosted: 'Hôm qua 18:30'
+function openSaved(id) {
+  showToast('Đang kết nối lại trạm ' + id + ' qua kênh PQC...');
+  fetch('/api/portal/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id })
+  }).then(r => r.json()).then(res => {
+    if (res.status === 'ok') {
+      window.location.href = res.redirect || res.url || '/drop';
+    } else {
+      alert('Không thể mở trạm: ' + (res.message || 'Lỗi không xác định'));
+    }
+  }).catch(err => {
+    alert('Lỗi kết nối tới trạm: ' + err.message);
+  });
+}
+
+function removeSaved(id) {
+  if (confirm('Xóa trạm đã lưu "' + id + '" khỏi danh sách?')) {
+    fetch('/api/portal/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id })
+    }).then(r => r.json()).then(res => {
+      if (res.status === 'ok') {
+        showToast('Đã xóa trạm ' + id);
+        setTimeout(() => { window.location.reload(); }, 300);
+      } else {
+        alert('Lỗi xóa trạm: ' + (res.message || 'Không thành công'));
+      }
+    }).catch(err => {
+      alert('Lỗi gọi API xóa trạm: ' + err.message);
+    });
   }
-];
+}
+
+function loadHostedWorkspaces() {
+  fetch('/api/host/workspaces')
+    .then(r => r.json())
+    .then(data => {
+      if (data && data.workspaces) {
+        hostedWorkspaces = data.workspaces.map(w => ({
+          id: w.id || ('host-' + w.port),
+          path: w.path || './',
+          port: w.port,
+          suite: w.suite || '3',
+          suiteName: w.suite === 'classical' ? 'Mức 1: Classical Hardened (X25519 + Ed25519)' : (w.suite === 'modern' ? 'Mức 2: Modern Hybrid (ML-KEM-768 + X25519)' : 'Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng]'),
+          filterMode: w.filter_mode || 'protected',
+          filterName: w.filter_mode === 'raw' ? 'Raw (Tắt bảo vệ)' : (w.filter_mode === 'strict' ? 'Strict Isolation' : 'Protected (Slug Rule + Regex + AI)'),
+          otp_rw: w.otp_rw || '-',
+          otp_r: w.otp_r || '-',
+          otp_w: w.otp_w || '-',
+          otp: w.otp || w.otp_rw || '-',
+          ttl: w.ttl || 0,
+          maxTtl: 30,
+          role: 'rw',
+          peers: w.peers || [],
+          users: w.users || [],
+          auditStats: { clean: 0, quarantined: 0, excluded: 0 },
+          quarantinedFiles: [],
+          cleanFiles: [],
+          excludedFiles: [],
+          logs: []
+        }));
+        renderHostedWorkspaces();
+        updateAuditWorkspaceDropdown();
+      }
+    })
+    .catch(() => {});
+}
+
+function updateAuditWorkspaceDropdown() {
+  const sel = document.getElementById('audit-target-workspace');
+  if (!sel) return;
+  const currentVal = sel.value;
+  let html = '<option value="./">Thư mục hiện tại (./)</option>';
+  hostedWorkspaces.forEach(w => {
+    html += `<option value="${w.id}">${w.path} (Cổng ${w.port})</option>`;
+  });
+  html += '<option value="custom">-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>';
+  sel.innerHTML = html;
+  if (currentVal) sel.value = currentVal;
+}
 
 let currentUserModalHostId = null;
 
@@ -1979,10 +2009,24 @@ function submitQuickGet(e) {
   const out = document.getElementById('quick-get-out');
   out.style.display = 'block';
   out.innerHTML = `<span style="color:#0969da;">${ICONS.refresh} Đang yêu cầu tải tệp '${file}' từ trạm qua kênh PQC...</span>`;
-  setTimeout(() => {
-    out.innerHTML = `<span style="color:#1a7f37; font-weight:bold;">${ICONS.check} Đã tải thành công tệp: <code>${file}</code> &rarr; <code>${dest}</code> (BLAKE3 verify OK)</span>`;
-    showToast(`Đã tải tệp ${file}!`);
-  }, 400);
+  
+  fetch('/api/portal/get', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: file, dest: dest })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      out.innerHTML = `<span style="color:#1a7f37; font-weight:bold;">${ICONS.check} Đã tải thành công tệp: <code>${file}</code> &rarr; <code>${dest}</code> (BLAKE3 verify OK)</span>`;
+      showToast(`Đã tải tệp ${file}!`);
+    } else {
+      out.innerHTML = `<span style="color:#cf222e; font-weight:bold;">Lỗi tải tệp: ${res.message || 'Không thể tải'}</span>`;
+    }
+  })
+  .catch(err => {
+    out.innerHTML = `<span style="color:#cf222e;">Lỗi kết nối tới trạm: ${err.message}</span>`;
+  });
 }
 
 function submitPullPlan(e) {
@@ -1992,22 +2036,31 @@ function submitPullPlan(e) {
   const out = document.getElementById('pull-plan-out');
   out.style.display = 'block';
   out.innerHTML = `<span style="color:#0969da;">${ICONS.refresh} Đang phân tích đồ thị khối BLAKE3 và cây dữ liệu từ xa...</span>`;
-  setTimeout(() => {
-    out.innerHTML = `<div style="background:#f6f8fa; border:1px solid #d0d7de; padding:12px; border-radius: 2px; font-size:12px; line-height:1.6;">
-      <div style="font-weight:700; color:#1f2328; margin-bottom:6px;">KẾ HOẠCH ĐỒNG BỘ DELTA (SLUG DIFFERENTIAL PULL):</div>
-      <div>- Phạm vi (Scope): <code>${scope}</code> | Prune: <code>${prune ? 'YES' : 'NO'}</code></div>
-      <div>- Khối dữ liệu cần tải (New Chunks): <strong style="color:#1a7f37;">14 chunks (1.82 MB)</strong></div>
-      <div>- Tệp đã tồn tại nguyên vẹn (Fast Path Cached): <strong>342 files</strong> (Bỏ qua truyền tải)</div>
-      <div>- Tệp cần cập nhật nội dung: <strong>src/main.rs, Cargo.toml</strong></div>
-      <div style="margin-top:8px;">
-        <button class="btn btn-sm" onclick="showToast('Đã bắt đầu đồng bộ Delta về máy trạm!');">${ICONS.download} Thực Thi Đồng Bộ Ngay (Pull Now)</button>
-      </div>
-    </div>`;
-  }, 400);
+  
+  fetch('/api/pull/dry-run')
+    .then(r => r.json())
+    .then(res => {
+      const newFiles = res.new_files || 0;
+      const newBytes = res.new_bytes || 0;
+      const wsName = res.workspace || 'remote';
+      const fileList = (res.files || []).join(', ');
+      out.innerHTML = `<div style="background:#f6f8fa; border:1px solid #d0d7de; padding:12px; border-radius: 2px; font-size:12px; line-height:1.6;">
+        <div style="font-weight:700; color:#1f2328; margin-bottom:6px;">KẾ HOẠCH ĐỒNG BỘ DELTA (SLUG DIFFERENTIAL PULL):</div>
+        <div>- Trạm từ xa (Workspace): <code>${wsName}</code> | Phạm vi: <code>${scope}</code> | Prune: <code>${prune ? 'YES' : 'NO'}</code></div>
+        <div>- Tệp trên trạm: <strong>${newFiles} files (${(newBytes / 1024).toFixed(1)} KB)</strong></div>
+        ${fileList ? `<div>- Mẫu tệp: <code>${fileList}</code></div>` : ''}
+        <div style="margin-top:8px;">
+          <button class="btn btn-sm" onclick="showToast('Sử dụng lệnh CLI: slug pull để đồng bộ toàn bộ workspace về máy trạm.');">${ICONS.download} Hướng Dẫn Đồng Bộ CLI</button>
+        </div>
+      </div>`;
+    })
+    .catch(err => {
+      out.innerHTML = `<span style="color:#cf222e;">Lỗi kiểm tra delta sync: ${err.message}. Đảm bảo đã kết nối trạm ở Tab 1.</span>`;
+    });
 }
 
-
 let currentAuditView = 'quarantine';
+let currentAuditData = null;
 
 function switchAuditFileView(view) {
   currentAuditView = view;
@@ -2031,143 +2084,116 @@ function switchAuditFileView(view) {
   renderAuditWorkspaceFiles();
 }
 
-let customAuditWorkspaceData = null;
-
 function setCustomAuditWorkspace() {
   const customInput = document.getElementById('custom-audit-path');
-  const p = (customInput ? customInput.value.trim() : '') || 'marknote';
-  const folderName = p.split(/[\/\\]/).filter(Boolean).pop() || p || 'marknote';
-
-  customAuditWorkspaceData = {
-    id: 'custom',
-    name: folderName,
-    path: p,
-    auditStats: { clean: 18, quarantined: 1, excluded: 124 },
-    quarantinedFiles: [
-      { name: `${folderName}/.env`, size: '280 B', reason: 'Chứa DATABASE_URL & JWT_SECRET rò rỉ', unquarantined: false }
-    ],
-    cleanFiles: [
-      { name: `${folderName}/app.ts`, size: '4.2 KB', note: 'TypeScript Source, Shannon entropy: 3.45 (Safe)' },
-      { name: `${folderName}/package.json`, size: '1.2 KB', note: 'Manifest, 0 secrets' },
-      { name: `${folderName}/tsconfig.json`, size: '890 B', note: 'TS Configuration' },
-      { name: `${folderName}/src/index.ts`, size: '12.8 KB', note: 'Core Logic, Pass Slug Guard' },
-      { name: `${folderName}/README.md`, size: '3.1 KB', note: 'Markdown Documentation' }
-    ],
-    excludedFiles: [
-      { name: `${folderName}/node_modules/`, size: '84.2 MB', rule: "Khớp mẫu 'node_modules/' trong .slugignore" },
-      { name: `${folderName}/dist/`, size: '6.4 MB', rule: "Khớp mẫu 'dist/' trong .slugignore" },
-      { name: `${folderName}/.git/`, size: '12.1 MB', rule: "VCS repository internals" }
-    ]
-  };
-
+  const p = (customInput ? customInput.value.trim() : '') || './';
   const targetLabel = document.getElementById('audit-current-target-label');
   if (targetLabel) targetLabel.textContent = p;
-
-  const scanInput = document.getElementById('audit-scan-path');
-  if (scanInput) {
-    scanInput.value = `${folderName}/app.ts`;
-  }
-
-  showToast(`Đã áp dụng & quét vùng thư mục: ${folderName}`);
   renderAuditWorkspaceFiles();
 }
 
-function getSelectedAuditWorkspace() {
+function getSelectedAuditPath() {
   const sel = document.getElementById('audit-target-workspace');
-  const wsId = sel ? sel.value : 'host-9443';
-  if (wsId === 'custom') {
-    if (!customAuditWorkspaceData) {
-      setCustomAuditWorkspace();
-    }
-    return customAuditWorkspaceData;
+  if (!sel) return './';
+  const val = sel.value;
+  if (val === 'custom') {
+    const customInput = document.getElementById('custom-audit-path');
+    return (customInput ? customInput.value.trim() : '') || './';
   }
-  return hostedWorkspaces.find(w => w.id === wsId) || hostedWorkspaces[0];
+  const found = hostedWorkspaces.find(w => w.id === val);
+  if (found && found.path) return found.path;
+  return val || './';
 }
 
 function renderAuditWorkspaceFiles() {
-  const host = getSelectedAuditWorkspace();
   const tbody = document.getElementById('audit-files-tbody');
-  if (!tbody || !host) return;
+  if (!tbody) return;
 
-  const statClean = document.getElementById('audit-stat-clean');
-  const statQuar = document.getElementById('audit-stat-quarantined');
-  const statExcl = document.getElementById('audit-stat-excluded');
-  const countQuar = document.getElementById('audit-count-quarantine');
-  const countClean = document.getElementById('audit-count-clean');
-  const countExcl = document.getElementById('audit-count-excluded');
+  const targetPath = getSelectedAuditPath();
+  const targetLabel = document.getElementById('audit-current-target-label');
+  if (targetLabel) targetLabel.textContent = targetPath;
 
-  const cleanNum = host.auditStats ? host.auditStats.clean : 24;
-  const quarNum = host.auditStats ? host.auditStats.quarantined : 1;
-  const exclNum = host.auditStats ? host.auditStats.excluded : 842;
+  fetch('/api/audit/workspace?path=' + encodeURIComponent(targetPath))
+    .then(r => r.json())
+    .then(data => {
+      currentAuditData = data;
+      const stats = data.stats || { clean: 0, quarantined: 0, excluded: 0 };
+      
+      const statClean = document.getElementById('audit-stat-clean');
+      const statQuar = document.getElementById('audit-stat-quarantined');
+      const statExcl = document.getElementById('audit-stat-excluded');
+      const countQuar = document.getElementById('audit-count-quarantine');
+      const countClean = document.getElementById('audit-count-clean');
+      const countExcl = document.getElementById('audit-count-excluded');
 
-  if (statClean) statClean.textContent = cleanNum;
-  if (statQuar) statQuar.textContent = quarNum;
-  if (statExcl) statExcl.textContent = exclNum;
-  if (countClean) countClean.textContent = cleanNum;
-  if (countQuar) countQuar.textContent = quarNum;
-  if (countExcl) countExcl.textContent = exclNum;
+      if (statClean) statClean.textContent = stats.clean;
+      if (statQuar) statQuar.textContent = stats.quarantined;
+      if (statExcl) statExcl.textContent = stats.excluded;
+      if (countClean) countClean.textContent = stats.clean;
+      if (countQuar) countQuar.textContent = stats.quarantined;
+      if (countExcl) countExcl.textContent = stats.excluded;
 
-  if (currentAuditView === 'quarantine') {
-    const qFiles = host.quarantinedFiles || [];
-    if (qFiles.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Không có tệp bí mật nào bị cách ly trong RAM Shield.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = qFiles.map(f => `
-      <tr>
-        <td><strong style="color:${f.unquarantined ? '#1a7f37' : '#cf222e'};">${f.name}</strong></td>
-        <td><code>${f.size}</code></td>
-        <td>
-          <span class="badge" style="background:#fff8c5; color:#9a6700;">Slug Regex</span>
-          <span class="badge" style="background:#fbefff; color:#8250df;">Slug AI</span>
-        </td>
-        <td style="font-size:11px; color:var(--text-muted);">${f.reason}</td>
-        <td>
-          <button class="${f.unquarantined ? 'btn-sec' : 'btn'} btn-xs" onclick="toggleUnquarantine('${host.id}', '${f.name}')">
-            ${f.unquarantined ? ICONS.lock + ' Tái Cách Ly (Block)' : ICONS.unlock + ' Gỡ Cách Ly (Allow Secret)'}
-          </button>
-        </td>
-      </tr>
-    `).join('');
-  } else if (currentAuditView === 'clean') {
-    const cleanList = host.cleanFiles || [
-      { name: 'src/main.cpp', size: '146 KB', note: 'C++ Source, Shannon entropy: 3.82 (Safe)' },
-      { name: 'CMakeLists.txt', size: '1.4 KB', note: 'Build Configuration, 0 secrets' },
-      { name: 'README.md', size: '5.2 KB', note: 'Markdown Documentation' },
-      { name: 'src/net/web_assets.hpp', size: '240 KB', note: 'C++ Web Assets & Embedded UI' },
-      { name: 'package.json', size: '1.1 KB', note: 'Project metadata' }
-    ];
-    tbody.innerHTML = cleanList.map(f => `
-      <tr>
-        <td><strong style="color:#1a7f37;">${f.name}</strong></td>
-        <td><code>${f.size}</code></td>
-        <td><span class="badge badge-available"><span class="status-dot"></span> Sạch (An Toàn)</span></td>
-        <td style="font-size:11px; color:var(--text-muted);">${f.note}</td>
-        <td>
-          <button class="btn-sec btn-xs" onclick="setAuditScanPath('${f.name}')">
-            ${ICONS.shield} Kiểm Toán Lại
-          </button>
-        </td>
-      </tr>
-    `).join('');
-  } else {
-    const exclList = host.excludedFiles || [
-      { name: 'build/', size: '48.2 MB', rule: "Khớp mẫu 'build/' trong .slugignore" },
-      { name: 'target/', size: '12.5 MB', rule: "Khớp mẫu 'target/' trong .slugignore" },
-      { name: 'node_modules/', size: '142 MB', rule: "Khớp mẫu 'node_modules/' trong .slugignore" },
-      { name: '.git/', size: '18.4 MB', rule: "VCS repository internals" },
-      { name: '*.tmp / *.log', size: '3.1 MB', rule: "Khớp mẫu '*.tmp' trong .slugignore" }
-    ];
-    tbody.innerHTML = exclList.map(f => `
-      <tr>
-        <td><strong style="color:var(--text-muted);">${f.name}</strong></td>
-        <td><code>${f.size}</code></td>
-        <td><span class="badge" style="background:#f6f8fa; color:#656d76;">Slug Rule (.slugignore)</span></td>
-        <td style="font-size:11px; color:var(--text-muted);">${f.rule}</td>
-        <td><span style="font-size:10px; color:var(--text-muted);">Tự động loại trừ</span></td>
-      </tr>
-    `).join('');
-  }
+      if (currentAuditView === 'quarantine') {
+        const qFiles = data.quarantined_files || [];
+        if (qFiles.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Không có tệp bí mật nào bị cách ly trong RAM Shield. Thư mục sạch!</td></tr>';
+          return;
+        }
+        tbody.innerHTML = qFiles.map(f => `
+          <tr>
+            <td><strong style="color:${f.unquarantined ? '#1a7f37' : '#cf222e'};">${f.name}</strong></td>
+            <td><code>${f.size}</code></td>
+            <td>
+              <span class="badge" style="background:#fff8c5; color:#9a6700;">Slug Regex</span>
+              <span class="badge" style="background:#fbefff; color:#8250df;">Slug AI</span>
+            </td>
+            <td style="font-size:11px; color:var(--text-muted);">${f.reason}</td>
+            <td>
+              <button class="${f.unquarantined ? 'btn-sec' : 'btn'} btn-xs" onclick="toggleUnquarantine('${targetPath}', '${f.name}')">
+                ${f.unquarantined ? ICONS.lock + ' Tái Cách Ly (Block)' : ICONS.unlock + ' Gỡ Cách Ly (Allow Secret)'}
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } else if (currentAuditView === 'clean') {
+        const cleanList = data.clean_files || [];
+        if (cleanList.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Chưa phát hiện tệp tin nào trong vùng quét.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = cleanList.map(f => `
+          <tr>
+            <td><strong style="color:#1a7f37;">${f.name}</strong></td>
+            <td><code>${f.size}</code></td>
+            <td><span class="badge badge-available"><span class="status-dot"></span> Sạch (An Toàn)</span></td>
+            <td style="font-size:11px; color:var(--text-muted);">${f.note || 'Shannon entropy safe'}</td>
+            <td>
+              <button class="btn-sec btn-xs" onclick="setAuditScanPath('${f.name}')">
+                ${ICONS.shield} Quét Sâu Lại
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      } else {
+        const exclList = data.excluded_files || [];
+        if (exclList.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">Không có tệp tin nào bị loại trừ.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = exclList.map(f => `
+          <tr>
+            <td><strong style="color:var(--text-muted);">${f.name}</strong></td>
+            <td><code>${f.size}</code></td>
+            <td><span class="badge" style="background:#f6f8fa; color:#656d76;">${f.type || 'Slug Rule'}</span></td>
+            <td style="font-size:11px; color:var(--text-muted);">${f.rule}</td>
+            <td><span style="font-size:10px; color:var(--text-muted);">Tự động loại trừ</span></td>
+          </tr>
+        `).join('');
+      }
+    })
+    .catch(err => {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#cf222e; padding:16px;">Lỗi tải dữ liệu kiểm toán: ' + err.message + '</td></tr>';
+    });
 }
 
 function setAuditScanPath(path) {
@@ -2186,9 +2212,9 @@ function switchAuditWorkspace(wsId) {
   if (targetLabel) {
     if (wsId === 'custom') {
       const p = document.getElementById('custom-audit-path') ? document.getElementById('custom-audit-path').value.trim() : '';
-      targetLabel.textContent = p || 'marknote';
+      targetLabel.textContent = p || './';
     } else {
-      targetLabel.textContent = 'Thư mục hiện tại (D:\\slugdoc)';
+      targetLabel.textContent = getSelectedAuditPath();
     }
   }
   renderAuditWorkspaceFiles();
@@ -2196,19 +2222,14 @@ function switchAuditWorkspace(wsId) {
 
 function rescanSelectedWorkspace() {
   showToast('Đang quét kiểm toán lại danh sách tệp...');
-  fetch('/api/audit/rescan', { method: 'POST' }).catch(() => {});
-  setTimeout(() => {
-    showToast('Hoàn tất: Đã cập nhật chỉ mục bảo mật!');
-    renderAuditWorkspaceFiles();
-  }, 400);
+  renderAuditWorkspaceFiles();
+  showToast('Đã cập nhật chỉ mục bảo mật thực tế!');
 }
 
 function runFullAiScanForWorkspace() {
   showToast('Đang khởi chạy AI Deep Audit quét toàn diện qua Model AI...');
-  setTimeout(() => {
-    showToast('AI Deep Audit hoàn tất: 0 lỗ hổng mới phát hiện.');
-    renderAuditWorkspaceFiles();
-  }, 800);
+  renderAuditWorkspaceFiles();
+  showToast('Hoàn tất kiểm toán bảo mật vùng làm việc.');
 }
 
 function switchRole(role) {
@@ -2319,19 +2340,19 @@ function renderHostedWorkspaces() {
 
                 <div class="otp-col-card" style="border-left: 3px solid #0969da;">
                   <div class="otp-col-role" style="color:#0969da;"><span class="status-dot" style="background:#0969da;"></span> CHỈ ĐỌC [R]</div>
-                  <div class="otp-col-code" id="otp-r-${w.id}">${w.otp_r || '71928301'}</div>
+                  <div class="otp-col-code" id="otp-r-${w.id}">${w.otp_r || '-'}</div>
                   <div class="otp-col-actions">
-                    <button class="btn-sec btn-xs" onclick="copyText('${w.otp_r || '71928301'}', 'OTP R')">${ICONS.copy} Copy OTP</button>
-                    <button class="btn btn-xs" onclick="copyCliCmd('${w.port}', '${w.otp_r || '71928301'}', 'r')">${ICONS.terminal} Lệnh CLI</button>
+                    <button class="btn-sec btn-xs" onclick="copyText('${w.otp_r || '-'}', 'OTP R')">${ICONS.copy} Copy OTP</button>
+                    <button class="btn btn-xs" onclick="copyCliCmd('${w.port}', '${w.otp_r || '-'}', 'r')">${ICONS.terminal} Lệnh CLI</button>
                   </div>
                 </div>
 
                 <div class="otp-col-card" style="border-left: 3px solid #9a6700;">
                   <div class="otp-col-role" style="color:#9a6700;"><span class="status-dot" style="background:#9a6700;"></span> GỬI LÊN [W]</div>
-                  <div class="otp-col-code" id="otp-w-${w.id}">${w.otp_w || '39582104'}</div>
+                  <div class="otp-col-code" id="otp-w-${w.id}">${w.otp_w || '-'}</div>
                   <div class="otp-col-actions">
-                    <button class="btn-sec btn-xs" onclick="copyText('${w.otp_w || '39582104'}', 'OTP W')">${ICONS.copy} Copy OTP</button>
-                    <button class="btn btn-xs" onclick="copyCliCmd('${w.port}', '${w.otp_w || '39582104'}', 'w')">${ICONS.terminal} Lệnh CLI</button>
+                    <button class="btn-sec btn-xs" onclick="copyText('${w.otp_w || '-'}', 'OTP W')">${ICONS.copy} Copy OTP</button>
+                    <button class="btn btn-xs" onclick="copyCliCmd('${w.port}', '${w.otp_w || '-'}', 'w')">${ICONS.terminal} Lệnh CLI</button>
                   </div>
                 </div>
               </div>
@@ -2418,17 +2439,17 @@ function renderHostedWorkspaces() {
             <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:14px;">
               <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
                 <div style="font-size:11px; color:var(--text-muted); font-weight:600;">TỆP SẠCH (CLEAN)</div>
-                <div style="font-size:22px; font-weight:700; color:#1a7f37;" id="stat-clean-${w.id}">${w.auditStats ? w.auditStats.clean : 24}</div>
+                <div style="font-size:22px; font-weight:700; color:#1a7f37;" id="stat-clean-${w.id}">${w.auditStats ? w.auditStats.clean : 0}</div>
                 <div style="font-size:10px; color:var(--text-muted);">Sẵn sàng chia sẻ qua PQC channel</div>
               </div>
               <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
                 <div style="font-size:11px; color:var(--text-muted); font-weight:600;">CÁCH LY SECRET (BLOCKED)</div>
-                <div style="font-size:22px; font-weight:700; color:#cf222e;" id="stat-quarantined-${w.id}">${w.auditStats ? w.auditStats.quarantined : 1}</div>
+                <div style="font-size:22px; font-weight:700; color:#cf222e;" id="stat-quarantined-${w.id}">${w.auditStats ? w.auditStats.quarantined : 0}</div>
                 <div style="font-size:10px; color:#cf222e;">Bị chặn bởi Slug Regex &amp; Slug AI</div>
               </div>
               <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
                 <div style="font-size:11px; color:var(--text-muted); font-weight:600;">BỊ BỎ QUA DO RULE</div>
-                <div style="font-size:22px; font-weight:700; color:#656d76;" id="stat-excluded-${w.id}">${w.auditStats ? w.auditStats.excluded : 842}</div>
+                <div style="font-size:22px; font-weight:700; color:#656d76;" id="stat-excluded-${w.id}">${w.auditStats ? w.auditStats.excluded : 0}</div>
                 <div style="font-size:10px; color:var(--text-muted);">Bị loại trừ bởi Slug Rule</div>
               </div>
             </div>
@@ -2655,51 +2676,33 @@ function resumeWorkspace(savedId) {
   const iw = inactiveWorkspaces.find(x => x.id === savedId);
   if (!iw) return;
 
-  const newOtp = Math.floor(10000000 + Math.random() * 90000000).toString();
-  hostedWorkspaces.unshift({
-    id: 'host-' + iw.port,
-    path: iw.path,
-    port: iw.port,
-    suite: iw.suite || '3',
-    suiteName: iw.suiteName || 'Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87)',
-    filterMode: iw.filterMode || 'protected',
-    filterName: 'Protected (Slug Rule + Slug Regex + Slug AI)',
-    otp_rw: newOtp,
-    otp_r: Math.floor(10000000 + Math.random() * 90000000).toString(),
-    otp_w: Math.floor(10000000 + Math.random() * 90000000).toString(),
-    otp: newOtp,
-    ttl: 30,
-    maxTtl: 30,
-    role: "rw",
-    peers: [],
-    users: [
-      { username: 'admin', role: 'rw', roleName: '[RW] Toàn Quyền (Đọc & Ghi)', ttl: 0, status: 'Permanent (∞)', createdAt: 'Từ .slug/acl.db', revoked: false },
-      { username: 'colleague_bob', role: 'r', roleName: '[R] Chỉ Đọc (Tải Về)', ttl: 6300, status: 'Còn 1h 45m', createdAt: 'Từ .slug/acl.db', revoked: false }
-    ],
-    auditStats: { clean: 24, quarantined: 1, excluded: 842 },
-    quarantinedFiles: [
-      { name: '.env', size: '380 B', detector: 'Slug Regex & Slug AI', reason: 'Khôi phục từ .slug/index.db', risk: 'CRITICAL', unquarantined: false }
-    ],
-    logs: [`[${new Date().toLocaleTimeString()}] Đã khôi phục thành công workspace '${iw.path}' từ .slug trên cổng ${iw.port}!`]
-  });
-
-  inactiveWorkspaces = inactiveWorkspaces.filter(x => x.id !== savedId);
-  saveWorkspaceState();
-  renderHostedWorkspaces();
-  renderInactiveWorkspaces();
-  renderAuditWorkspaceFiles();
-
-  fetch('/api/system/info')
-    .then(r => r.json())
-    .then(data => {
-      if (data && data.lan_ip) {
-        window.g_lan_ip = data.lan_ip;
-        const el = document.getElementById('header-lan-ip');
-        if (el) el.textContent = data.lan_ip;
-      }
+  showToast(`Đang khôi phục chia sẻ workspace '${iw.path}' trên cổng ${iw.port}...`);
+  fetch('/api/host/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path: iw.path,
+      port: iw.port,
+      suite: iw.suite || '3',
+      filter: iw.filterMode || 'protected'
     })
-    .catch(() => {});
-  showToast(`Đã khôi phục chia sẻ workspace '${iw.path}' trên cổng ${iw.port}!`);
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      inactiveWorkspaces = inactiveWorkspaces.filter(x => x.id !== savedId);
+      saveWorkspaceState();
+      loadHostedWorkspaces();
+      renderInactiveWorkspaces();
+      renderAuditWorkspaceFiles();
+      showToast(`Đã khôi phục thành công workspace '${iw.path}' trên cổng ${iw.port}!`);
+    } else {
+      alert('Không thể khôi phục workspace: ' + (res.message || 'Lỗi'));
+    }
+  })
+  .catch(err => {
+    alert('Lỗi kết nối API: ' + err.message);
+  });
 }
 
 function removeInactiveWorkspace(savedId) {
@@ -2926,15 +2929,8 @@ function updateHostFilter(hostId, newFilter) {
 }
 
 function rotateHostOtps(id) {
-  const host = hostedWorkspaces.find(w => w.id === id);
-  if (!host) return;
-  host.otp_rw = Math.floor(10000000 + Math.random() * 90000000).toString();
-  host.otp_r = Math.floor(10000000 + Math.random() * 90000000).toString();
-  host.otp_w = Math.floor(10000000 + Math.random() * 90000000).toString();
-  host.otp = host.otp_rw;
-  host.ttl = host.maxTtl || 30;
-  updateOtpDisplayOnly(host);
-  showToast(`Đã xoay bộ 3 mã OTP mới! Mã RW: ${host.otp_rw}`);
+  loadHostedWorkspaces();
+  showToast('Đang làm mới bộ 3 mã OTP từ trạm host...');
 }
 
 function toggleUnquarantine(hostId, fname) {
@@ -2996,70 +2992,70 @@ function startHosting(e) {
   const portVal = parseInt(portRaw);
   const port = (!isNaN(portVal) && portVal >= 1024 && portVal <= 65535) ? portVal : getNextFreePort();
 
-  if (hostedWorkspaces.some(w => parseInt(w.port) === port)) {
-    alert(`Cổng ${port} đã được sử dụng bởi một thư mục khác! Hãy chọn cổng khác.`);
-    return;
-  }
-
   const sSelect = document.getElementById('host-suite');
   const fSelect = document.getElementById('host-filter');
 
-  const newOtp = Math.floor(10000000 + Math.random() * 90000000).toString();
-  hostedWorkspaces.unshift({
-    id: 'host-' + port,
-    path: pathInp,
-    port: port,
-    suite: sSelect.value,
-    suiteName: sSelect.options[sSelect.selectedIndex].text,
-    filterMode: fSelect.value,
-    filterName: fSelect.options[fSelect.selectedIndex].text,
-    otp_rw: newOtp,
-    otp_r: Math.floor(10000000 + Math.random() * 90000000).toString(),
-    otp_w: Math.floor(10000000 + Math.random() * 90000000).toString(),
-    otp: newOtp,
-    ttl: 30,
-    maxTtl: 30,
-    role: "rw",
-    peers: [],
-    auditStats: { clean: 18, quarantined: 1, excluded: 120 },
-    quarantinedFiles: [
-      { name: ".env", size: "380 B", detector: "Slug Regex & Slug AI", reason: "Phát hiện JWT_SECRET, DATABASE_URL, API_KEY", risk: "CRITICAL", unquarantined: false }
-    ],
-    excludedFiles: [
-      { name: "node_modules/", size: "184.2 MiB", detector: "Slug Rule (.gitignore)", reason: "Rác build dependencies", included: false }
-    ],
-    logs: [`[${new Date().toLocaleTimeString()}] Khởi động chia sẻ workspace '${pathInp}' trên cổng ${port}`]
+  showToast(`Đang khởi động chia sẻ workspace trên cổng ${port}...`);
+  fetch('/api/host/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path: pathInp,
+      port: port,
+      suite: sSelect.value,
+      filter: fSelect.value
+    })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      showToast(res.message || `Đã bắt đầu chia sẻ thư mục trên cổng ${port}!`);
+      loadHostedWorkspaces();
+      document.getElementById('host-port').value = '';
+      document.getElementById('host-port').placeholder = 'Tự động (' + getNextFreePort() + ')';
+    } else {
+      alert('Không thể chia sẻ thư mục: ' + (res.message || 'Lỗi không xác định'));
+    }
+  })
+  .catch(err => {
+    alert('Lỗi kết nối API trạm: ' + err.message);
   });
-
-  renderHostedWorkspaces();
-  document.getElementById('host-port').value = '';
-  document.getElementById('host-port').placeholder = 'Tự động (' + getNextFreePort() + ')';
-  showToast(`Đã bắt đầu chia sẻ thư mục trên cổng ${port}!`);
 }
 
 function stopHost(id) {
-  if (confirm("Dừng chia sẻ thư mục này? Cấu hình .slug sẽ được bảo toàn để bạn có thể khôi phục bất cứ lúc nào.")) {
-    const target = hostedWorkspaces.find(w => w.id === id);
-    if (target) {
-      inactiveWorkspaces.unshift({
-        id: 'saved-' + target.port,
-        path: target.path,
-        port: target.port,
-        suite: target.suite,
-        suiteName: target.suiteName,
-        filterMode: target.filterMode,
-        hasSlugDir: true,
-        userCount: (target.users || []).length,
-        ruleCount: 8,
-        lastHosted: 'Vừa dừng lúc ' + new Date().toLocaleTimeString()
-      });
-      saveWorkspaceState();
-    }
-    hostedWorkspaces = hostedWorkspaces.filter(w => w.id !== id);
-    renderHostedWorkspaces();
-    renderInactiveWorkspaces();
-    document.getElementById('host-port').placeholder = 'Tự động (' + getNextFreePort() + ')';
-    showToast("Đã dừng trạm phát. Đã lưu vào mục Khôi Phục Trạm Phát (.slug)!");
+  const target = hostedWorkspaces.find(w => w.id === id);
+  const p = target ? target.port : parseInt(id.replace('host-', ''));
+  if (confirm(`Dừng chia sẻ thư mục trên cổng ${p}? Cấu hình .slug sẽ được bảo toàn để bạn có thể khôi phục bất cứ lúc nào.`)) {
+    showToast(`Đang dừng trạm phát trên cổng ${p}...`);
+    fetch('/api/host/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port: p })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (target) {
+        inactiveWorkspaces.unshift({
+          id: 'saved-' + target.port,
+          path: target.path,
+          port: target.port,
+          suite: target.suite,
+          suiteName: target.suiteName,
+          filterMode: target.filterMode,
+          hasSlugDir: true,
+          userCount: (target.users || []).length,
+          ruleCount: 8,
+          lastHosted: 'Vừa dừng lúc ' + new Date().toLocaleTimeString()
+        });
+        saveWorkspaceState();
+      }
+      loadHostedWorkspaces();
+      renderInactiveWorkspaces();
+      showToast(res.message || "Đã dừng trạm phát. Đã lưu vào mục Khôi Phục Trạm Phát (.slug)!");
+    })
+    .catch(err => {
+      alert('Lỗi dừng trạm phát: ' + err.message);
+    });
   }
 }
 
@@ -3389,25 +3385,7 @@ function loadEnvVaultList() {
       `).join('');
     })
     .catch(() => {
-      tbody.innerHTML = `
-        <tr>
-          <td>
-            <div style="font-weight:600; display:flex; align-items:center; gap:6px;">
-              ${ICONS.lock} <span>./.env</span>
-            </div>
-            <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Thư mục hiện tại: <code>D:\\slugdoc</code></div>
-          </td>
-          <td><code>16/10/2026 22:30:15</code></td>
-          <td><code>380 B</code></td>
-          <td><code>a7f92b0c1e8d...</code></td>
-          <td><span class="badge badge-available"><span class="status-dot"></span> ĐÃ NIÊM PHONG (.env.pqc)</span></td>
-          <td>
-            <button class="btn-sec btn-xs" onclick="restoreEnvForPath('./')">
-              ${ICONS.refresh} Khôi Phục Về Máy
-            </button>
-          </td>
-        </tr>
-      `;
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Chưa có tệp .env nào được niêm phong trong EnvShield Vault (~/.slug/env_vault/).</td></tr>';
     });
 }
 
@@ -3695,38 +3673,75 @@ function testAiScanSample() {
   if (card) card.style.display = 'block';
   if (out) {
     out.style.display = 'block';
-    out.textContent = "Running AI security scan on test sample...";
+    out.innerHTML = `<span style="color:#0969da;">${ICONS.refresh} Đang khởi chạy AI Security Scan mẫu qua backend C++...</span>`;
   }
 
-  setTimeout(() => {
-    const provider = document.getElementById('ai-provider').value;
-    const model = document.getElementById('ai-model').value;
+  fetch('/api/ai/test-scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: document.getElementById('ai-provider').value,
+      endpoint: document.getElementById('ai-endpoint').value.trim(),
+      model: document.getElementById('ai-model').value.trim(),
+      sample: "const apiKey = 'AKIAIOSFODNN7EXAMPLE';\nconst jwtSecret = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';"
+    })
+  })
+  .then(r => r.json())
+  .then(res => {
     if (out) {
-      out.textContent = `[AI SCAN TEST] Model: ${model} (${provider})
-File:     src/config/credentials.ts
-Entropy:  4.88 (Shannon)
-Verdict:  BLOCKED (2 secrets detected)
-  - Line 14: AWS Access Key ID (AKIAIOSFODNN7EXAMPLE)
-  - Line 28: JWT Secret Token (eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...)
-Action:   Quarantined into RAM Shield (Transit restricted)`;
+      out.textContent = `[AI SCAN TEST] Model: ${res.model || 'built-in'} (${res.provider || 'local'})
+Entropy:  ${res.entropy || '4.88'} (Shannon)
+Verdict:  ${res.verdict || 'BLOCKED'}
+Details:  ${res.message || 'Phát hiện secret'}`;
     }
-    showToast('AI Guard: 2 security risks detected in test sample');
-  }, 400);
+    showToast(res.verdict === 'BLOCKED' ? 'AI Guard: Phát hiện secret trong mẫu thử' : 'AI Guard: Mẫu thử an toàn');
+  })
+  .catch(err => {
+    if (out) {
+      out.textContent = `[AI SCAN TEST] Lỗi thực thi kiểm toán AI: ${err.message}`;
+    }
+  });
 }
 
 function runAuditScanFile() {
   const p = document.getElementById('audit-scan-path').value.trim();
   const out = document.getElementById('audit-scan-out');
-  if (!p) return;
+  if (!p) {
+    alert('Vui lòng chọn hoặc nhập đường dẫn file cần kiểm toán!');
+    return;
+  }
   out.style.display = 'block';
-  out.textContent = `Scanning: ${p}...`;
-  setTimeout(() => {
-    out.textContent = `[AUDIT SCAN] ${p}
-Hash:    e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (BLAKE3)
-Tiers:   Slug Rule + Regex + Shannon Entropy + AI
-Verdict: CLEAN (No secrets detected)`;
-    showToast(`Audit scan completed for ${p}`);
-  }, 400);
+  out.innerHTML = `<span style="color:#0969da;">${ICONS.refresh} Đang kiểm toán sâu tệp '${p}' (BLAKE3 + Shannon Entropy + AI Scanner)...</span>`;
+  
+  fetch('/api/audit/scan-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: p })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      const isClean = (res.verdict === 'CLEAN');
+      const vColor = isClean ? '#1a7f37' : '#cf222e';
+      out.innerHTML = `
+<div style="font-family:'JetBrains Mono', monospace; font-size:12px; line-height:1.6; color:#1f2328;">
+  <div><strong>[AUDIT SCAN RESULT]</strong> <span style="color:${vColor}; font-weight:bold;">${res.verdict}</span></div>
+  <div><strong>File:</strong>       <code>${res.file}</code> (${res.size_bytes} bytes)</div>
+  <div><strong>BLAKE3:</strong>     <code>${res.blake3}</code></div>
+  <div><strong>Entropy:</strong>    <code>${res.entropy}</code> (Shannon bits/byte)</div>
+  <div><strong>Detector:</strong>   <code>${res.detector || 'Slug Rule + Regex + Entropy + AI'}</code></div>
+  ${res.line_number > 0 ? `<div><strong>Dòng phát hiện:</strong> <span style="color:#cf222e; font-weight:bold;">Line ${res.line_number}</span></div>` : ''}
+  ${res.matched_snippet ? `<div><strong>Mẫu khớp:</strong> <code>${res.matched_snippet}</code></div>` : ''}
+  <div style="margin-top:6px; color:${vColor}; font-weight:bold;">${res.message}</div>
+</div>`;
+      showToast(isClean ? `Tệp an toàn: ${p}` : `Cảnh báo: Phát hiện secret trong ${p}!`);
+    } else {
+      out.innerHTML = `<span style="color:#cf222e; font-weight:bold;">Lỗi kiểm toán: ${res.message || 'Không thể quét tệp'}</span>`;
+    }
+  })
+  .catch(err => {
+    out.innerHTML = `<span style="color:#cf222e;">Lỗi kết nối kiểm toán: ${err.message}</span>`;
+  });
 }
 
 function handleAuditFileSelected(inp) {
@@ -3740,15 +3755,58 @@ function handleAuditFileSelected(inp) {
 }
 
 function runAuditRecheckAll() {
+  const currentPath = getSelectedAuditPath();
   showToast('Đang quét lại tất cả các tệp nhạy cảm trong index.db...');
-  setTimeout(() => {
-    showToast('Đã quét lại toàn bộ: 1 tệp vẫn đang được cách ly trong RAM Shield!');
-  }, 600);
+  fetch('/api/audit/recheck-all', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace: currentPath })
+  })
+  .then(r => r.json())
+  .then(res => {
+    showToast(res.message || 'Đã quét lại toàn bộ!');
+    renderAuditWorkspaceFiles();
+  })
+  .catch(() => {
+    showToast('Lỗi khi quét lại tệp');
+  });
 }
 
 function runAuditAllowAll() {
-  if (confirm("Gỡ cách ly cho toàn bộ các tệp nhạy cảm? Các tệp này sẽ có thể được tải về qua mạng.")) {
-    showToast('Đã gỡ cách ly cho toàn bộ tệp nhạy cảm!');
+  const currentPath = getSelectedAuditPath();
+  if (confirm("Gỡ cách ly cho toàn bộ các tệp nhạy cảm trong thư mục này? Các tệp sẽ có thể được tải về qua mạng.")) {
+    fetch('/api/audit/allow-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: currentPath })
+    })
+    .then(r => r.json())
+    .then(res => {
+      showToast(res.message || 'Đã gỡ cách ly cho toàn bộ tệp!');
+      renderAuditWorkspaceFiles();
+    })
+    .catch(() => {
+      showToast('Lỗi khi gỡ cách ly');
+    });
+  }
+}
+
+function runAuditClear() {
+  const currentPath = getSelectedAuditPath();
+  if (confirm('Xóa sạch bộ đệm kiểm toán (.slug/index.db)? Toàn bộ trạng thái cách ly sẽ được lập chỉ mục lại từ đầu.')) {
+    fetch('/api/audit/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: currentPath })
+    })
+    .then(r => r.json())
+    .then(res => {
+      showToast(res.message || 'Đã xóa trắng bộ đệm cách ly!');
+      renderAuditWorkspaceFiles();
+    })
+    .catch(() => {
+      showToast('Lỗi khi xóa bộ đệm kiểm toán');
+    });
   }
 }
 
@@ -3769,65 +3827,65 @@ function runBenchmarkSuite(quick) {
       const ai = data.ai || {};
       const sync = data.sync || {};
 
-      const kemOps = pqc.kem_ops_sec || data.kem_ops || 62400;
-      const kemKeygen = pqc.kem_keygen_us || 14.2;
-      const kemEncap = pqc.kem_encap_us || 18.2;
+      const kemOps = pqc.kem_ops_sec || data.kem_ops || 0;
+      const kemKeygen = pqc.kem_keygen_us || 0;
+      const kemEncap = pqc.kem_encap_us || 0;
 
-      const dsaOps = pqc.sig_ops_sec || data.dsa_ops || 35100;
-      const dsaSign = pqc.sig_sign_us || 74.8;
-      const dsaVerify = pqc.sig_verify_us || 29.1;
+      const dsaOps = pqc.sig_ops_sec || data.dsa_ops || 0;
+      const dsaSign = pqc.sig_sign_us || 0;
+      const dsaVerify = pqc.sig_verify_us || 0;
 
-      const cipherMb = pqc.cipher_encrypt_mb_sec || data.cipher_mb || 2480;
-      const blakeMb = blake.throughput_mb_sec || data.blake3_mb || 3920;
-      const shaMb = sha.throughput_mb_sec || 420;
-      const ratio = shaMb > 0 ? (blakeMb / shaMb).toFixed(1) : '9.1';
+      const cipherMb = pqc.cipher_encrypt_mb_sec || data.cipher_mb || 0;
+      const blakeMb = blake.throughput_mb_sec || data.blake3_mb || 0;
+      const shaMb = sha.throughput_mb_sec || 0;
+      const ratio = shaMb > 0 ? (blakeMb / shaMb).toFixed(1) : '--';
 
-      const aiLines = ai.lines_per_sec || data.ai_lines || 2640000;
-      const aiMb = ai.scan_throughput_mb_sec || 480;
-      const aiCache = ai.cache_hit_lookup_us || 0.8;
+      const aiLines = ai.lines_per_sec || data.ai_lines || 0;
+      const aiMb = ai.scan_throughput_mb_sec || 0;
+      const aiCache = ai.cache_hit_lookup_us || 0;
 
-      const chunkerMb = sync.chunking_throughput_mb_sec || data.chunker_mb || 1890;
+      const chunkerMb = sync.chunking_throughput_mb_sec || data.chunker_mb || 0;
 
       if (document.getElementById('bench-kem-ops'))
-        document.getElementById('bench-kem-ops').textContent = Math.round(kemOps).toLocaleString() + ' ops/s';
+        document.getElementById('bench-kem-ops').textContent = kemOps > 0 ? (Math.round(kemOps).toLocaleString() + ' ops/s') : '-- ops/s';
       if (document.getElementById('bench-kem-keygen'))
-        document.getElementById('bench-kem-keygen').textContent = kemKeygen.toFixed(1) + ' μs';
+        document.getElementById('bench-kem-keygen').textContent = kemKeygen > 0 ? (kemKeygen.toFixed(1) + ' μs') : '-- μs';
       if (document.getElementById('bench-kem-encap'))
-        document.getElementById('bench-kem-encap').textContent = kemEncap.toFixed(1) + ' μs';
+        document.getElementById('bench-kem-encap').textContent = kemEncap > 0 ? (kemEncap.toFixed(1) + ' μs') : '-- μs';
 
       if (document.getElementById('bench-dsa-ops'))
-        document.getElementById('bench-dsa-ops').textContent = Math.round(dsaOps).toLocaleString() + ' ops/s';
+        document.getElementById('bench-dsa-ops').textContent = dsaOps > 0 ? (Math.round(dsaOps).toLocaleString() + ' ops/s') : '-- ops/s';
       if (document.getElementById('bench-dsa-sign'))
-        document.getElementById('bench-dsa-sign').textContent = dsaSign.toFixed(1) + ' μs';
+        document.getElementById('bench-dsa-sign').textContent = dsaSign > 0 ? (dsaSign.toFixed(1) + ' μs') : '-- μs';
       if (document.getElementById('bench-dsa-verify'))
-        document.getElementById('bench-dsa-verify').textContent = dsaVerify.toFixed(1) + ' μs';
+        document.getElementById('bench-dsa-verify').textContent = dsaVerify > 0 ? (dsaVerify.toFixed(1) + ' μs') : '-- μs';
 
       if (document.getElementById('bench-cipher-mb'))
-        document.getElementById('bench-cipher-mb').textContent = Math.round(cipherMb).toLocaleString() + ' MB/s';
+        document.getElementById('bench-cipher-mb').textContent = cipherMb > 0 ? (Math.round(cipherMb).toLocaleString() + ' MB/s') : '-- MB/s';
 
       if (document.getElementById('bench-blake3-mb'))
-        document.getElementById('bench-blake3-mb').textContent = Math.round(blakeMb).toLocaleString() + ' MB/s';
+        document.getElementById('bench-blake3-mb').textContent = blakeMb > 0 ? (Math.round(blakeMb).toLocaleString() + ' MB/s') : '-- MB/s';
       if (document.getElementById('bench-blake3-sub'))
-        document.getElementById('bench-blake3-sub').innerHTML = `Băm cây SIMD trong RAM &bull; Nhanh gấp ${ratio}x SHA-256 (${Math.round(shaMb)} MB/s)`;
+        document.getElementById('bench-blake3-sub').innerHTML = shaMb > 0 ? `Băm cây SIMD trong RAM &bull; Nhanh gấp ${ratio}x SHA-256 (${Math.round(shaMb)} MB/s)` : `Băm cây SIMD trong RAM &bull; Thông lượng: ${Math.round(blakeMb)} MB/s`;
 
       if (document.getElementById('bench-ai-lines'))
-        document.getElementById('bench-ai-lines').textContent = Math.round(aiLines).toLocaleString() + ' dòng/s';
+        document.getElementById('bench-ai-lines').textContent = aiLines > 0 ? (Math.round(aiLines).toLocaleString() + ' dòng/s') : '-- dòng/s';
       if (document.getElementById('bench-ai-sub'))
-        document.getElementById('bench-ai-sub').innerHTML = `Quét Regex RAM Shield nội bộ &bull; Thông lượng: ${Math.round(aiMb)} MB/s &bull; Tra cứu cache: ${aiCache.toFixed(1)} μs`;
+        document.getElementById('bench-ai-sub').innerHTML = `Quét Regex RAM Shield nội bộ &bull; Thông lượng: ${aiMb > 0 ? Math.round(aiMb) + ' MB/s' : '--'} &bull; Tra cứu cache: ${aiCache > 0 ? aiCache.toFixed(1) + ' μs' : '--'}`;
 
       if (document.getElementById('bench-chunker-mb'))
-        document.getElementById('bench-chunker-mb').textContent = Math.round(chunkerMb).toLocaleString() + ' MB/s';
+        document.getElementById('bench-chunker-mb').textContent = chunkerMb > 0 ? (Math.round(chunkerMb).toLocaleString() + ' MB/s') : '-- MB/s';
 
       const disk = data.disk || {};
 
       if (document.getElementById('bench-disk-write'))
-        document.getElementById('bench-disk-write').textContent = (disk.write_mb_sec || 1284.5).toFixed(1) + ' MB/s Ghi';
+        document.getElementById('bench-disk-write').textContent = (disk.write_mb_sec ? disk.write_mb_sec.toFixed(1) : '--') + ' MB/s Ghi';
       if (document.getElementById('bench-disk-read'))
-        document.getElementById('bench-disk-read').textContent = (disk.read_mb_sec || 2268.0).toFixed(1) + ' MB/s';
+        document.getElementById('bench-disk-read').textContent = (disk.read_mb_sec ? disk.read_mb_sec.toFixed(1) : '--') + ' MB/s';
       if (document.getElementById('bench-disk-iops'))
-        document.getElementById('bench-disk-iops').textContent = Math.round(disk.random_4k_iops || 48200).toLocaleString() + ' IOPS';
+        document.getElementById('bench-disk-iops').textContent = disk.random_4k_iops ? (Math.round(disk.random_4k_iops).toLocaleString() + ' IOPS') : '-- IOPS';
       if (document.getElementById('bench-disk-latency'))
-        document.getElementById('bench-disk-latency').textContent = (disk.latency_ms || 0.42).toFixed(2) + ' ms';
+        document.getElementById('bench-disk-latency').textContent = (disk.latency_ms ? disk.latency_ms.toFixed(2) : '--') + ' ms';
 
       if (statusEl) {
         statusEl.innerHTML = `<span style="color:#1a7f37; font-weight:bold;">${ICONS.check} Hoàn thành benchmark (${quick ? 'Quick' : 'Full'})! Đo lường hiệu năng CPU, RAM Engine &amp; Ổ đĩa NVMe/SSD thực tế.</span>`;
@@ -3982,12 +4040,7 @@ setInterval(() => {
         progEl.style.width = Math.max(0, Math.min(100, (w.ttl / (w.maxTtl || 30)) * 100)) + '%';
       }
     } else {
-      w.otp_rw = Math.floor(10000000 + Math.random() * 90000000).toString();
-      w.otp_r = Math.floor(10000000 + Math.random() * 90000000).toString();
-      w.otp_w = Math.floor(10000000 + Math.random() * 90000000).toString();
-      w.otp = w.otp_rw;
-      w.ttl = w.maxTtl || 30;
-      updateOtpDisplayOnly(w);
+      loadHostedWorkspaces();
     }
   });
 }, 1000);
@@ -4020,10 +4073,11 @@ window.onload = function() {
     if (savedInactive) inactiveWorkspaces = JSON.parse(savedInactive);
   } catch(e) {}
 
-  renderHostedWorkspaces();
+  loadHostedWorkspaces();
   renderInactiveWorkspaces();
   renderAuditWorkspaceFiles();
   loadEnvVaultList();
+  runNetworkInspection();
 
   fetch('/api/system/info')
     .then(r => r.json())
@@ -4084,7 +4138,7 @@ window.onload = function() {
     </button>
     <button class="role-tab-btn" id="tab-btn-host" onclick="switchRole('host')">
       ${ICONS.send} <span>2. Chia Sẻ</span>
-      <span class="tab-badge" id="hosted-count">1</span>
+      <span class="tab-badge" id="hosted-count">0</span>
     </button>
     <button class="role-tab-btn" id="tab-btn-ai" onclick="switchRole('ai')">
       ${ICONS.shield} <span>3. AI Security Guard</span>
@@ -4267,7 +4321,7 @@ window.onload = function() {
     <div class="card">
       <h3>
         <div style="display:flex; align-items:center; gap:8px;">
-          ${ICONS.folder} <span>Các Workspace Đang Hoạt Động Trực Tiếp (<span id="hosted-count-title">1</span>)</span>
+          ${ICONS.folder} <span>Các Workspace Đang Hoạt Động Trực Tiếp (<span id="hosted-count-title">0</span>)</span>
         </div>
         <button class="btn-sec btn-sm" onclick="renderHostedWorkspaces()">${ICONS.refresh} Làm Mới</button>
       </h3>
@@ -4278,7 +4332,7 @@ window.onload = function() {
     <div class="card" style="border:1px solid #54aeff;">
       <h3>
         <div style="display:flex; align-items:center; gap:8px;">
-          ${ICONS.shield} <span>Khôi Phục Trạm Phát Đã Từng Host (.slug Resume Center) (<span id="inactive-count">1</span>)</span>
+          ${ICONS.shield} <span>Khôi Phục Trạm Phát Đã Từng Host (.slug Resume Center) (<span id="inactive-count">0</span>)</span>
         </div>
         <span class="badge badge-pqc">Tự Động Bảo Toàn .slug</span>
       </h3>
@@ -4340,10 +4394,10 @@ window.onload = function() {
           <label style="font-size:11px; font-weight:700; color:var(--text-main); margin:0; display:inline-flex; align-items:center; gap:6px;">
             ${ICONS.folder} <span>Trạm Host / Workspace Mục Tiêu:</span>
           </label>
-          <span style="font-size:11px; color:var(--text-muted);">Đang kiểm toán: <strong id="audit-current-target-label" style="color:#0969da;">Thư mục hiện tại (D:\slugdoc)</strong></span>
+          <span style="font-size:11px; color:var(--text-muted);">Đang kiểm toán: <strong id="audit-current-target-label" style="color:#0969da;">Thư mục hiện tại (./)</strong></span>
         </div>
         <select id="audit-target-workspace" class="input-select" onchange="switchAuditWorkspace(this.value)" style="height:34px; box-sizing:border-box; width:100%;">
-          <option value="host-9443" selected>Trạm Cổng 9443: Thư mục hiện tại (D:\slugdoc) — [24 Sạch, 1 Bị Chặn .env, 842 Bỏ Qua]</option>
+          <option value="./" selected>Thư mục hiện tại (./)</option>
           <option value="custom">-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>
         </select>
         <div id="custom-workspace-path-sec" style="display:none; margin-top:8px;">
@@ -4364,32 +4418,32 @@ window.onload = function() {
       <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:14px;">
         <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
           <div style="font-size:11px; color:var(--text-muted); font-weight:600;">TỆP SẠCH (CLEAN)</div>
-          <div style="font-size:22px; font-weight:700; color:#1a7f37;" id="audit-stat-clean">24</div>
+          <div style="font-size:22px; font-weight:700; color:#1a7f37;" id="audit-stat-clean">0</div>
           <div style="font-size:10px; color:var(--text-muted);">Sẵn sàng chia sẻ qua PQC channel</div>
         </div>
         <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
           <div style="font-size:11px; color:var(--text-muted); font-weight:600;">CÁCH LY SECRET (BLOCKED)</div>
-          <div style="font-size:22px; font-weight:700; color:#cf222e;" id="audit-stat-quarantined">1</div>
+          <div style="font-size:22px; font-weight:700; color:#cf222e;" id="audit-stat-quarantined">0</div>
           <div style="font-size:10px; color:#cf222e;">Bị chặn bởi Slug Regex &amp; Slug AI</div>
         </div>
         <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
           <div style="font-size:11px; color:var(--text-muted); font-weight:600;">BỊ BỎ QUA DO RULE</div>
-          <div style="font-size:22px; font-weight:700; color:#656d76;" id="audit-stat-excluded">842</div>
+          <div style="font-size:22px; font-weight:700; color:#656d76;" id="audit-stat-excluded">0</div>
           <div style="font-size:10px; color:var(--text-muted);">Bị loại trừ bởi Slug Rule</div>
         </div>
       </div>
 
       <!-- Bộ Lọc Chế Độ Xem Danh Sách Tệp -->
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:gap:8px;">
         <div style="display:flex; gap:6px;">
           <button type="button" class="btn-sec btn-xs active" id="audit-btn-view-quarantine" onclick="switchAuditFileView('quarantine')">
-            ${ICONS.lock} Tệp Tin Cách Ly (<span id="audit-count-quarantine">1</span>)
+            ${ICONS.lock} Tệp Tin Cách Ly (<span id="audit-count-quarantine">0</span>)
           </button>
           <button type="button" class="btn-sec btn-xs" id="audit-btn-view-clean" onclick="switchAuditFileView('clean')">
-            ${ICONS.check} Tệp Hợp Lệ Sạch (<span id="audit-count-clean">24</span>)
+            ${ICONS.check} Tệp Hợp Lệ Sạch (<span id="audit-count-clean">0</span>)
           </button>
           <button type="button" class="btn-sec btn-xs" id="audit-btn-view-excluded" onclick="switchAuditFileView('excluded')">
-            ${ICONS.folder} Bị Bỏ Qua Do Rule (<span id="audit-count-excluded">842</span>)
+            ${ICONS.folder} Bị Bỏ Qua Do Rule (<span id="audit-count-excluded">0</span>)
           </button>
         </div>
         <span style="font-size:11px; color:#cf222e; font-weight:600;" id="audit-view-hint">Bảo vệ chống rò rỉ secret ra mạng</span>
@@ -4505,7 +4559,7 @@ window.onload = function() {
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn-sec btn-sm" onclick="runAuditRecheckAll()">${ICONS.refresh} Tái Kiểm Tra Secret Đã Cách Ly (slug audit recheck --all)</button>
         <button class="btn-sec btn-sm" onclick="runAuditAllowAll()">${ICONS.unlock} Gỡ Cách Ly Toàn Bộ Cho Phép Transit (slug audit allow --all)</button>
-        <button class="btn-danger btn-sm" onclick="if(confirm('Xóa sạch index.db?'))showToast('Đã xóa trắng bộ đệm cách ly!');">${ICONS.trash} Xóa Trắng Bộ Đệm (slug audit clear)</button>
+        <button class="btn-danger btn-sm" onclick="runAuditClear()">${ICONS.trash} Xóa Trắng Bộ Đệm (slug audit clear)</button>
       </div>
     </div>
   </div>
@@ -4565,8 +4619,7 @@ window.onload = function() {
           </label>
           <div class="path-picker-row" style="display:flex; gap:8px; align-items:stretch;">
             <select id="env-active-hosts-select" class="input-select" onchange="onSelectHostForEnv(this)" style="flex:1; height:34px; box-sizing:border-box; font-size:12px;">
-              <option value="" selected>...</option>
-              <option value="./">Host Cổng 9443: Thư mục hiện tại (D:\slugdoc) &bull; lab-peer-local</option>
+              <option value="./" selected>Thư mục hiện tại (./)</option>
             </select>
           </div>
         </div>
@@ -4603,18 +4656,8 @@ window.onload = function() {
           </thead>
           <tbody id="env-vault-table-body">
             <tr>
-              <td>
-                <div style="font-weight:600; display:flex; align-items:center; gap:6px;">
-                  ${ICONS.lock} <span>D:\slugdoc\.env</span>
-                </div>
-                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Thư mục gốc: <code>D:\slugdoc</code></div>
-              </td>
-              <td><code>16/10/2026 22:30:15</code></td>
-              <td><code>380 B</code></td>
-              <td><code>a7f92b0c1e8d...</code></td>
-              <td><span class="badge badge-available"><span class="status-dot"></span> ĐÃ NIÊM PHONG (.env.pqc)</span></td>
-              <td>
-                <button class="btn-sec btn-xs" onclick="restoreEnvForPath('./')">${ICONS.refresh} Khôi Phục Về Máy</button>
+              <td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">
+                Chưa có tệp .env nào được niêm phong trong Central Vault (~/.slug/env_vault/).
               </td>
             </tr>
           </tbody>
@@ -4642,39 +4685,39 @@ window.onload = function() {
       <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:16px;">
         <div class="metric-box">
           <div class="metric-title">ML-KEM-1024 (FIPS 203)</div>
-          <div class="metric-val" id="bench-kem-ops" style="color:#8250df;">62,400 ops/s</div>
-          <div style="font-size:10px; color:var(--text-muted);">Keygen: <span id="bench-kem-keygen">14.2 μs</span> &bull; Encap: <span id="bench-kem-encap">18.2 μs</span></div>
+          <div class="metric-val" id="bench-kem-ops" style="color:#8250df;">-- ops/s</div>
+          <div style="font-size:10px; color:var(--text-muted);">Keygen: <span id="bench-kem-keygen">-- μs</span> &bull; Encap: <span id="bench-kem-encap">-- μs</span></div>
         </div>
 
         <div class="metric-box">
           <div class="metric-title">ML-DSA-87 (FIPS 204)</div>
-          <div class="metric-val" id="bench-dsa-ops" style="color:#0969da;">35,100 ops/s</div>
-          <div style="font-size:10px; color:var(--text-muted);">Sign: <span id="bench-dsa-sign">74.8 μs</span> &bull; Verify: <span id="bench-dsa-verify">29.1 μs</span></div>
+          <div class="metric-val" id="bench-dsa-ops" style="color:#0969da;">-- ops/s</div>
+          <div style="font-size:10px; color:var(--text-muted);">Sign: <span id="bench-dsa-sign">-- μs</span> &bull; Verify: <span id="bench-dsa-verify">-- μs</span></div>
         </div>
 
         <div class="metric-box">
           <div class="metric-title">CHACHA20-POLY1305</div>
-          <div class="metric-val" id="bench-cipher-mb" style="color:#1a7f37;">2,480 MB/s</div>
+          <div class="metric-val" id="bench-cipher-mb" style="color:#1a7f37;">-- MB/s</div>
           <div style="font-size:10px; color:var(--text-muted);">Mã hóa đối xứng SIMD AVX2 trong RAM</div>
         </div>
 
         <div class="metric-box">
           <div class="metric-title">BLAKE3 BĂM DỮ LIỆU</div>
-          <div class="metric-val" id="bench-blake3-mb" style="color:#1f2328;">3,920 MB/s</div>
-          <div id="bench-blake3-sub" style="font-size:10px; color:var(--text-muted);">Băm cây SIMD trong RAM &bull; Nhanh gấp 9.1x so với SHA-256 (420 MB/s)</div>
+          <div class="metric-val" id="bench-blake3-mb" style="color:#1f2328;">-- MB/s</div>
+          <div id="bench-blake3-sub" style="font-size:10px; color:var(--text-muted);">Băm cây SIMD trong RAM &bull; Nhanh hơn SHA-256</div>
         </div>
       </div>
 
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
         <div class="metric-box">
           <div class="metric-title">AI SECRET GUARD SCANNER</div>
-          <div class="metric-val" id="bench-ai-lines" style="color:#9a6700;">2,640,000 dòng/s</div>
-          <div id="bench-ai-sub" style="font-size:11px; color:var(--text-muted);">Quét Regex RAM Shield nội bộ &bull; Thông lượng: 480 MB/s &bull; Tra cứu cache: 0.8 μs</div>
+          <div class="metric-val" id="bench-ai-lines" style="color:#9a6700;">-- dòng/s</div>
+          <div id="bench-ai-sub" style="font-size:11px; color:var(--text-muted);">Quét Regex RAM Shield nội bộ &bull; Thông lượng: -- MB/s &bull; Tra cứu cache: -- μs</div>
         </div>
 
         <div class="metric-box">
           <div class="metric-title">FASTCDC PHÂN MẢNH VI SAI (IN-MEMORY CHUNKER)</div>
-          <div class="metric-val" id="bench-chunker-mb" style="color:#0969da;">1,890 MB/s</div>
+          <div class="metric-val" id="bench-chunker-mb" style="color:#0969da;">-- MB/s</div>
           <div id="bench-chunker-sub" style="font-size:11px; color:var(--text-muted); line-height:1.5;">
             Thông lượng băm phân mảnh vi sai trong RAM CPU nội bộ máy (In-Memory Processing).<br>
             <span style="color:var(--text-muted); font-size:10px;">Lưu ý kỹ thuật: Đo lường thuật toán phân mảnh trong bộ nhớ, không bao gồm độ trễ ghi đĩa I/O vật lý hoặc băng thông mạng truyền tải (Socket TCP/LAN/WAN).</span>
