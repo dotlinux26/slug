@@ -196,24 +196,31 @@ static std::string execute_http_post(const std::string& url,
 
         int timeout_ms = timeout_sec * 1000;
         std::string ps_cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \""
-            "[System.Net.ServicePointManager]::SecurityProtocol = 3072; "
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+            "[System.Net.ServicePointManager]::SecurityProtocol = 3072 -bor 768 -bor 192; "
             "$req = [System.Net.HttpWebRequest]::Create('" + url + "'); "
             "$req.Method = 'POST'; "
-            "$req.ContentType = 'application/json'; "
+            "$req.ContentType = 'application/json; charset=utf-8'; "
             "$req.Timeout = " + std::to_string(timeout_ms) + "; ";
         if (!auth_bearer.empty()) {
             ps_cmd += "$req.Headers.Add('Authorization', 'Bearer " + auth_bearer + "'); ";
         }
-        ps_cmd += "try { "
-                  "$data = [System.IO.File]::ReadAllBytes('" + win_path + "'); "
+        ps_cmd += "$data = [System.IO.File]::ReadAllBytes('" + win_path + "'); "
                   "$req.ContentLength = $data.Length; "
+                  "try { "
                   "$st = $req.GetRequestStream(); "
                   "$st.Write($data, 0, $data.Length); "
                   "$st.Close(); "
                   "$resp = $req.GetResponse(); "
-                  "$sr = New-Object System.IO.StreamReader($resp.GetResponseStream()); "
+                  "$sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8); "
                   "Write-Output $sr.ReadToEnd(); "
                   "$sr.Close(); $resp.Close(); "
+                  "} catch [System.Net.WebException] { "
+                  "if ($_.Exception.Response) { "
+                  "$sr = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream(), [System.Text.Encoding]::UTF8); "
+                  "Write-Output $sr.ReadToEnd(); "
+                  "$sr.Close(); $_.Exception.Response.Close(); "
+                  "} "
                   "} catch { }\"" + NULL_DEV;
 
         FILE* ps_fp = popen(ps_cmd.c_str(), "r");
