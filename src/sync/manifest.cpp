@@ -147,7 +147,7 @@ WorkspaceManifest ManifestBuilder::build(
 
     policy::PolicyEngine policy_engine(workspace_root, rules_file);
     ai::StatefulAuditIndex audit_index(index_file);
-    ai::AiScanner scanner = ai::AiScanner::create_for_level(filter_level, ai_provider);
+    ai::AiScanner scanner = ai::AiScanner::create_for_level(filter_level, ai_provider, workspace_root);
 
     std::error_code ec;
     for (auto it = fs::recursive_directory_iterator(workspace_root, fs::directory_options::skip_permission_denied, ec), end = fs::recursive_directory_iterator();

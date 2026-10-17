@@ -1320,6 +1320,16 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             std::string model = j.value("ai_model", "deepseek-r1");
             std::string api_key = j.value("ai_api_key", "");
 
+            if (j.contains("raw_json") && j["raw_json"].is_string()) {
+                try {
+                    auto raw_j = json::parse(j["raw_json"].get<std::string>());
+                    prov_str = raw_j.value("ai_provider", prov_str);
+                    endpoint = raw_j.value("ai_endpoint", endpoint);
+                    model = raw_j.value("ai_model", model);
+                    api_key = raw_j.value("ai_api_key", api_key);
+                } catch (...) {}
+            }
+
             fs::path ai_file = control_server_.workspace_root() / ".slug" / "ai.json";
             std::string existing_key = "";
             if (fs::exists(ai_file)) {

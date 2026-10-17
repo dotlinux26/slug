@@ -509,4 +509,22 @@ Khi hoàn tất, báo cáo theo cấu trúc:
 ### Hạng mục P2 — Rà soát SQLite amalgamation
 - [x] **Kiểm tra phiên bản SQLite**:
   - Đã đối chiếu phiên bản `third_party/sqlite/sqlite3.h` và `sqlite3.c`: đang dùng phiên bản **SQLite 3.46.1** (phát hành tháng 8/2024).
-  - Phiên bản ổn định, an toàn, hỗ trợ đầy đủ WAL mode, JSON và parameterized queries, tương thích hoàn toàn với kiến trúc hiện tại của dự án.
+  - Phiên bản ổn định, an toàn, hỗ trợ đầy đủ WAL mode, JSON và parameterized queries, tương thích hoàn toàn với kiến trúc hiện tại của dự án.
+
+### Hạng mục Cải Tiến Toàn Diện — Khắc Phục Lỗi JavaScript, Giao Diện Responsive & Cấu Hình AI / Dynamic Scanner (Admin Dashboard)
+- [x] **Khắc phục tận gốc lỗi cú pháp JavaScript gây tê liệt nút bấm Admin Dashboard**:
+  - Loại bỏ hoàn toàn các ký tự `\n` chưa được escape trong các chuỗi JS của `confirm()` và `prompt()`, sửa lỗi phân tích chuỗi thoát kép `\\'` trong các thuộc tính sự kiện inline.
+  - Chuyển đổi toàn bộ cơ chế gắn sự kiện hành động sang chuẩn HTML5 DOM dataset (`this.dataset.path`, `this.dataset.u`, `this.dataset.r`, `this.dataset.id`), ngăn chặn triệt để xung đột ký tự đặc biệt, dấu nháy kép/đơn hay đường dẫn chứa khoảng trắng/ký tự unicode.
+  - Nút `Xóa Dữ Liệu Quét`, các nút điều hướng phân trang (`Trước`, `Sau`), các bộ lọc truy vấn SQL đa tiêu chí (`Trạng Thái`, `Detector`, `Đuôi tệp`, `Tìm kiếm`, `Limit`), nút `Whitelist`, và `Làm Mới` hoạt động trơn tru 100%, không còn bất kỳ lỗi console nào.
+- [x] **Thiết kế Responsive hoàn chỉnh cho Admin Dashboard**:
+  - Loại bỏ `min-width: 1040px` cố định, chuyển `.container` sang layout co giãn tự động `max-width: 1360px` với padding thích ứng.
+  - Thêm media queries CSS responsive: tự động chuyển layout lưới `.grid` 2 cột sang 1 cột toàn màn hình khi chiều rộng màn hình <= 1080px (đặc biệt tối ưu khi mở DevTools cạnh bên), tự động co giãn bảng số liệu `metric-grid` từ 3 cột xuống 2 cột và 1 cột.
+  - Mọi bảng dữ liệu được bọc trong `.table-scroll-container` có `overflow-x: auto` và cuộn cảm ứng di động mượt mà, modal popup tự động giới hạn `max-width: 100%`, loại bỏ hoàn toàn lỗi tràn khung ngang màn hình.
+- [x] **Hoàn thiện cấu hình AI Workspace qua file `.slug/ai.json` và giao diện Form/JSON**:
+  - Thẻ cấu hình AI trên Admin Dashboard hỗ trợ chuyển đổi linh hoạt 2 chế độ: Form trực quan (Provider, Model, Endpoint, API Key) và Trình chỉnh sửa trực tiếp file raw JSON (`#ai-json-raw`).
+  - Hỗ trợ lưu cấu hình nguyên bản vào `.slug/ai.json` qua `POST /api/admin/ai/config` và kiểm tra kết nối AI theo thời gian thực qua `POST /api/admin/ai/test`.
+  - Kết nối trực tiếp `AiScanner` với cấu hình workspace: khi khởi tạo `AiScanner::create_for_level` ở Level 4, máy chủ tự động đọc cấu hình `.slug/ai.json` của workspace tương ứng (bao gồm cả model, custom endpoint và api_key), loại bỏ hoàn toàn sự phụ thuộc vào biến môi trường cục bộ.
+- [x] **Cho phép thay đổi mức lọc và quét lại trực tiếp trong Admin Dashboard (Dynamic Re-Scan)**:
+  - Thêm thẻ điều khiển mức lọc trực tiếp tại Admin Dashboard với dropdown chọn 4 cấp độ lọc (Level 1, Level 2, Level 3, Level 4).
+  - Nút `⚡ Áp Dụng Mức Lọc & Quét Lại Ngay` gọi `POST /api/admin/scan/run`: máy chủ cập nhật ngay tức thì `FilterLevel` runtime, xóa cache manifest, kích hoạt quét lại toàn bộ workspace và trả về kết quả số tệp khả dụng / số tệp bị cách ly.
+  - Giao diện Admin Dashboard tự động cập nhật huy hiệu mức lọc đang hoạt động (`#active-filter-badge`, `#scan-status-badge`) và làm mới ngay lập tức bảng `Flagged & Quarantined Files`, cho phép người dùng thay đổi mức bảo mật tự do bất kỳ lúc nào mà không cần khởi động lại server.

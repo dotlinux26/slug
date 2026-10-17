@@ -27,9 +27,12 @@ public:
 
     explicit AiScanner(ProviderType provider = ProviderType::LOCAL_HEURISTIC,
                        std::string endpoint = "http://127.0.0.1:11434",
-                       std::string model = "qwen2.5-coder:7b");
+                       std::string model = "qwen2.5-coder:7b",
+                       std::string api_key = "");
 
-    static AiScanner create_for_level(core::FilterLevel level, core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA);
+    static AiScanner create_for_level(core::FilterLevel level,
+                                     core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA,
+                                     const std::filesystem::path& workspace_root = {});
 
     // Scans file content for sensitive data / leaked secrets according to FilterLevel
     ScanFinding scan_content(const std::string& file_path, std::string_view content, bool deep = false,
@@ -41,11 +44,13 @@ public:
     ProviderType provider() const { return provider_; }
     const std::string& endpoint() const { return endpoint_; }
     const std::string& model() const { return model_; }
+    const std::string& api_key() const { return api_key_; }
 
 private:
     ProviderType provider_;
     std::string endpoint_;
     std::string model_;
+    std::string api_key_;
 
     ScanFinding scan_heuristic(const std::string& file_path, std::string_view content, bool deep, bool enable_entropy = true) const;
     ScanFinding scan_ollama(const std::string& file_path, std::string_view content) const;

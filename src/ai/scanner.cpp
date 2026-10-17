@@ -35,17 +35,38 @@ static bool is_safe_shell_param(const std::string& s) {
     return true;
 }
 
-AiScanner::AiScanner(ProviderType provider, std::string endpoint, std::string model)
-    : provider_(provider), endpoint_(std::move(endpoint)), model_(std::move(model)) {}
+AiScanner::AiScanner(ProviderType provider, std::string endpoint, std::string model, std::string api_key)
+    : provider_(provider), endpoint_(std::move(endpoint)), model_(std::move(model)), api_key_(std::move(api_key)) {}
 
-AiScanner AiScanner::create_for_level(core::FilterLevel level, core::AiModelProvider ai_provider) {
+AiScanner AiScanner::create_for_level(core::FilterLevel level, core::AiModelProvider ai_provider, const std::filesystem::path& workspace_root) {
     if (level == core::FilterLevel::LEVEL_4_AI) {
-        if (ai_provider == core::AiModelProvider::OPENAI) {
-            return AiScanner(ProviderType::CLOUD_API, "https://api.openai.com/v1/chat/completions", "gpt-4o-mini");
-        } else if (ai_provider == core::AiModelProvider::GEMINI) {
-            return AiScanner(ProviderType::CLOUD_API, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini-2.0-flash");
+        std::string prov_str = core::ai_model_to_string(ai_provider);
+        std::string endpoint = (ai_provider == core::AiModelProvider::OPENAI) ? "https://api.openai.com/v1/chat/completions" :
+                               ((ai_provider == core::AiModelProvider::GEMINI) ? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" : "http://127.0.0.1:11434");
+        std::string model = (ai_provider == core::AiModelProvider::OPENAI) ? "gpt-4o-mini" :
+                            ((ai_provider == core::AiModelProvider::GEMINI) ? "gemini-2.0-flash" : "qwen2.5-coder:7b");
+        std::string api_key = "";
+
+        if (!workspace_root.empty()) {
+            std::filesystem::path ai_file = workspace_root / ".slug" / "ai.json";
+            if (std::filesystem::exists(ai_file)) {
+                auto content = platform::PathUtils::read_text_file(ai_file);
+                if (content && !content->empty()) {
+                    try {
+                        auto j = json::parse(*content);
+                        if (j.contains("ai_provider") && j["ai_provider"].is_string()) prov_str = j["ai_provider"].get<std::string>();
+                        if (j.contains("ai_endpoint") && j["ai_endpoint"].is_string()) endpoint = j["ai_endpoint"].get<std::string>();
+                        if (j.contains("ai_model") && j["ai_model"].is_string()) model = j["ai_model"].get<std::string>();
+                        if (j.contains("ai_api_key") && j["ai_api_key"].is_string()) api_key = j["ai_api_key"].get<std::string>();
+                    } catch (...) {}
+                }
+            }
+        }
+
+        if (prov_str == "openai" || prov_str == "gemini") {
+            return AiScanner(ProviderType::CLOUD_API, endpoint, model, api_key);
         } else {
-            return AiScanner(ProviderType::LOCAL_OLLAMA, "http://127.0.0.1:11434", "qwen2.5-coder:7b");
+            return AiScanner(ProviderType::LOCAL_OLLAMA, endpoint, model, api_key);
         }
     }
     return AiScanner(ProviderType::LOCAL_HEURISTIC);
@@ -318,17 +339,20 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
 }
 
 ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view content) const {
-    const char* api_key_env = std::getenv("SLUG_AI_API_KEY");
-    if (!api_key_env) api_key_env = std::getenv("GROQ_API_KEY");
-    if (!api_key_env) api_key_env = std::getenv("GEMINI_API_KEY");
-    if (!api_key_env) api_key_env = std::getenv("OPENROUTER_API_KEY");
-    if (!api_key_env) api_key_env = std::getenv("OPENAI_API_KEY");
+    std::string api_key = api_key_;
+    if (api_key.empty()) {
+        const char* api_key_env = std::getenv("SLUG_AI_API_KEY");
+        if (!api_key_env) api_key_env = std::getenv("GROQ_API_KEY");
+        if (!api_key_env) api_key_env = std::getenv("GEMINI_API_KEY");
+        if (!api_key_env) api_key_env = std::getenv("OPENROUTER_API_KEY");
+        if (!api_key_env) api_key_env = std::getenv("OPENAI_API_KEY");
+        if (api_key_env) api_key = api_key_env;
+    }
 
-    if (!api_key_env || std::string(api_key_env).empty()) {
+    if (api_key.empty()) {
         return scan_heuristic(file_path, content, false);
     }
 
-    std::string api_key = api_key_env;
     std::string endpoint = endpoint_;
     std::string model = model_;
 
