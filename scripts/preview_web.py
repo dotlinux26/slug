@@ -1525,10 +1525,20 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             try:
                 import tkinter as tk
                 from tkinter import filedialog
+                import ctypes
                 root = tk.Tk()
-                root.withdraw()
-                root.attributes('-topmost', True)
-                folder = filedialog.askdirectory(title="Slug: Chọn Thư Mục Workspace Chia Sẻ")
+                root.attributes("-topmost", True)
+                root.attributes("-alpha", 0.0)
+                root.geometry("1x1+0+0")
+                root.lift()
+                root.focus_force()
+                try:
+                    hwnd = ctypes.windll.user32.GetForegroundWindow()
+                    if hwnd:
+                        ctypes.windll.user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+                folder = filedialog.askdirectory(parent=root, title="Slug: Chọn Thư Mục Workspace Chia Sẻ")
                 root.destroy()
             except Exception:
                 folder = ""

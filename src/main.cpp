@@ -2831,7 +2831,13 @@ static std::string pick_folder_native() {
             pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
         }
         pFileOpen->SetTitle(L"Slug: Chọn Thư Mục Workspace Chia Sẻ");
-        hr = pFileOpen->Show(NULL);
+        HWND hwndOwner = GetForegroundWindow();
+        if (!hwndOwner) hwndOwner = GetActiveWindow();
+        if (hwndOwner) {
+            SetForegroundWindow(hwndOwner);
+            BringWindowToTop(hwndOwner);
+        }
+        hr = pFileOpen->Show(hwndOwner);
         if (SUCCEEDED(hr)) {
             IShellItem* pItem = nullptr;
             hr = pFileOpen->GetResult(&pItem);
