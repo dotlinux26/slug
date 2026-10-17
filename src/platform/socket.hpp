@@ -42,6 +42,9 @@ public:
     TcpSocket& operator=(TcpSocket&& other) noexcept;
 
     bool connect(const std::string& host, uint16_t port, int timeout_ms = 5000);
+    bool connect_with_timeout(const std::string& host, uint16_t port, int timeout_ms = 5000) {
+        return connect(host, port, timeout_ms);
+    }
     bool send_all(std::span<const uint8_t> data);
     bool send_all(const std::string& str);
     int receive(std::span<uint8_t> buffer, int timeout_ms = -1);

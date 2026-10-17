@@ -918,6 +918,7 @@ int cmd_add(int argc, char* argv[]) {
             is_internal_worker = true;
         }
     }
+    (void)is_internal_worker;
 
 #if defined(SLUG_PLATFORM_POSIX)
     int pipefd[2] = {-1, -1};
@@ -3308,7 +3309,7 @@ int cmd_portal(int argc, char* argv[]) {
                     return;
                 }
                 std::error_code ec;
-                std::filesystem::path p = std::filesystem::u8path(target_dir);
+                std::filesystem::path p(target_dir);
                 bool exists = std::filesystem::exists(p, ec);
                 bool is_dir = exists && std::filesystem::is_directory(p, ec);
                 bool has_slug = exists && std::filesystem::exists(p / ".slug", ec);
@@ -3666,7 +3667,7 @@ int cmd_portal(int argc, char* argv[]) {
 
                     auto start = std::chrono::high_resolution_clock::now();
                     platform::TcpSocket test_sock;
-                    bool ok = test_sock.connect_with_timeout(host, port, 2000);
+                    bool ok = test_sock.connect(host, port, 2000);
                     auto stop = std::chrono::high_resolution_clock::now();
                     int latency_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count());
 
