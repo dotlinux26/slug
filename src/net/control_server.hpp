@@ -97,12 +97,12 @@ private:
     std::unique_ptr<std::thread> worker_thread_;
 
     std::unique_ptr<crypto::ICryptoSuite> suite_;
+    core::FilterMode filter_mode_{core::FilterMode::PROTECTED};
     crypto::TotpManager totp_manager_;
     core::AclManager acl_manager_;
     core::AuditLogger audit_logger_;
     crypto::KemKeyPair server_kem_;
     crypto::SigKeyPair server_sig_;
-    core::FilterMode filter_mode_{core::FilterMode::PROTECTED};
     core::SlugVFS vfs_;
 
     mutable std::mutex session_mutex_;

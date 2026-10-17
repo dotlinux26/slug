@@ -7,6 +7,7 @@
 #include "src/ai/scanner.hpp"
 #include "src/ai/stateful_audit.hpp"
 #include "src/policy/rules.hpp"
+#include "src/crypto/blake3_wrapper.hpp"
 #include "third_party/json/json.hpp"
 #include <sstream>
 #include <iostream>
