@@ -2,6 +2,7 @@
 
 #include "src/platform/socket.hpp"
 #include "src/core/types.hpp"
+#include "src/core/utils.hpp"
 #include "src/core/acl.hpp"
 #include "src/core/audit.hpp"
 #include "src/crypto/crypto_suite.hpp"

@@ -12,6 +12,7 @@
 #include "src/crypto/blake3_wrapper.hpp"
 #include "third_party/json/json.hpp"
 #include <sstream>
+#include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <set>
@@ -1259,7 +1260,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
     if (path == "/api/pull/dry-run") {
         json res;
         res["status"] = "ok";
-        auto manifest = control_server_.manifest();
+        auto manifest = control_server_.get_or_build_manifest();
         std::string dest_str = get_query_param(req.query, "dest");
         res["workspace"] = control_server_.workspace_root().filename().string();
         std::error_code ec;
