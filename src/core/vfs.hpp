@@ -43,6 +43,8 @@ struct VfsEntry {
     bool is_dir{false};
     uint64_t size{0};
     std::string blake3_hash;
+    bool is_blocked{false};
+    std::string block_reason;
 };
 
 struct VfsResolveResult {

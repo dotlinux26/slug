@@ -155,14 +155,21 @@ std::pair<VfsStatus, std::vector<VfsEntry>> SlugVFS::list_directory(std::string_
         std::string vpath = "/" + proto_rel;
         bool is_dir = item.is_directory(ec);
 
+        bool is_blocked = false;
+        std::string block_reason;
+
         // Filter evaluation
         if (filter_mode_ != FilterMode::NONE) {
             bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
             auto dec = policy_engine_.evaluate(proto_rel, is_dir, {}, ignore_gi);
-            if (!dec.is_allowed) continue;
-
-            if (enable_ai_ && audit_index_ && !is_dir) {
-                if (audit_index_->is_flagged(proto_rel)) continue;
+            if (!dec.is_allowed) {
+                is_blocked = true;
+                block_reason = dec.reason.empty() ? "Filtered by rule / gitignore" : dec.reason;
+            } else if (enable_ai_ && audit_index_ && !is_dir) {
+                if (audit_index_->is_flagged(proto_rel)) {
+                    is_blocked = true;
+                    block_reason = "Flagged by AI Secret Guard";
+                }
             }
         }
 
@@ -171,8 +178,10 @@ std::pair<VfsStatus, std::vector<VfsEntry>> SlugVFS::list_directory(std::string_
         e.virtual_path = vpath;
         e.is_dir = is_dir;
         e.size = is_dir ? 0 : item.file_size(ec);
+        e.is_blocked = is_blocked;
+        e.block_reason = std::move(block_reason);
 
-        if (!is_dir && e.size > 0 && e.size < 64 * 1024 * 1024) {
+        if (!is_dir && !e.is_blocked && e.size > 0 && e.size < 64 * 1024 * 1024) {
             auto data = platform::PathUtils::read_binary_file(item.path());
             if (data) {
                 e.blake3_hash = crypto::Blake3::hash_hex(*data);

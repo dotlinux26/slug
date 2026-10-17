@@ -1008,11 +1008,14 @@ THE ESSENTIAL 9 - CORE COMMAND SUITE:
     config [list|get|set]    Manage preferences (~/.slug/config.json): default_suite, portal_port, etc.
 
   [HOST WORKSPACE]
-    add <path>               Share folder with Post-Quantum protection (PurePQC default)
+    host <path>, add <path>  Share folder with Post-Quantum protection (PurePQC default)
                              Flags: -p, --port <port>       (Default: 9443)
                                     -s, --suite <1|2|3|pqc> (Default: 3 pure-pqc)
                                     -t, --ttl <duration>    (Default: 24h, inf for permanent)
-                                    -a, --ai                (Enable Stateful AI Secret Guard)
+                                    --filter-level <1|2|3|4>(1: Rules, 2: Regex, 3: Entropy, 4: AI)
+                                    --ai-model <model>      (ollama [default], openai, gemini)
+                                    --otp-step <seconds>    (TOTP step: 30, 60, 120, 300, 600s)
+                                    --workspace-ttl <sec>   (Workspace lifetime auto-expiration)
                                     --filter-mode <mode>    (protected [default], include-ignored, none)
                                     --no-filter             (Raw transfer: disable gitignore & quarantine)
                                     --include-ignored       (Transfer gitignored files but enforce rules)
@@ -1105,6 +1108,10 @@ int cmd_add(int argc, char* argv[]) {
     uint64_t ttl_sec = 86400;
     bool enable_ai = false;
     core::FilterMode filter_mode = core::FilterMode::PROTECTED;
+    core::FilterLevel filter_level = core::FilterLevel::LEVEL_3_ENTROPY;
+    core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA;
+    uint32_t otp_step = 60;
+    uint64_t workspace_ttl = 86400;
     bool daemon = false;
     bool is_internal_worker = false;
 
@@ -1118,6 +1125,16 @@ int cmd_add(int argc, char* argv[]) {
             ttl_sec = core::Utils::parse_ttl(argv[++i]);
         } else if (arg == "-a" || arg == "--ai" || arg == "-ai") {
             enable_ai = true;
+            filter_level = core::FilterLevel::LEVEL_4_AI;
+        } else if ((arg == "--filter-level" || arg == "-fl") && i + 1 < argc) {
+            filter_level = core::filter_level_from_string(argv[++i]);
+            if (filter_level == core::FilterLevel::LEVEL_4_AI) enable_ai = true;
+        } else if (arg == "--ai-model" && i + 1 < argc) {
+            ai_provider = core::ai_model_from_string(argv[++i]);
+        } else if ((arg == "--otp-step" || arg == "--otp-ttl") && i + 1 < argc) {
+            otp_step = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if ((arg == "--workspace-ttl" || arg == "--ws-ttl") && i + 1 < argc) {
+            workspace_ttl = core::Utils::parse_ttl(argv[++i]);
         } else if (arg == "--filter-mode" && i + 1 < argc) {
             filter_mode = core::filter_mode_from_string(argv[++i]);
         } else if (arg == "--no-filter" || arg == "--raw") {
@@ -1214,7 +1231,9 @@ int cmd_add(int argc, char* argv[]) {
         std::cout << "[*] Filter Mode: include-ignored (.gitignore disabled, rules & secret quarantine active)." << std::endl;
     }
 
-    if (!core::WorkspaceManager::instance().add_workspace(folder_path, port, suite, ttl_sec, enable_ai, filter_mode)) {
+    if (!core::WorkspaceManager::instance().add_workspace(
+            folder_path, port, suite, ttl_sec, enable_ai, filter_mode, nullptr,
+            filter_level, ai_provider, otp_step, workspace_ttl)) {
 #if defined(SLUG_PLATFORM_POSIX)
         if (daemon && pipefd[1] >= 0) {
             char fail[] = "FAIL";
@@ -3483,6 +3502,8 @@ int cmd_portal(int argc, char* argv[]) {
                     item["path"] = w.path.string();
                     item["suite"] = core::suite_to_short_name(w.suite);
                     item["filter_mode"] = core::filter_mode_to_string(w.filter_mode);
+                    item["filter_level"] = core::filter_level_to_string(w.filter_level);
+                    item["ai_model"] = core::ai_model_to_string(w.ai_provider);
                     item["ai_enabled"] = w.ai_enabled;
 
                     auto st = query_workspace_api(w.port);
@@ -3498,6 +3519,11 @@ int cmd_portal(int argc, char* argv[]) {
                         item["maxTtl"] = step;
                         item["ttl"] = st.value("totp_remaining_sec", step);
                         item["cert_ttl"] = st.value("ttl_seconds", 86400);
+                        item["workspace_ttl"] = st.value("workspace_ttl", 86400);
+                        item["workspace_remaining_sec"] = st.value("workspace_remaining_sec", 0);
+                        item["filter_mode"] = st.value("filter_mode", core::filter_mode_to_string(w.filter_mode));
+                        item["filter_level"] = st.value("filter_level", core::filter_level_to_string(w.filter_level));
+                        item["ai_model"] = st.value("ai_model", core::ai_model_to_string(w.ai_provider));
 
                         // Filter sessions: ensure host_admin is completely excluded from peers
                         nlohmann::json peers_arr = nlohmann::json::array();
@@ -3528,7 +3554,7 @@ int cmd_portal(int argc, char* argv[]) {
                         item["peers"] = nlohmann::json::array();
                     }
 
-                    // Attach real audit data, quarantined files, and rules for this workspace (using in-memory cache to guarantee 0ms response)
+                    // Attach real audit data, quarantined files, and rules for this workspace
                     auto audit_data = get_cached_workspace_audit(w.path);
                     item["auditStats"] = audit_data.value("stats", nlohmann::json{{"clean", 0}, {"quarantined", 0}, {"excluded", 0}, {"allowed", 0}});
                     item["quarantinedFiles"] = audit_data.value("quarantined_files", nlohmann::json::array());
@@ -3536,9 +3562,8 @@ int cmd_portal(int argc, char* argv[]) {
                     item["excludedFiles"] = audit_data.value("excluded_files", nlohmann::json::array());
                     item["allowedFiles"] = audit_data.value("allowed_files", nlohmann::json::array());
 
-                    // Read custom rules if rules.conf or .slugignore exists
-                    std::filesystem::path rules_file = w.path / "rules.conf";
-                    if (!std::filesystem::exists(rules_file)) rules_file = w.path / ".slugignore";
+                    // Read custom rules from canonical .slug/rules.conf
+                    std::filesystem::path rules_file = w.path / ".slug" / "rules.conf";
                     if (std::filesystem::exists(rules_file)) {
                         std::ifstream rf(rules_file);
                         if (rf.is_open()) {
@@ -3913,18 +3938,25 @@ int cmd_portal(int argc, char* argv[]) {
                     if (wpath.empty()) wpath = "./";
                     uint16_t wport = static_cast<uint16_t>(j.value("port", 9443));
                     std::string suite_str = j.value("suite", "2");
-                    std::string filter_str = j.value("filter", "protected");
+                    std::string filter_str = j.value("filter", "level3");
+                    std::string ai_model_str = j.value("ai_model", "ollama");
+                    uint32_t otp_step = static_cast<uint32_t>(j.value("otp_ttl", j.value("otp_step", 60)));
                     uint64_t wttl = j.value("ttl", 86400ULL);
                     // 0 means Permanent (∞). If positive, ensure not below 60s
                     if (wttl > 0 && wttl < 60ULL) wttl = 60ULL;
 
                     core::SuiteID suite = core::suite_from_string(suite_str);
-                    core::FilterMode fmode = core::filter_mode_from_string(filter_str);
-                    bool enable_ai = (filter_str == "level4" || j.value("enable_ai", false));
+                    core::FilterLevel flevel = core::filter_level_from_string(filter_str);
+                    core::AiModelProvider ai_provider = core::ai_model_from_string(ai_model_str);
+                    core::FilterMode fmode = core::FilterMode::PROTECTED;
+                    if (filter_str == "none" || filter_str == "raw") fmode = core::FilterMode::NONE;
+                    else if (filter_str == "include_ignored" || filter_str == "all") fmode = core::FilterMode::INCLUDE_IGNORED;
+                    bool enable_ai = (flevel == core::FilterLevel::LEVEL_4_AI || j.value("enable_ai", false));
 
                     uint16_t assigned_port = wport;
                     bool ok = core::WorkspaceManager::instance().add_workspace(
-                        wpath, wport, suite, wttl, enable_ai, fmode, &assigned_port
+                        wpath, wport, suite, 86400, enable_ai, fmode, &assigned_port,
+                        flevel, ai_provider, otp_step, wttl
                     );
                     nlohmann::json res;
                     res["status"] = ok ? "ok" : "error";
@@ -4897,6 +4929,8 @@ int cmd_audit(int argc, char* argv[]) {
     } else if (sub == "scan" && argc >= 4) {
         std::string target_file = argv[3];
         bool deep = false;
+        core::FilterLevel filter_level = core::FilterLevel::LEVEL_3_ENTROPY;
+        core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA;
         ai::AiScanner::ProviderType prov = ai::AiScanner::ProviderType::LOCAL_HEURISTIC;
         std::string endpoint = "http://127.0.0.1:11434";
         std::string model = "qwen2.5-coder:7b";
@@ -4904,9 +4938,26 @@ int cmd_audit(int argc, char* argv[]) {
         for (int i = 4; i < argc; ++i) {
             std::string arg = argv[i];
             if (arg == "--deep") deep = true;
-            else if (arg == "--ollama") prov = ai::AiScanner::ProviderType::LOCAL_OLLAMA;
-            else if (arg == "--cloud") prov = ai::AiScanner::ProviderType::CLOUD_API;
-            else if (arg == "--endpoint" && i + 1 < argc) endpoint = argv[++i];
+            else if ((arg == "--filter-level" || arg == "-fl") && i + 1 < argc) {
+                filter_level = core::filter_level_from_string(argv[++i]);
+            } else if (arg == "--ai-model" && i + 1 < argc) {
+                ai_provider = core::ai_model_from_string(argv[++i]);
+            } else if (arg == "--ollama") {
+                prov = ai::AiScanner::ProviderType::LOCAL_OLLAMA;
+                ai_provider = core::AiModelProvider::OLLAMA;
+                filter_level = core::FilterLevel::LEVEL_4_AI;
+            } else if (arg == "--cloud") {
+                prov = ai::AiScanner::ProviderType::CLOUD_API;
+                filter_level = core::FilterLevel::LEVEL_4_AI;
+            } else if (arg == "--openai") {
+                prov = ai::AiScanner::ProviderType::CLOUD_API;
+                ai_provider = core::AiModelProvider::OPENAI;
+                filter_level = core::FilterLevel::LEVEL_4_AI;
+            } else if (arg == "--gemini") {
+                prov = ai::AiScanner::ProviderType::CLOUD_API;
+                ai_provider = core::AiModelProvider::GEMINI;
+                filter_level = core::FilterLevel::LEVEL_4_AI;
+            } else if (arg == "--endpoint" && i + 1 < argc) endpoint = argv[++i];
             else if (arg == "--model" && i + 1 < argc) model = argv[++i];
         }
 
@@ -4916,16 +4967,18 @@ int cmd_audit(int argc, char* argv[]) {
             return 1;
         }
 
-        ai::AiScanner scanner(prov, endpoint, model);
-        std::string prov_name = (prov == ai::AiScanner::ProviderType::LOCAL_HEURISTIC) ? "LOCAL_HEURISTIC (Entropy & Heuristics)" :
-                                (prov == ai::AiScanner::ProviderType::LOCAL_OLLAMA) ? ("LOCAL_OLLAMA (" + endpoint + ")") :
-                                "CLOUD_API (OpenAI-compatible / Groq / Gemini / OpenRouter)";
+        ai::AiScanner scanner = (filter_level == core::FilterLevel::LEVEL_4_AI)
+                                ? ai::AiScanner::create_for_level(filter_level, ai_provider)
+                                : ai::AiScanner(prov, endpoint, model);
 
         std::cout << "[*] Scanning file: " << target_file << std::endl;
-        std::cout << "    Provider: " << prov_name << std::endl;
+        std::cout << "    Filter Level: " << core::filter_level_to_string(filter_level) << std::endl;
+        if (filter_level == core::FilterLevel::LEVEL_4_AI) {
+            std::cout << "    AI Model:     " << core::ai_model_to_string(ai_provider) << std::endl;
+        }
 
         std::string text(data->begin(), data->end());
-        auto finding = scanner.scan_content(target_file, text, deep);
+        auto finding = scanner.scan_content(target_file, text, deep, filter_level);
 
         if (finding.has_secret) {
             std::cout << "\n[!] SECRET DETECTED BY AI GUARD!" << std::endl;
@@ -5283,7 +5336,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "portal" || cmd == "web" || cmd == "ui") return cmd_portal(argc, argv);
     if (cmd == "config") return cmd_config(argc, argv);
     if (cmd == "shortcut") return cmd_shortcut(argc, argv);
-    if (cmd == "add") return cmd_add(argc, argv);
+    if (cmd == "host" || cmd == "add") return cmd_add(argc, argv);
     if (cmd == "status") return cmd_status(argc, argv);
     if (cmd == "serve" || cmd == "server" || cmd == "inspect") return cmd_serve(argc, argv);
     if (cmd == "totp") return cmd_totp(argc, argv);

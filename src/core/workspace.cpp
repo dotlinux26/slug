@@ -184,7 +184,11 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
                                     uint64_t ttl_seconds,
                                     bool enable_ai,
                                     FilterMode filter_mode,
-                                    uint16_t* actual_port) {
+                                    uint16_t* actual_port,
+                                    FilterLevel filter_level,
+                                    AiModelProvider ai_provider,
+                                    uint32_t otp_step,
+                                    uint64_t workspace_ttl) {
 
     std::error_code ec;
     fs::path canonical_path = fs::canonical(folder_path, ec);
@@ -248,7 +252,10 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     int attempts = 100;
     while (attempts-- > 0) {
         if (instances_.find(target_port) == instances_.end()) {
-            ctrl = std::make_shared<net::ControlServer>(canonical_path, target_port, suite, ttl_seconds, enable_ai, filter_mode);
+            ctrl = std::make_shared<net::ControlServer>(
+                canonical_path, target_port, suite, ttl_seconds, enable_ai, filter_mode,
+                filter_level, ai_provider, otp_step, workspace_ttl
+            );
             if (ctrl->start()) {
                 break; // Successfully bound and started!
             }
@@ -272,10 +279,10 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     ctrl->set_web_server(web.get());
     web->start();
 
-    if (enable_ai && filter_mode != FilterMode::NONE) {
+    if (filter_level != FilterLevel::LEVEL_1_RULES && filter_mode != FilterMode::NONE) {
         // Run initial scan asynchronously in background thread so add_workspace returns in 0.01s
-        std::thread([canonical_path, suite, filter_mode]() {
-            sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode);
+        std::thread([canonical_path, suite, filter_mode, filter_level, ai_provider]() {
+            sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode, filter_level, ai_provider);
         }).detach();
     }
 
@@ -285,7 +292,12 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     wi.suite = suite;
     wi.ai_enabled = enable_ai;
     wi.filter_mode = filter_mode;
+    wi.filter_level = filter_level;
+    wi.ai_provider = ai_provider;
     wi.ttl_seconds = ttl_seconds;
+    wi.workspace_ttl = workspace_ttl;
+    wi.started_at = ctrl->started_at();
+    wi.otp_step = ctrl->totp_step();
 #if defined(SLUG_PLATFORM_POSIX)
     wi.pid = static_cast<uint32_t>(getpid());
 #elif defined(SLUG_PLATFORM_WINDOWS)
@@ -339,7 +351,23 @@ bool WorkspaceManager::stop_workspace(uint16_t port) {
     return false;
 }
 
+void WorkspaceManager::check_expired_workspaces() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    uint64_t now = core::Utils::current_timestamp();
+    std::vector<uint16_t> expired_ports;
+    for (const auto& [port, inst] : instances_) {
+        if (inst.control_server && inst.control_server->is_workspace_expired(now)) {
+            expired_ports.push_back(port);
+        }
+    }
+    for (uint16_t p : expired_ports) {
+        std::cout << "[WorkspaceManager] Workspace on port " << p << " reached TTL expiration. Stopping..." << std::endl;
+        stop_workspace(p);
+    }
+}
+
 std::vector<WorkspaceInfo> WorkspaceManager::list_active_workspaces() {
+    check_expired_workspaces();
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<WorkspaceInfo> result;
 
@@ -349,6 +377,14 @@ std::vector<WorkspaceInfo> WorkspaceManager::list_active_workspaces() {
         wi.port = port;
         wi.path = inst.control_server->workspace_root();
         wi.suite = inst.control_server->suite_id();
+        wi.ai_enabled = inst.control_server->ai_enabled();
+        wi.filter_mode = inst.control_server->filter_mode();
+        wi.filter_level = inst.control_server->filter_level();
+        wi.ai_provider = inst.control_server->ai_provider();
+        wi.ttl_seconds = inst.control_server->cert_ttl();
+        wi.workspace_ttl = inst.control_server->workspace_ttl();
+        wi.started_at = inst.control_server->started_at();
+        wi.otp_step = inst.control_server->totp_step();
         wi.totp_code = inst.control_server->totp_manager().generate_code();
         wi.totp_remaining = inst.control_server->totp_manager().remaining_seconds();
 #if defined(SLUG_PLATFORM_POSIX)

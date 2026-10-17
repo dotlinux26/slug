@@ -38,6 +38,19 @@ static bool is_safe_shell_param(const std::string& s) {
 AiScanner::AiScanner(ProviderType provider, std::string endpoint, std::string model)
     : provider_(provider), endpoint_(std::move(endpoint)), model_(std::move(model)) {}
 
+AiScanner AiScanner::create_for_level(core::FilterLevel level, core::AiModelProvider ai_provider) {
+    if (level == core::FilterLevel::LEVEL_4_AI) {
+        if (ai_provider == core::AiModelProvider::OPENAI) {
+            return AiScanner(ProviderType::CLOUD_API, "https://api.openai.com/v1/chat/completions", "gpt-4o-mini");
+        } else if (ai_provider == core::AiModelProvider::GEMINI) {
+            return AiScanner(ProviderType::CLOUD_API, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini-2.0-flash");
+        } else {
+            return AiScanner(ProviderType::LOCAL_OLLAMA, "http://127.0.0.1:11434", "qwen2.5-coder:7b");
+        }
+    }
+    return AiScanner(ProviderType::LOCAL_HEURISTIC);
+}
+
 bool AiScanner::is_scannable_file(const std::filesystem::path& path) {
     std::string fname = path.filename().string();
     std::string ext = path.extension().string();
@@ -89,7 +102,7 @@ static double calculate_entropy(std::string_view s) {
     return entropy;
 }
 
-ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_view content, bool deep) const {
+ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_view content, bool deep, bool enable_entropy) const {
     ScanFinding finding;
     finding.detector = "Smart Regex Guard";
 
@@ -142,40 +155,42 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
             }
         }
 
-        // Check value in KEY=VALUE or KEY: VALUE for unquoted high-entropy secrets
-        size_t eq_pos = line.find('=');
-        if (eq_pos == std::string::npos) eq_pos = line.find(':');
-        if (eq_pos != std::string::npos && eq_pos + 1 < line.size()) {
-            std::string val = core::Utils::trim(line.substr(eq_pos + 1));
-            while (!val.empty() && (val.front() == '"' || val.front() == '\'')) val = val.substr(1);
-            while (!val.empty() && (val.back() == '"' || val.back() == '\'' || val.back() == ';')) val.pop_back();
-            if (val.size() >= 20 && calculate_entropy(val) >= 4.0) {
-                finding.has_secret = true;
-                finding.line_number = static_cast<int>(i + 1);
-                finding.reason = "High-entropy Secret Token";
-                finding.matched_snippet = val.substr(0, std::min(val.size(), (size_t)8)) + "..." + (val.size() > 4 ? val.substr(val.size() - 4) : "");
-                return finding;
-            }
-        }
-
-        // High entropy token check on individual words
-        auto words = core::Utils::split(line, ' ');
-        for (const auto& word : words) {
-            std::string clean = core::Utils::trim(word);
-            while (!clean.empty() && (clean.front() == '"' || clean.front() == '\'' || clean.front() == '=' || clean.front() == ':')) {
-                clean = clean.substr(1);
-            }
-            while (!clean.empty() && (clean.back() == '"' || clean.back() == '\'' || clean.back() == ';' || clean.back() == ',')) {
-                clean.pop_back();
+        // Check value in KEY=VALUE or KEY: VALUE for unquoted high-entropy secrets (Mức 3 & 4)
+        if (enable_entropy) {
+            size_t eq_pos = line.find('=');
+            if (eq_pos == std::string::npos) eq_pos = line.find(':');
+            if (eq_pos != std::string::npos && eq_pos + 1 < line.size()) {
+                std::string val = core::Utils::trim(line.substr(eq_pos + 1));
+                while (!val.empty() && (val.front() == '"' || val.front() == '\'')) val = val.substr(1);
+                while (!val.empty() && (val.back() == '"' || val.back() == '\'' || val.back() == ';')) val.pop_back();
+                if (val.size() >= 20 && calculate_entropy(val) >= 4.0) {
+                    finding.has_secret = true;
+                    finding.line_number = static_cast<int>(i + 1);
+                    finding.reason = "High-entropy Secret Token";
+                    finding.matched_snippet = val.substr(0, std::min(val.size(), (size_t)8)) + "..." + (val.size() > 4 ? val.substr(val.size() - 4) : "");
+                    return finding;
+                }
             }
 
-            if (clean.size() >= 32 && calculate_entropy(clean) >= 4.5) {
-                // High entropy secret detected!
-                finding.has_secret = true;
-                finding.line_number = static_cast<int>(i + 1);
-                finding.reason = "High-entropy Secret Token";
-                finding.matched_snippet = clean.substr(0, 8) + "..." + clean.substr(clean.size() - 4);
-                return finding;
+            // High entropy token check on individual words
+            auto words = core::Utils::split(line, ' ');
+            for (const auto& word : words) {
+                std::string clean = core::Utils::trim(word);
+                while (!clean.empty() && (clean.front() == '"' || clean.front() == '\'' || clean.front() == '=' || clean.front() == ':')) {
+                    clean = clean.substr(1);
+                }
+                while (!clean.empty() && (clean.back() == '"' || clean.back() == '\'' || clean.back() == ';' || clean.back() == ',')) {
+                    clean.pop_back();
+                }
+
+                if (clean.size() >= 32 && calculate_entropy(clean) >= 4.5) {
+                    // High entropy secret detected!
+                    finding.has_secret = true;
+                    finding.line_number = static_cast<int>(i + 1);
+                    finding.reason = "High-entropy Secret Token";
+                    finding.matched_snippet = clean.substr(0, 8) + "..." + clean.substr(clean.size() - 4);
+                    return finding;
+                }
             }
         }
     }
@@ -398,19 +413,34 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     return h_finding;
 }
 
-ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_view content, bool deep) const {
+ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_view content, bool deep, core::FilterLevel level) const {
+    if (level == core::FilterLevel::LEVEL_1_RULES) {
+        // Mức 1: Rules & Gitignore only. Hoàn toàn không quét nội dung!
+        ScanFinding safe;
+        safe.has_secret = false;
+        return safe;
+    }
     if (!is_scannable_file(file_path)) {
         ScanFinding safe;
         safe.has_secret = false;
         return safe;
     }
+    if (level == core::FilterLevel::LEVEL_2_REGEX) {
+        // Mức 2: Regex Secret Guard (Tắt tính entropy)
+        return scan_heuristic(file_path, content, deep, false);
+    }
+    if (level == core::FilterLevel::LEVEL_3_ENTROPY) {
+        // Mức 3: Shannon Entropy trên file văn bản/mã nguồn
+        return scan_heuristic(file_path, content, deep, true);
+    }
+    // Mức 4: AI Model Scan
     if (provider_ == ProviderType::LOCAL_OLLAMA) {
         return scan_ollama(file_path, content);
     }
     if (provider_ == ProviderType::CLOUD_API) {
         return scan_cloud(file_path, content);
     }
-    return scan_heuristic(file_path, content, deep);
+    return scan_heuristic(file_path, content, deep, true);
 }
 
 } // namespace slug::ai

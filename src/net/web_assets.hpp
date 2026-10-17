@@ -96,7 +96,7 @@ public:
         const std::string& identity,
         core::Role role)
     {
-        auto manifest = sync::ManifestBuilder::build(workspace_root, 1, static_cast<uint8_t>(suite_id), false);
+        auto manifest = sync::ManifestBuilder::build(workspace_root, 1, static_cast<uint8_t>(suite_id), false, core::FilterMode::PROTECTED, core::FilterLevel::LEVEL_3_ENTROPY, core::AiModelProvider::OLLAMA);
         return render_directory_listing(workspace_root, port, suite_id, rel_subpath, identity, role, manifest);
     }
 
@@ -945,8 +945,8 @@ public:
           << "  return '<span class=\"badge badge-excluded\">' + type + '</span>';"
           << "}"
           << "function renderSessionStatus(s) {"
-          << "  if (s.is_revoked) return '<span class=\"badge badge-quarantined\" style=\"background:var(--danger-bg); color:var(--danger);\">REVOKED (Đã hủy)</span>';"
-          << "  if (s.is_expired) return '<span class=\"badge\" style=\"background:#f6f8fa; color:var(--text-muted); border:1px solid var(--border-primary);\">EXPIRED (Đã chết)</span>';"
+          << "  if (s.is_revoked || s.status === 'REVOKED') return '<span class=\"badge badge-quarantined\" style=\"background:var(--danger-bg); color:var(--danger);\">REVOKED (Đã hủy)</span>';"
+          << "  if (s.is_expired || s.status === 'EXPIRED' || (s.expires_at > 0 && s.remaining_sec <= 0)) return '<span class=\"badge\" style=\"background:#ffebe9; color:#cf222e; border:1px solid rgba(207,34,46,0.3);\">EXPIRED (Đã hết hạn)</span>';"
           << "  if (s.expires_at === 0) return '<span class=\"badge badge-available\">ACTIVE (Permanent ∞)</span>';"
           << "  return '<span class=\"badge badge-available\">ACTIVE (Còn sống: ' + formatSec(s.remaining_sec, s.expires_at) + ')</span>';"
           << "}"
@@ -1078,6 +1078,72 @@ public:
           << "           + '<td><button class=\"btn-danger btn-sm\" onclick=\"deleteRule(\\'' + escAttr(r.id) + '\\')\">Delete</button></td></tr>';"
           << "    });"
           << "    tbody.innerHTML = html;"
+          << "  });"
+          << "  reloadRawRules();"
+          << "}"
+          << "function reloadRawRules() {"
+          << "  fetch('/api/admin/rules/raw').then(r => r.json()).then(data => {"
+          << "    const ta = document.getElementById('raw-rules-ta');"
+          << "    if (ta) ta.value = data.content || '';"
+          << "    updatePresetHighlights();"
+          << "  }).catch(e => {});"
+          << "}"
+          << "function toggleRulesRawEditor() {"
+          << "  const c = document.getElementById('rules-raw-container');"
+          << "  if (!c) return;"
+          << "  const isShown = c.style.display !== 'none';"
+          << "  c.style.display = isShown ? 'none' : 'block';"
+          << "  if (!isShown) reloadRawRules();"
+          << "}"
+          << "function saveRawRules() {"
+          << "  const ta = document.getElementById('raw-rules-ta');"
+          << "  if (!ta) return;"
+          << "  fetch('/api/admin/rules/raw', {"
+          << "    method: 'POST',"
+          << "    headers: { 'Content-Type': 'application/json' },"
+          << "    body: JSON.stringify({ content: ta.value })"
+          << "  }).then(r => r.json()).then(res => {"
+          << "    if (res.status === 'ok') {"
+          << "      alert('Đã lưu & áp dụng quy tắc thành công!');"
+          << "      reloadRules();"
+          << "      reloadAudit();"
+          << "    } else { alert(res.message || 'Lỗi lưu quy tắc'); }"
+          << "  }).catch(e => alert('Network error'));"
+          << "}"
+          << "function togglePresetRuleDirect(pattern) {"
+          << "  fetch('/api/admin/rules/raw').then(r => r.json()).then(data => {"
+          << "    let lines = (data.content || '').split('\\n');"
+          << "    let found = false;"
+          << "    let newLines = [];"
+          << "    for (let l of lines) {"
+          << "      let trimmed = l.trim();"
+          << "      if (trimmed.endsWith(pattern) || trimmed.includes(pattern)) { found = true; }"
+          << "      else { newLines.push(l); }"
+          << "    }"
+          << "    if (!found) { newLines.push('BLOCK path ' + pattern); }"
+          << "    return fetch('/api/admin/rules/raw', {"
+          << "      method: 'POST',"
+          << "      headers: { 'Content-Type': 'application/json' },"
+          << "      body: JSON.stringify({ content: newLines.join('\\n') })"
+          << "    });"
+          << "  }).then(r => r.json()).then(res => {"
+          << "    reloadRules();"
+          << "    reloadAudit();"
+          << "  }).catch(e => {});"
+          << "}"
+          << "function updatePresetHighlights() {"
+          << "  const ta = document.getElementById('raw-rules-ta');"
+          << "  const txt = ta ? ta.value : '';"
+          << "  const presets = ['node_modules/', 'target/', 'build/', 'dist/', '.git/', '*.tmp', '*.log', '*.iso', '*.zip', 'venv/', '__pycache__/', '.env*'];"
+          << "  presets.forEach(p => {"
+          << "    const btn = document.getElementById('preset-chip-' + p.replace(/[^a-zA-Z0-9]/g, '_'));"
+          << "    if (btn) {"
+          << "      const active = txt.includes(p);"
+          << "      btn.style.background = active ? '#ddf4ff' : '#f6f8fa';"
+          << "      btn.style.borderColor = active ? '#54aeff' : 'var(--border-primary)';"
+          << "      btn.style.color = active ? '#0969da' : 'var(--text-main)';"
+          << "      btn.style.fontWeight = active ? 'bold' : 'normal';"
+          << "    }"
           << "  });"
           << "}"
           << "function openAddRuleModal() { document.getElementById('modal-add-rule').style.display = 'flex'; }"
@@ -1305,7 +1371,37 @@ public:
           << "</div></div>"
 
           << "<div class='grid'>"
-          << "<div class='card'><h3><span>Security Filter Rules</span><button class='btn btn-sm' onclick='openAddRuleModal()'>+ Add Rule</button></h3>"
+          << "<div class='card'><h3><span>Security Filter Rules &amp; Whitelist/Blacklist</span>"
+          << "<span style='display:flex; gap:6px;'>"
+          << "<button class='btn-sec btn-sm' onclick='toggleRulesRawEditor()'>Xem / Sửa rules.conf</button>"
+          << "<button class='btn btn-sm' onclick='openAddRuleModal()'>+ Add Rule</button>"
+          << "</span></h3>"
+          << "<div style='margin-bottom:10px; font-size:11px;'>"
+          << "<div style='color:var(--text-muted); font-size:10px; font-weight:bold; margin-bottom:4px; text-transform:uppercase;'>Mẫu quy tắc nhanh (Click để bật/tắt):</div>"
+          << "<div style='display:flex; flex-wrap:wrap; gap:4px;'>"
+          << "<button type='button' id='preset-chip-node_modules_' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"node_modules/\")' style='font-size:10px; padding:2px 6px;'>node_modules/</button>"
+          << "<button type='button' id='preset-chip-target_' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"target/\")' style='font-size:10px; padding:2px 6px;'>target/</button>"
+          << "<button type='button' id='preset-chip-build_' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"build/\")' style='font-size:10px; padding:2px 6px;'>build/</button>"
+          << "<button type='button' id='preset-chip-dist_' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"dist/\")' style='font-size:10px; padding:2px 6px;'>dist/</button>"
+          << "<button type='button' id='preset-chip-_git_' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\".git/\")' style='font-size:10px; padding:2px 6px;'>.git/</button>"
+          << "<button type='button' id='preset-chip___tmp' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"*.tmp\")' style='font-size:10px; padding:2px 6px;'>*.tmp</button>"
+          << "<button type='button' id='preset-chip___log' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"*.log\")' style='font-size:10px; padding:2px 6px;'>*.log</button>"
+          << "<button type='button' id='preset-chip___iso' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"*.iso\")' style='font-size:10px; padding:2px 6px;'>*.iso</button>"
+          << "<button type='button' id='preset-chip___zip' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"*.zip\")' style='font-size:10px; padding:2px 6px;'>*.zip</button>"
+          << "<button type='button' id='preset-chip-venv_' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"venv/\")' style='font-size:10px; padding:2px 6px;'>venv/</button>"
+          << "<button type='button' id='preset-chip___pycache__' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\"__pycache__/\")' style='font-size:10px; padding:2px 6px;'>__pycache__/</button>"
+          << "<button type='button' id='preset-chip-_env_' class='btn-sec btn-sm' onclick='togglePresetRuleDirect(\".env*\")' style='font-size:10px; padding:2px 6px;'>.env*</button>"
+          << "</div></div>"
+          << "<div id='rules-raw-container' style='display:none; margin:10px 0; padding:10px; background:#f6f8fa; border:1px solid var(--border-primary); border-radius:var(--radius-sharp);'>"
+          << "<div style='font-size:11px; color:var(--text-muted); margin-bottom:4px; display:flex; justify-content:space-between;'>"
+          << "<span>Tệp cấu hình: <code>.slug/rules.conf</code> (Cú pháp: <code>ALLOW path &lt;duong_dan&gt;</code> hoặc <code>BLOCK ext .tmp</code>)</span>"
+          << "</div>"
+          << "<textarea id='raw-rules-ta' style='width:100%; height:120px; font-family:\"JetBrains Mono\", monospace; font-size:11px; padding:6px; border:1px solid var(--border-primary); border-radius:var(--radius-sharp); box-sizing:border-box;'></textarea>"
+          << "<div style='margin-top:6px; display:flex; gap:6px;'>"
+          << "<button type='button' class='btn btn-sm' onclick='saveRawRules()'>Lưu &amp; Áp Dụng Quy Tắc</button>"
+          << "<button type='button' class='btn-sec btn-sm' onclick='reloadRawRules()'>Tải Lại</button>"
+          << "</div></div>"
+          << "<div class='table-scroll-container' style='max-height:220px;'>"
           << "<table><thead><tr><th>ID</th><th>Action</th><th>Type</th><th>Pattern</th><th>Action</th></tr></thead><tbody id='rules-tbody'>";
 
         for (const auto& r : rules) {
@@ -1321,9 +1417,9 @@ public:
               << "<td><button class='btn-danger btn-sm' onclick=\"deleteRule('" << js_escape(r.id) << "')\">Delete</button></td></tr>";
         }
         if (rules.empty()) {
-            h << "<tr><td colspan='5' style='color:var(--text-muted);'>No custom rules configured</td></tr>";
+            h << "<tr><td colspan='5' style='color:var(--text-muted); text-align:center; padding:12px;'>No custom rules configured</td></tr>";
         }
-        h << "</tbody></table></div>"
+        h << "</tbody></table></div></div>"
 
           << "<div class='card'><h3><span>Flagged &amp; Quarantined Files <span id='audit-badge' class='badge badge-quarantined' style='margin-left:4px;'>" << audit_entries.size() << "</span></span>"
           << "<span style='display:flex; align-items:center; gap:6px;'>"
@@ -3210,90 +3306,8 @@ function stopHost(id) {
   }
 }
 
-function openAddUserModal(hostId) {
-  currentUserModalHostId = hostId || (hostedWorkspaces[0] ? hostedWorkspaces[0].id : null);
-  document.getElementById('user-modal-title').textContent = 'Tạo Tài Khoản Mới Cho Workspace';
-  document.getElementById('modal-username').value = '';
-  document.getElementById('modal-username').disabled = false;
-  document.getElementById('modal-password').value = '';
-  document.getElementById('modal-role').value = 'rw';
-  document.getElementById('modal-ttl').value = '86400';
-  document.getElementById('user-modal').style.display = 'flex';
-}
-
-function openEditUserModal(hostId, username) {
-  currentUserModalHostId = hostId;
-  const host = hostedWorkspaces.find(w => w.id === hostId);
-  const u = (host && host.users) ? host.users.find(x => x.username === username) : null;
-  if (!u) return;
-  document.getElementById('user-modal-title').textContent = `Chỉnh Sửa Tài Khoản: ${username}`;
-  document.getElementById('modal-username').value = u.username;
-  document.getElementById('modal-username').disabled = true;
-  document.getElementById('modal-password').value = '';
-  document.getElementById('modal-role').value = u.role || 'rw';
-  document.getElementById('modal-ttl').value = u.ttl > 0 ? u.ttl.toString() : '0';
-  document.getElementById('user-modal').style.display = 'flex';
-}
-
-function closeUserModal() {
-  document.getElementById('user-modal').style.display = 'none';
-}
-
-function saveUserModal(e) {
-  e.preventDefault();
-  const uname = document.getElementById('modal-username').value.trim();
-  const role = document.getElementById('modal-role').value;
-  const ttlSec = parseInt(document.getElementById('modal-ttl').value) || 0;
-  const isEdit = document.getElementById('modal-username').disabled;
-
-  const roleNames = { 'rw': '[RW] Toàn Quyền (Đọc & Ghi)', 'r': '[R] Chỉ Đọc (Tải Về)', 'w': '[W] GỬI LÊN (Chỉ Cho Tải Lên)' };
-  let statusStr = ttlSec > 0 ? `Còn ${Math.round(ttlSec / 3600)}h` : 'Permanent (∞)';
-
-  const host = hostedWorkspaces.find(w => w.id === currentUserModalHostId) || hostedWorkspaces[0];
-  if (host) {
-    if (!host.users) host.users = [];
-    if (isEdit) {
-      const existing = host.users.find(x => x.username === uname);
-      if (existing) {
-        existing.role = role;
-        existing.roleName = roleNames[role];
-        existing.ttl = ttlSec;
-        existing.status = statusStr;
-      }
-      showToast(`Đã cập nhật tài khoản ${uname}!`);
-    } else {
-      host.users.unshift({
-        username: uname, role: role, roleName: roleNames[role], ttl: ttlSec, status: statusStr,
-        createdAt: 'Vừa tạo', revoked: false
-      });
-      showToast(`Đã tạo tài khoản ${uname} cho workspace!`);
-    }
-  }
-  closeUserModal();
-  renderHostedWorkspaces();
-  if (currentUserModalHostId) {
-    const drawer = document.getElementById('admin-drawer-' + currentUserModalHostId);
-    if (drawer) {
-      drawer.style.display = 'block';
-      switchAdminTab(currentUserModalHostId, 'users');
-    }
-  }
-}
-
-function deleteUser(hostId, username) {
-  if (confirm(`Xóa tài khoản ${username} khỏi workspace này?`)) {
-    const host = hostedWorkspaces.find(w => w.id === hostId);
-    if (host && host.users) {
-      host.users = host.users.filter(x => x.username !== username);
-      renderHostedWorkspaces();
-      const drawer = document.getElementById('admin-drawer-' + hostId);
-      if (drawer) {
-        drawer.style.display = 'block';
-        switchAdminTab(hostId, 'users');
-      }
-      showToast(`Đã xóa tài khoản ${username}!`);
-    }
-  }
+function openWorkspaceAdmin(port) {
+  window.open('http://127.0.0.1:' + port + '/admin', '_blank');
 }
 
 // EnvShield Functions
@@ -5013,43 +5027,7 @@ window.onload = function() {
   </div>
 </div>
 
-<!-- Modal User Account Add/Edit -->
-<div class="modal-overlay" id="user-modal" onclick="if(event.target===this)closeUserModal()">
-  <div class="modal-box">
-    <h3 style="margin-top:0;" id="user-modal-title">Tạo Tài Khoản Người Dùng Mới</h3>
-    <form onsubmit="saveUserModal(event)">
-      <div class="form-group">
-        <label>Tên Đăng Nhập (Username)</label>
-        <input type="text" id="modal-username" class="input-text" placeholder="Ví dụ: bob, alice_dev" required>
-      </div>
-      <div class="form-group">
-        <label>Mật Khẩu (Password)</label>
-        <input type="password" id="modal-password" class="input-text" placeholder="Nhập mật khẩu an toàn">
-      </div>
-      <div class="form-group">
-        <label>Quyền Hạn (RBAC Role)</label>
-        <select id="modal-role" class="input-select">
-          <option value="rw">[rw] Toàn Quyền (Đọc &amp; Ghi - Đầy Đủ)</option>
-          <option value="r">[r] Chỉ Đọc (Chỉ cho tải về, không cho sửa)</option>
-          <option value="w">[w] GỬI LÊN (Chỉ cho tải lên / Upload)</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Thời Gian Sống Của Tài Khoản (TTL Expiration)</label>
-        <select id="modal-ttl" class="input-select">
-          <option value="1800">30 Phút (Ephemeral)</option>
-          <option value="7200">2 Giờ</option>
-          <option value="86400" selected>24 Giờ (1 Ngày)</option>
-          <option value="604800">7 Ngày</option>
-          <option value="0">Vô Thời Hạn (Permanent ∞)</option>
-        </select>
-      </div>
-      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
-        <button type="button" class="btn-sec btn-sm" onclick="closeUserModal()">Hủy Bỏ</button>
-        <button type="submit" class="btn btn-sm">Lưu Tài Khoản</button>
-      </div>
-    </form>
-  </div>
+</div>
 <div style="position:fixed; bottom:24px; right:24px; display:flex; flex-direction:column; gap:8px; z-index:9999;">
   <button type="button" onclick="window.scrollTo({top:0, behavior:'smooth'})" title="Lên đầu trang" style="width:38px; height:38px; border-radius:50%; background:#1f2328; color:#fff; border:1px solid #d0d7de; box-shadow:0 2px 8px rgba(0,0,0,0.15); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px;">&#9650;</button>
   <button type="button" onclick="window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'})" title="Xuống cuối trang" style="width:38px; height:38px; border-radius:50%; background:#1f2328; color:#fff; border:1px solid #d0d7de; box-shadow:0 2px 8px rgba(0,0,0,0.15); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px;">&#9660;</button>

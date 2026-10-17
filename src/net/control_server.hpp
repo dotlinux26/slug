@@ -51,7 +51,11 @@ public:
                   core::SuiteID suite_id = core::SuiteID::SUITE_1_CLASSICAL,
                   uint64_t cert_ttl = 86400,
                   bool enable_ai = false,
-                  core::FilterMode filter_mode = core::FilterMode::PROTECTED);
+                  core::FilterMode filter_mode = core::FilterMode::PROTECTED,
+                  core::FilterLevel filter_level = core::FilterLevel::LEVEL_3_ENTROPY,
+                  core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA,
+                  uint32_t totp_step = 60,
+                  uint64_t workspace_ttl = 86400);
     ~ControlServer();
 
     bool start();
@@ -66,13 +70,32 @@ public:
     bool is_running() const { return running_; }
     bool ai_enabled() const { return enable_ai_; }
     core::FilterMode filter_mode() const { return filter_mode_; }
+    core::FilterLevel filter_level() const { return filter_level_; }
+    core::AiModelProvider ai_provider() const { return ai_provider_; }
     uint64_t cert_ttl() const { return cert_ttl_; }
+    uint64_t workspace_ttl() const { return workspace_ttl_; }
+    uint64_t started_at() const { return started_at_; }
+    uint32_t totp_step() const { return totp_step_; }
+
+    bool is_workspace_expired(uint64_t now = 0) const {
+        if (workspace_ttl_ == 0) return false;
+        if (now == 0) now = core::Utils::current_timestamp();
+        return now >= (started_at_ + workspace_ttl_);
+    }
+
+    uint64_t remaining_workspace_ttl(uint64_t now = 0) const {
+        if (workspace_ttl_ == 0) return 0;
+        if (now == 0) now = core::Utils::current_timestamp();
+        uint64_t exp = started_at_ + workspace_ttl_;
+        return (now < exp) ? (exp - now) : 0;
+    }
 
     std::optional<SessionState> get_session(uint32_t session_id) const;
     std::optional<SessionState> find_session_by_ticket(const std::string& ticket) const;
     std::string create_host_admin_ticket(uint64_t ttl_sec = 14400);
     std::vector<SessionState> list_sessions() const;
     bool revoke_session(uint32_t session_id);
+    void revoke_sessions_by_identity(const std::string& identity);
     void touch_session(uint32_t session_id);
 
     core::SlugVFS& vfs() { return vfs_; }
@@ -90,6 +113,11 @@ private:
     core::SuiteID suite_id_;
     uint64_t cert_ttl_;
     bool enable_ai_;
+    core::FilterLevel filter_level_{core::FilterLevel::LEVEL_3_ENTROPY};
+    core::AiModelProvider ai_provider_{core::AiModelProvider::OLLAMA};
+    uint32_t totp_step_{60};
+    uint64_t workspace_ttl_{86400};
+    uint64_t started_at_{0};
     class WebServer* web_server_{nullptr};
 
     std::atomic<bool> running_{false};

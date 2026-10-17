@@ -391,12 +391,17 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         j["totp_r"] = control_server_.totp_manager().generate_code(core::Role::READ_ONLY);
         j["totp_w"] = control_server_.totp_manager().generate_code(core::Role::WRITE_ONLY);
         j["totp_rw"] = control_server_.totp_manager().generate_code(core::Role::READ_WRITE);
-        j["totp"] = j["totp_rw"];
         j["totp_remaining_sec"] = control_server_.totp_manager().remaining_seconds();
-        j["totp_step_sec"] = slug::crypto::TotpManager::kStepSeconds;
+        j["totp_step_sec"] = control_server_.totp_manager().step_seconds();
         j["admin_ticket"] = control_server_.create_host_admin_ticket();
         j["ai_enabled"] = control_server_.ai_enabled();
+        j["filter_mode"] = core::filter_mode_to_string(control_server_.filter_mode());
+        j["filter_level"] = core::filter_level_to_string(control_server_.filter_level());
+        j["ai_model"] = core::ai_model_to_string(control_server_.ai_provider());
         j["ttl_seconds"] = control_server_.cert_ttl();
+        j["workspace_ttl"] = control_server_.workspace_ttl();
+        j["workspace_remaining_sec"] = control_server_.remaining_workspace_ttl();
+        j["started_at"] = control_server_.started_at();
 
         json s_arr = json::array();
         uint64_t now_ts = core::Utils::current_timestamp();
@@ -805,6 +810,9 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             }
             bool ok = control_server_.acl_manager().update_user(u, p, role, ttl);
             if (ok) {
+                if (!p.empty() || role.has_value()) {
+                    control_server_.revoke_sessions_by_identity(u);
+                }
                 control_server_.audit_logger().log(current_session->identity, "USER_UPDATE", u, "Updated user settings");
                 send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"User updated successfully\"}");
             } else {
@@ -830,6 +838,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             }
             bool ok = control_server_.acl_manager().remove_user(u);
             if (ok) {
+                control_server_.revoke_sessions_by_identity(u);
                 control_server_.audit_logger().log(current_session->identity, "USER_DELETE", u, "Removed user");
                 send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"User removed successfully\"}");
             } else {
@@ -936,6 +945,49 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
         }
         return;
+    }
+
+    if (path == "/api/admin/rules/raw") {
+        if (current_session->identity != "host_admin") {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
+        if (method == "GET") {
+            auto content = platform::PathUtils::read_text_file(rules_file);
+            json resp;
+            resp["status"] = "ok";
+            resp["content"] = content ? *content : "# Slug Security Rules Configuration\n# Syntax:\n# ALLOW path apps/marknote/_internal\n# BLOCK path node_modules/\n# BLOCK ext .tmp\n";
+            send_resp(200, "OK", "application/json", resp.dump(2));
+            return;
+        } else if (method == "POST") {
+            try {
+                auto j = json::parse(req.body);
+                std::string new_content = j.value("content", "");
+                platform::PathUtils::ensure_directory(rules_file.parent_path());
+                bool ok = platform::PathUtils::write_text_file_atomic(rules_file, new_content);
+                if (ok) {
+                    policy::RulesManager mgr(rules_file);
+                    fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+                    ai::StatefulAuditIndex audit_idx(idx_file);
+                    audit_idx.load();
+                    for (const auto& r : mgr.rules()) {
+                        if (r.action == policy::RuleAction::ALLOW) {
+                            audit_idx.allow_folder(r.value, "Allowed by rule " + r.id, current_session->identity);
+                            audit_idx.allow_file(r.value, "Allowed by rule " + r.id, current_session->identity);
+                        }
+                    }
+                    control_server_.invalidate_manifest_cache();
+                    control_server_.audit_logger().log(current_session->identity, "RULES_RAW_UPDATE", ".slug/rules.conf", "Updated rules.conf content");
+                    send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"Rules updated and applied successfully\"}");
+                } else {
+                    send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Failed to save rules.conf\"}");
+                }
+            } catch (...) {
+                send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+            }
+            return;
+        }
     }
 
     if (path == "/api/admin/manual-block" && method == "POST") {

@@ -15,7 +15,7 @@ public:
     static constexpr uint32_t kStepSeconds = 60; // 60s rotation
     static constexpr size_t kCodeDigits = 8;     // 8 digits
 
-    explicit TotpManager(std::vector<uint8_t> secret_seed = {});
+    explicit TotpManager(std::vector<uint8_t> secret_seed = {}, uint32_t step_seconds = 60);
 
     // Generates current 8-digit TOTP code for a specific role (default: READ_WRITE)
     std::string generate_code(core::Role role = core::Role::READ_WRITE, uint64_t timestamp = 0) const;
@@ -29,11 +29,16 @@ public:
     // Remaining seconds before next rotation
     uint32_t remaining_seconds(uint64_t timestamp = 0) const;
 
+    // Configured OTP rotation step in seconds
+    uint32_t step_seconds() const { return step_seconds_; }
+    void set_step_seconds(uint32_t s) { if (s >= 10 && s <= 3600) step_seconds_ = s; }
+
     // Returns raw secret seed
     const std::vector<uint8_t>& secret_seed() const { return seed_; }
 
 private:
     std::vector<uint8_t> seed_;
+    uint32_t step_seconds_{60};
     mutable std::mutex mutex_;
     std::set<std::string> burned_codes_;
     uint64_t last_cleanup_step_{0};

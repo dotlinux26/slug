@@ -126,6 +126,24 @@ void StatefulAuditIndex::init_sqlite() {
 
     sqlite3_exec(db_, schema, nullptr, nullptr, nullptr);
 
+    // Auto-heal legacy false positives: immediately purge any AI/Smart-Filter flagged non-scannable files (binaries, compiled, media, .pyd, .dll)
+    const char* heal_sql =
+        "DELETE FROM audit_entries WHERE status IN (1, 2) AND ("
+        "  file_path LIKE '%.pyd' OR file_path LIKE '%.dll' OR file_path LIKE '%.exe' OR "
+        "  file_path LIKE '%.bin' OR file_path LIKE '%.pak' OR file_path LIKE '%.so' OR "
+        "  file_path LIKE '%.dylib' OR file_path LIKE '%.obj' OR file_path LIKE '%.o' OR "
+        "  file_path LIKE '%.class' OR file_path LIKE '%.pyc' OR file_path LIKE '%.dat' OR "
+        "  file_path LIKE '%.png' OR file_path LIKE '%.jpg' OR file_path LIKE '%.jpeg' OR "
+        "  file_path LIKE '%.gif' OR file_path LIKE '%.ico' OR file_path LIKE '%.webp' OR "
+        "  file_path LIKE '%.svg' OR file_path LIKE '%.mp4' OR file_path LIKE '%.mp3' OR "
+        "  file_path LIKE '%.pdf' OR file_path LIKE '%.zip' OR file_path LIKE '%.tar' OR "
+        "  file_path LIKE '%.gz' OR file_path LIKE '%.7z' OR file_path LIKE '%.iso' OR "
+        "  file_path LIKE '%.ttf' OR file_path LIKE '%.woff' OR file_path LIKE '%.woff2' OR "
+        "  file_path LIKE '%.wasm' OR file_path LIKE '%.pdb' OR file_path LIKE '%.lib' OR "
+        "  file_path LIKE '%.a' OR file_path LIKE '%.node'"
+        ");";
+    sqlite3_exec(db_, heal_sql, nullptr, nullptr, nullptr);
+
     // Import legacy entries if any existed
     if (!legacy_entries.empty()) {
         sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
@@ -247,11 +265,11 @@ bool StatefulAuditIndex::allow_folder(const std::string& folder_path, const std:
     if (!db_) return false;
 
     std::string norm = normalize_path_key(folder_path);
-    if (!norm.empty() && norm.back() != '/') norm += '/';
+    while (!norm.empty() && norm.back() == '/') norm.pop_back();
 
     const char* sql = 
         "UPDATE audit_entries SET status = ?, decision_actor = ?, decision_reason = ?, reason = ?, scanned_at = ? "
-        "WHERE file_path LIKE ? || '%';";
+        "WHERE (file_path = ? OR file_path LIKE ? || '/%');";
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
@@ -263,6 +281,7 @@ bool StatefulAuditIndex::allow_folder(const std::string& folder_path, const std:
     sqlite3_bind_text(stmt, 4, reason.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_int64(stmt, 5, static_cast<sqlite3_int64>(now));
     sqlite3_bind_text(stmt, 6, norm.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 7, norm.c_str(), -1, SQLITE_STATIC);
 
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);

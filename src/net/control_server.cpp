@@ -17,13 +17,23 @@ ControlServer::ControlServer(std::filesystem::path workspace_root,
                              core::SuiteID suite_id,
                              uint64_t cert_ttl,
                              bool enable_ai,
-                             core::FilterMode filter_mode)
+                             core::FilterMode filter_mode,
+                             core::FilterLevel filter_level,
+                             core::AiModelProvider ai_provider,
+                             uint32_t totp_step,
+                             uint64_t workspace_ttl)
     : workspace_root_(std::move(workspace_root)),
       port_(port),
       suite_id_(suite_id),
       cert_ttl_(cert_ttl),
       enable_ai_(enable_ai),
       filter_mode_(filter_mode),
+      filter_level_(filter_level),
+      ai_provider_(ai_provider),
+      totp_step_(totp_step > 0 ? totp_step : 60),
+      workspace_ttl_(workspace_ttl),
+      started_at_(core::Utils::current_timestamp()),
+      totp_manager_(std::vector<uint8_t>{}, totp_step > 0 ? totp_step : 60),
       acl_manager_(workspace_root_ / ".slug" / "acl.db"),
       audit_logger_(workspace_root_ / ".slug" / "audit.log"),
       vfs_(workspace_root_, enable_ai_, filter_mode_) {
@@ -164,6 +174,24 @@ bool ControlServer::revoke_session(uint32_t session_id) {
     audit_logger_.log("host_admin", "SESSION_REVOKED", "session_" + std::to_string(session_id),
                       "Revoked " + auth_t + " session for " + ident);
     return true;
+}
+
+void ControlServer::revoke_sessions_by_identity(const std::string& identity) {
+    if (identity.empty()) return;
+    std::vector<uint32_t> sids;
+    {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        for (auto& [id, s] : sessions_) {
+            if (s.identity == identity && !s.is_revoked) {
+                s.is_revoked = true;
+                sids.push_back(id);
+            }
+        }
+    }
+    for (auto sid : sids) {
+        audit_logger_.log("host_admin", "SESSION_REVOKED", "session_" + std::to_string(sid),
+                          "Revoked session for user " + identity);
+    }
 }
 
 void ControlServer::touch_session(uint32_t session_id) {
@@ -358,20 +386,24 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             json resp;
             if (ok) {
                 auto acc_opt = acl_manager_.get_user(u);
-                uint64_t ttl = (acc_opt && acc_opt->expires_at > 0)
-                               ? (acc_opt->expires_at - core::Utils::current_timestamp())
-                               : (acc_opt && acc_opt->expires_at == 0 ? 0 : cert_ttl_);
+                uint64_t now = core::Utils::current_timestamp();
+                uint64_t ttl = 0;
+                if (acc_opt && acc_opt->expires_at > 0) {
+                    uint64_t rem = (acc_opt->expires_at > now) ? (acc_opt->expires_at - now) : 0;
+                    ttl = (cert_ttl_ > 0) ? std::min(cert_ttl_, rem) : rem;
+                } else {
+                    ttl = cert_ttl_;
+                }
 
                 uint32_t sid = 0;
                 std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
-                uint64_t now = core::Utils::current_timestamp();
                 {
                     std::lock_guard<std::mutex> lock(session_mutex_);
                     sid = next_session_id_++;
                     SessionState ss;
                     ss.session_id = sid;
                     ss.role = acc_opt ? acc_opt->role : core::Role::READ_ONLY;
-                    ss.expires_at = (acc_opt && acc_opt->expires_at == 0) ? 0 : (now + ttl);
+                    ss.expires_at = (ttl == 0) ? 0 : (now + ttl);
                     ss.identity = u;
                     ss.web_ticket = ticket;
                     ss.auth_type = "Account";
@@ -570,7 +602,7 @@ sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
         return *cached_manifest_;
     }
 
-    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_);
+    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_, filter_level_, ai_provider_);
     cached_manifest_ = manifest;
     cached_manifest_json_ = manifest.to_json();
     manifest_cached_at_ = now;
@@ -581,11 +613,11 @@ sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
 std::string ControlServer::get_or_build_manifest_json() {
     std::lock_guard<std::mutex> lock(manifest_mutex_);
     uint64_t now = core::Utils::current_timestamp();
-    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 300)) {
+    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 5)) {
         return cached_manifest_json_;
     }
 
-    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_);
+    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_, filter_level_, ai_provider_);
     cached_manifest_ = manifest;
     cached_manifest_json_ = manifest.to_json();
     manifest_cached_at_ = now;

@@ -133,7 +133,9 @@ WorkspaceManifest ManifestBuilder::build(
     uint64_t epoch,
     uint8_t suite_id,
     bool enable_ai,
-    core::FilterMode filter_mode) {
+    core::FilterMode filter_mode,
+    core::FilterLevel filter_level,
+    core::AiModelProvider ai_provider) {
 
     WorkspaceManifest manifest;
     manifest.epoch = epoch;
@@ -145,7 +147,7 @@ WorkspaceManifest ManifestBuilder::build(
 
     policy::PolicyEngine policy_engine(workspace_root, rules_file);
     ai::StatefulAuditIndex audit_index(index_file);
-    ai::AiScanner scanner;
+    ai::AiScanner scanner = ai::AiScanner::create_for_level(filter_level, ai_provider);
 
     std::error_code ec;
     for (auto it = fs::recursive_directory_iterator(workspace_root, fs::directory_options::skip_permission_denied, ec), end = fs::recursive_directory_iterator();
@@ -159,13 +161,8 @@ WorkspaceManifest ManifestBuilder::build(
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
         if (it->is_directory(ec)) {
-            if (lower == ".git" || lower == ".slug" || lower == "node_modules" ||
-                lower == "_internal" || lower == "venv" || lower == ".venv" || lower == "env" ||
-                lower == "__pycache__" || lower == "site-packages" || lower == "vendor" ||
-                lower == "build" || lower == "build_win" || lower == "target" || lower == "dist" ||
-                lower == "out" || lower == "bin" || lower == "obj" ||
-                lower == ".idea" || lower == ".vscode" ||
-                platform::PathUtils::is_internal_slug_path(rel)) {
+            // Strictly exclude only internal slug & git metadata from recursion
+            if (lower == ".git" || lower == ".slug" || platform::PathUtils::is_internal_slug_path(rel)) {
                 it.disable_recursion_pending();
             }
             continue;
@@ -231,7 +228,7 @@ WorkspaceManifest ManifestBuilder::build(
             if (audit_index.is_flagged(proto_path)) {
                 audit_index.allow_file(proto_path, "Explicitly allowed by rule", "rule");
             }
-        } else if (enable_ai && filter_mode != core::FilterMode::NONE) {
+        } else if (filter_level != core::FilterLevel::LEVEL_1_RULES && filter_mode != core::FilterMode::NONE) {
             core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
 
             // Automatically heal false positives on non-scannable files (binaries, .pyd, images, etc.)
@@ -270,7 +267,7 @@ WorkspaceManifest ManifestBuilder::build(
                 }
                 if (file_data && ai::AiScanner::is_scannable_file(entry.path())) {
                     std::string text(file_data->begin(), file_data->end());
-                    auto finding = scanner.scan_content(proto_path, text, false);
+                    auto finding = scanner.scan_content(proto_path, text, false, filter_level);
 
                     ai::AuditIndexEntry idx_entry;
                     idx_entry.file_path = proto_path;

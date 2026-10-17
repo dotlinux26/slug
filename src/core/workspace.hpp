@@ -18,7 +18,12 @@ struct WorkspaceInfo {
     SuiteID suite{SuiteID::SUITE_2_MODERN};
     bool ai_enabled{false};
     FilterMode filter_mode{FilterMode::PROTECTED};
-    uint64_t ttl_seconds{86400};
+    FilterLevel filter_level{FilterLevel::LEVEL_3_ENTROPY};
+    AiModelProvider ai_provider{AiModelProvider::OLLAMA};
+    uint64_t ttl_seconds{86400}; // Client Cert TTL
+    uint64_t workspace_ttl{86400}; // Workspace Lifetime (0 = Permanent)
+    uint64_t started_at{0};
+    uint32_t otp_step{60};
     uint32_t pid{0};
     std::string totp_code;
     uint32_t totp_remaining{0};
@@ -35,13 +40,20 @@ public:
                        uint64_t ttl_seconds = 86400,
                        bool enable_ai = false,
                        FilterMode filter_mode = FilterMode::PROTECTED,
-                       uint16_t* actual_port = nullptr);
+                       uint16_t* actual_port = nullptr,
+                       FilterLevel filter_level = FilterLevel::LEVEL_3_ENTROPY,
+                       AiModelProvider ai_provider = AiModelProvider::OLLAMA,
+                       uint32_t otp_step = 60,
+                       uint64_t workspace_ttl = 86400);
 
     // Automatically finds the next available, free TCP port starting from starting_port
     uint16_t find_available_port(uint16_t starting_port = 9443);
 
     // Stops a workspace on a given port
     bool stop_workspace(uint16_t port);
+
+    // Reaps/stops workspaces whose lifetime has expired
+    void check_expired_workspaces();
 
     // Lists active workspaces
     std::vector<WorkspaceInfo> list_active_workspaces();

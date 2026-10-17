@@ -8,8 +8,8 @@
 
 namespace slug::crypto {
 
-TotpManager::TotpManager(std::vector<uint8_t> secret_seed)
-    : seed_(std::move(secret_seed)) {
+TotpManager::TotpManager(std::vector<uint8_t> secret_seed, uint32_t step_seconds)
+    : seed_(std::move(secret_seed)), step_seconds_(step_seconds > 0 ? step_seconds : 60) {
     if (seed_.empty()) {
         seed_ = core::Utils::random_bytes(32);
     }
@@ -60,20 +60,23 @@ std::string TotpManager::compute_code_for_step(uint64_t step, core::Role role) c
 
 std::string TotpManager::generate_code(core::Role role, uint64_t timestamp) const {
     if (timestamp == 0) timestamp = core::Utils::current_timestamp();
-    uint64_t step = timestamp / kStepSeconds;
+    uint32_t step_sec = (step_seconds_ > 0) ? step_seconds_ : 60;
+    uint64_t step = timestamp / step_sec;
     return compute_code_for_step(step, role);
 }
 
 uint32_t TotpManager::remaining_seconds(uint64_t timestamp) const {
     if (timestamp == 0) timestamp = core::Utils::current_timestamp();
-    return kStepSeconds - static_cast<uint32_t>(timestamp % kStepSeconds);
+    uint32_t step_sec = (step_seconds_ > 0) ? step_seconds_ : 60;
+    return step_sec - static_cast<uint32_t>(timestamp % step_sec);
 }
 
 std::optional<core::Role> TotpManager::verify_and_burn_role(const std::string& code, uint64_t timestamp) {
     if (code.size() != 8) return std::nullopt;
     if (timestamp == 0) timestamp = core::Utils::current_timestamp();
 
-    uint64_t cur_step = timestamp / kStepSeconds;
+    uint32_t step_sec = (step_seconds_ > 0) ? step_seconds_ : 60;
+    uint64_t cur_step = timestamp / step_sec;
 
     std::lock_guard<std::mutex> lock(mutex_);
 
