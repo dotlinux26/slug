@@ -1088,17 +1088,36 @@ function executeRealPull() {{
   }}
   if (out) {{
     out.style.display = 'block';
-    out.innerHTML = `<div style="padding:12px; background:#dafbe1; border:1px solid rgba(26,127,55,0.4); border-radius: 2px; font-size:11px; font-family:'JetBrains Mono', monospace; color:var(--success); line-height:1.6;">
-      <div style="font-weight:700; margin-bottom:4px; font-size:12px;">{SVG_ICONS['check']} Khởi tạo tải dữ liệu qua kênh an toàn...</div>
-      <div>Gói nén thư mục (.zip) đang được tạo và bắt đầu tải xuống máy của bạn!</div>
-      <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(26,127,55,0.3); color:#1f2328;">
-        <strong>Lưu ý:</strong> Do cơ chế bảo mật sandbox của trình duyệt web, bạn giải nén file tải về vào thư mục đích <code>` + dest + `</code>.<br>
-        Để đồng bộ trực tiếp từng tệp tự động ghi vào thư mục máy tính, bạn dùng lệnh CLI:<br>
-        <code style="background:#f6f8fa; padding:2px 6px; border:1px solid #d0d7de; border-radius:2px; display:inline-block; margin-top:4px;">slug pull &lt;station_id&gt; --dest "` + dest + `"</code>
-      </div>
+    out.innerHTML = `<div style="background:#1f2328; color:#e6edf3; font-family:'JetBrains Mono', monospace; font-size:11px; line-height:1.6; padding:12px; border-radius:2px; border:1px solid #30363d; margin-top:8px;">
+      <span style="color:#54aeff;">[SLUG SYNC] Đang khởi tạo đồng bộ dữ liệu vào: ` + dest + `...</span>
     </div>`;
   }}
-  downloadZip();
+  fetch('/api/pull/execute', {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{ dest: dest, dir: currentDir }})
+  }})
+  .then(r => r.json())
+  .then(res => {{
+    if (res.status === 'ok') {{
+      const bStr = (res.bytes > 1048576) ? (res.bytes/1048576).toFixed(2) + ' MiB' : (res.bytes/1024).toFixed(1) + ' KiB';
+      if (out) {{
+        out.innerHTML = `<div style="padding:14px; background:#dafbe1; border:1px solid rgba(26,127,55,0.4); border-radius:2px; font-size:12px; font-family:'JetBrains Mono', monospace; color:var(--success); line-height:1.6;">
+          <div style="font-weight:700; margin-bottom:6px; font-size:13px;">✅ ĐỒNG BỘ THÀNH CÔNG ` + res.copied + ` TỆP (` + bStr + `)!</div>
+          <div>Toàn bộ tệp đã được ghi trực tiếp vào thư mục: <code>` + (res.dest || dest) + `</code></div>
+          <div style="margin-top:10px; display:flex; gap:8px;">
+            <button type="button" class="btn btn-sm" onclick="fetch('/api/fs/open-folder',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{path:'` + (res.dest || dest).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + `'}})}})">Mở Thư Mục Trong Explorer</button>
+            <button type="button" class="btn-sec btn-sm" onclick="downloadZip()">Tải Bản Nén ZIP Dự Phòng</button>
+          </div>
+        </div>`;
+      }}
+    }} else {{
+      downloadZip();
+    }}
+  }})
+  .catch(() => {{
+    downloadZip();
+  }});
 }}
 
 function triggerManualUpload() {{
@@ -1713,6 +1732,45 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 "bandwidth_saved_pct": 100.0
             }).encode("utf-8"))
             return
+
+        if path == "/api/pull/execute":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except Exception:
+                data = {}
+            dest = data.get("dest", "")
+            if not dest:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": "Missing dest"}).encode("utf-8"))
+                return
+            os.makedirs(dest, exist_ok=True)
+            copied = 0
+            total_bytes = 0
+            stats, clean_files, _, _ = scan_workspace_real(BASE_DIR)
+            import shutil
+            for f in clean_files:
+                src_p = os.path.join(BASE_DIR, f["name"])
+                dst_p = os.path.join(dest, f["name"])
+                if os.path.isfile(src_p):
+                    os.makedirs(os.path.dirname(dst_p), exist_ok=True)
+                    shutil.copy2(src_p, dst_p)
+                    copied += 1
+                    total_bytes += os.path.getsize(src_p)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "copied": copied,
+                "bytes": total_bytes,
+                "dest": os.path.abspath(dest)
+            }).encode("utf-8"))
+            return
+
         if path == "/api/env/list":
             entries = get_env_vault_list()
             self.send_response(200)

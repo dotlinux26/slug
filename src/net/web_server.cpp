@@ -4,6 +4,7 @@
 #include "src/platform/native_dialog.hpp"
 #include "src/core/utils.hpp"
 #include "src/sync/manifest.hpp"
+#include "src/sync/delta.hpp"
 #include "src/bench/benchmark.hpp"
 #include "src/ai/scanner.hpp"
 #include "src/ai/stateful_audit.hpp"
@@ -1201,6 +1202,115 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         std::string body(reinterpret_cast<const char*>(zip_bytes.data()), zip_bytes.size());
         send_resp(200, "OK", "application/zip", body, extra);
         return;
+    }
+
+    if (path == "/api/pull/dry-run") {
+        json res;
+        res["status"] = "ok";
+        auto manifest = control_server_.manifest();
+        std::string dest_str = get_query_param(req.query, "dest");
+        res["workspace"] = control_server_.workspace_root().filename().string();
+        std::error_code ec;
+        if (!dest_str.empty() && fs::exists(dest_str, ec)) {
+            sync::DeltaSyncOptions options;
+            auto plan = sync::DeltaCalculator::compute_plan(manifest, dest_str, options);
+            uint64_t total_bytes = plan.bytes_to_transfer + plan.bytes_saved;
+            double saved_pct = (total_bytes > 0) ? (static_cast<double>(plan.bytes_saved) * 100.0 / static_cast<double>(total_bytes)) : 100.0;
+            res["new_files"] = plan.count_new + plan.count_modified;
+            res["new_bytes"] = plan.bytes_to_transfer;
+            res["cached_files"] = plan.count_unchanged;
+            res["cached_bytes"] = plan.bytes_saved;
+            res["bandwidth_saved_pct"] = saved_pct;
+        } else {
+            uint64_t total_bytes = 0;
+            for (const auto& f : manifest.files) total_bytes += f.size;
+            res["new_files"] = manifest.files.size();
+            res["new_bytes"] = total_bytes;
+            res["cached_files"] = 0;
+            res["cached_bytes"] = 0;
+            res["bandwidth_saved_pct"] = 0.0;
+        }
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/pull/execute" && method == "POST") {
+        json res;
+        try {
+            auto j = json::parse(req.body);
+            std::string dest = j.value("dest", "");
+            std::string rel_dir = j.value("dir", "");
+            if (dest.empty()) {
+                res["status"] = "error";
+                res["message"] = "Vui lòng chỉ định thư mục đích (dest)";
+                send_resp(400, "Bad Request", "application/json", res.dump());
+                return;
+            }
+            if (!is_localhost) {
+                res["status"] = "remote";
+                res["message"] = "Remote client: download zip archive instead";
+                send_resp(200, "OK", "application/json", res.dump());
+                return;
+            }
+            fs::path target_dir(dest);
+            std::error_code ec;
+            fs::create_directories(target_dir, ec);
+            if (ec) {
+                res["status"] = "error";
+                res["message"] = "Không thể tạo thư mục đích: " + ec.message();
+                send_resp(500, "Internal Server Error", "application/json", res.dump());
+                return;
+            }
+
+            std::string manifest_str = control_server_.get_or_build_manifest_json();
+            auto m_opt = sync::WorkspaceManifest::from_json(manifest_str);
+            if (!m_opt) {
+                res["status"] = "error";
+                res["message"] = "Không thể đọc manifest của workspace";
+                send_resp(500, "Internal Server Error", "application/json", res.dump());
+                return;
+            }
+
+            std::string norm_dir = rel_dir;
+            std::replace(norm_dir.begin(), norm_dir.end(), '\\', '/');
+            while (!norm_dir.empty() && norm_dir.front() == '/') norm_dir.erase(0, 1);
+            while (!norm_dir.empty() && norm_dir.back() == '/') norm_dir.pop_back();
+
+            std::string prefix = norm_dir.empty() ? "" : (norm_dir + "/");
+            size_t copied = 0;
+            uint64_t bytes = 0;
+
+            for (const auto& f : m_opt->files) {
+                if (prefix.empty() || f.relative_path.rfind(prefix, 0) == 0 || f.relative_path == norm_dir) {
+                    auto [vfs_st, file_data] = control_server_.vfs().read_file(f.relative_path, current_session ? current_session->role : core::Role::READ_WRITE);
+                    if (vfs_st == core::VfsStatus::OK) {
+                        std::string rel_out = f.relative_path;
+                        if (!prefix.empty() && rel_out.rfind(prefix, 0) == 0) {
+                            rel_out = rel_out.substr(prefix.size());
+                        }
+                        fs::path out_file = target_dir / rel_out;
+                        fs::create_directories(out_file.parent_path(), ec);
+                        std::ofstream ofs(out_file, std::ios::binary);
+                        if (ofs) {
+                            ofs.write(reinterpret_cast<const char*>(file_data.data()), file_data.size());
+                            copied++;
+                            bytes += file_data.size();
+                        }
+                    }
+                }
+            }
+            res["status"] = "ok";
+            res["copied"] = copied;
+            res["bytes"] = bytes;
+            res["dest"] = target_dir.string();
+            send_resp(200, "OK", "application/json", res.dump());
+            return;
+        } catch (const std::exception& e) {
+            res["status"] = "error";
+            res["message"] = std::string("Lỗi: ") + e.what();
+            send_resp(500, "Internal Server Error", "application/json", res.dump());
+            return;
+        }
     }
 
     if (path == "/api/upload") {

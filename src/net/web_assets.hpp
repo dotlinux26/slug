@@ -580,7 +580,7 @@ public:
           << "<button class='btn' onclick='downloadSelected(); closePreviewModal();'>Download Selected</button>"
           << "</div></div></div>";
 
-        // BOTTOM PANEL: Chỉ còn mỗi cái này ở dưới thôi - slug pull (Full Width)
+        // BOTTOM PANEL: slug pull (Full Width, Matching Host Form Exactly)
         h << "<div id='pull-sync-card' style='background:#ffffff; border:1px solid var(--border-primary); border-radius:2px; padding:18px; margin-top:20px; width:100%;'>"
           << "<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;'>"
           << "<h3 style='margin:0; font-size:14px; display:flex; align-items:center; gap:8px; font-family:\"JetBrains Mono\", monospace;'>"
@@ -588,34 +588,36 @@ public:
           << "<span>Đồng Bộ Dữ Liệu Về Máy Của Bạn (slug pull)</span></h3>"
           << "<span class='badge badge-pqc'>Mức 2: Modern Hybrid (ML-KEM-768)</span>"
           << "</div>"
-          << "<div style='margin-bottom:10px;'>"
-          << "<label style='display:block; font-size:11px; font-weight:600; margin-bottom:4px; font-family:\"JetBrains Mono\", monospace;'>Thư Mục Lưu Trên Máy Của Bạn (Local Destination Directory) <span style='color:var(--danger); font-weight:bold;'>* Bắt buộc</span></label>"
-          << "<div style='display:flex; gap:8px;'>"
-          << "<input type='text' id='pull-dest' style='flex:1; height:34px; padding:0 10px; border:1px solid var(--border-primary); border-radius:2px; font-family:\"JetBrains Mono\", monospace; font-size:12px;' value='' required placeholder='Bắt buộc: Bấm [Chọn...] hoặc nhập đường dẫn...'>"
-          << "<input type='file' id='dir-picker-pull-dest' webkitdirectory directory style='display:none;' onchange='handleDirInputSelectedDirect(this, \"pull-dest\")'>"
-          << "<button type='button' class='btn-sec btn-sm' onclick='chooseLocalSaveLocationDirect(\"pull-dest\")' style='height:34px; padding:0 14px; white-space:nowrap;'>Chọn...</button>"
+          << "<div style='margin-bottom:12px;'>"
+          << "<label style='display:block; font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; font-family:\"JetBrains Mono\", monospace;'>Thư Mục Lưu Trên Máy Của Bạn (Local Destination Directory) <span style='color:var(--danger); font-weight:bold;'>* Bắt buộc</span></label>"
+          << "<div style='display:flex; gap:8px; align-items:stretch;'>"
+          << "<input type='text' id='pull-dest' class='input-text' style='flex:1; height:38px; box-sizing:border-box; padding:0 10px; border:1px solid var(--border-primary); border-radius:var(--radius-sharp); font-family:\"JetBrains Mono\", monospace; font-size:12px;' value='' required placeholder='Bắt buộc: Bấm [Chọn...] hoặc nhập đường dẫn thư mục lưu trên máy bạn...'>"
+          << "<input type='file' id='dir-picker-pull-dest' webkitdirectory directory style='display:none;' onchange='handleDirInputSelected(this, \"pull-dest\")'>"
+          << "<button type='button' class='btn-sec' onclick='chooseLocalSaveLocation(\"pull-dest\")' style='height:38px !important; box-sizing:border-box; padding:0 14px; font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; border-radius:var(--radius-sharp); cursor:pointer;'>"
+          << "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> <span>Chọn...</span>"
+          << "</button>"
           << "</div>"
           << "</div>"
-          << "<div style='margin-bottom:10px;'>"
-          << "<label style='display:flex; justify-content:space-between; align-items:center; font-size:11px; font-weight:600; margin-bottom:4px; font-family:\"JetBrains Mono\", monospace;'>"
+          << "<div style='margin-bottom:12px;'>"
+          << "<label style='display:flex; justify-content:space-between; align-items:center; font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; font-family:\"JetBrains Mono\", monospace;'>"
           << "<span>Phạm Vi Cần Kéo (Scope Pattern)</span>"
           << "<span style='font-weight:normal; font-size:10px; color:var(--text-muted);'>(Mặc định: Kéo toàn bộ '*')</span>"
           << "</label>"
-          << "<input type='text' id='pull-scope' style='width:100%; height:34px; padding:0 10px; border:1px solid var(--border-primary); border-radius:2px; font-family:\"JetBrains Mono\", monospace; font-size:12px;' value='*' placeholder='*'>"
+          << "<input type='text' id='pull-scope' class='input-text' style='width:100%; height:38px; box-sizing:border-box; padding:0 10px; border:1px solid var(--border-primary); border-radius:var(--radius-sharp); font-family:\"JetBrains Mono\", monospace; font-size:12px;' value='*' placeholder='*'>"
           << "<div style='font-size:11px; color:var(--text-muted); margin-top:4px; font-family:\"JetBrains Mono\", monospace; line-height:1.4;'>"
           << "<strong>Hướng dẫn cú pháp:</strong> &bull; <code>*</code> hoặc <code>~</code> : Kéo toàn bộ tất cả tệp trong workspace. &bull; <code>thumuc/</code> hoặc <code>/thumuc/</code> hoặc <code>thumuc/*</code> : Để chỉ kéo riêng thư mục con cụ thể. &bull; <em>Mẹo:</em> Bấm nút <strong>Copy Path</strong> ở bảng danh sách tệp phía trên để dán nhanh vào đây!"
           << "</div>"
           << "</div>"
-          << "<div style='margin-bottom:12px; display:flex; align-items:center; gap:8px;'>"
+          << "<div style='margin-bottom:14px; display:flex; align-items:center; gap:8px;'>"
           << "<input type='checkbox' id='pull-prune-cb' style='cursor:pointer;'>"
           << "<label for='pull-prune-cb' style='font-size:11px; color:var(--text-main); margin-bottom:0; cursor:pointer;'>--prune: Tự động dọn sạch các tệp local đã bị xóa trên host</label>"
           << "</div>"
           << "<div style='display:flex; gap:8px;'>"
-          << "<button type='button' class='btn-sec btn-sm' style='flex:1; height:34px;' onclick='submitPullPlanDirect()'>"
-          << "<svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'></path></svg> Xem Trước Kế Hoạch Đồng Bộ (Dry-Run)"
+          << "<button type='button' class='btn-sec' style='flex:1; height:38px; font-size:12px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; gap:6px;' onclick='submitPullPlanDirect()'>"
+          << "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'></path></svg> <span>Xem Trước Kế Hoạch Đồng Bộ (Dry-Run)</span>"
           << "</button>"
-          << "<button type='button' class='btn btn-sm' style='flex:1; height:34px;' onclick='executeRealPullDirect()'>"
-          << "<svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> Bắt Đầu Đồng Bộ Về Máy"
+          << "<button type='button' class='btn' style='flex:1; height:38px; font-size:12px; font-weight:700; background:#0969da; border-color:#0969da; display:inline-flex; align-items:center; justify-content:center; gap:6px;' onclick='executeRealPullDirect()'>"
+          << "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> <span>Bắt Đầu Đồng Bộ Về Máy</span>"
           << "</button>"
           << "</div>"
           << "<div id='pull-plan-out' style='display:none; margin-top:10px;'></div>"
@@ -630,44 +632,48 @@ public:
           << "    } catch(e) {}"
           << "  }"
           << "}"
-          << "function chooseLocalSaveLocationDirect(destId) {"
-          << "  if (typeof chooseLocalSaveLocation === 'function') {"
-          << "    chooseLocalSaveLocation(destId); return;"
-          << "  }"
+          << "async function chooseLocalSaveLocation(destId) {"
+          << "  try {"
+          << "    const res = await fetch('/api/fs/pick-folder').then(r => r.json());"
+          << "    if (res.status === 'ok' && res.path) {"
+          << "      const target = document.getElementById(destId);"
+          << "      if (target) target.value = res.path;"
+          << "      return;"
+          << "    } else if (res.status === 'cancelled') {"
+          << "      return;"
+          << "    }"
+          << "  } catch(e) {}"
           << "  if (window.showDirectoryPicker) {"
-          << "    window.showDirectoryPicker().then(h => {"
-          << "      if (h && h.name) document.getElementById(destId).value = h.name;"
-          << "    }).catch(e => { if (e.name !== 'AbortError') document.getElementById('dir-picker-' + destId).click(); });"
-          << "    return;"
+          << "    try {"
+          << "      const handle = await window.showDirectoryPicker();"
+          << "      if (handle && handle.name) {"
+          << "        const target = document.getElementById(destId);"
+          << "        if (target) target.value = handle.name;"
+          << "        return;"
+          << "      }"
+          << "    } catch(err) {"
+          << "      if (err.name === 'AbortError') return;"
+          << "    }"
           << "  }"
-          << "  document.getElementById('dir-picker-' + destId).click();"
+          << "  const picker = document.getElementById('dir-picker-' + destId);"
+          << "  if (picker) picker.click();"
           << "}"
-          << "function handleDirInputSelectedDirect(inp, destId) {"
-          << "  if (inp.files && inp.files.length > 0) {"
+          << "const chooseLocalSaveLocationDirect = chooseLocalSaveLocation;\n"
+          << "function handleDirInputSelected(inp, destId) {"
+          << "  if (inp && inp.files && inp.files.length > 0) {"
           << "    const rel = inp.files[0].webkitRelativePath || '';"
-          << "    document.getElementById(destId).value = rel ? rel.split('/')[0] : (inp.files[0].name || '');"
+          << "    const name = rel ? rel.split('/')[0] : (inp.files[0].name || '');"
+          << "    const target = document.getElementById(destId);"
+          << "    if (target && name) target.value = name;"
           << "  }"
           << "}"
+          << "const handleDirInputSelectedDirect = handleDirInputSelected;\n"
           << "function selectFileForGet(relPath) {"
-          << "  const inp = document.getElementById('quick-get-file');"
+          << "  const inp = document.getElementById('pull-scope');"
           << "  if (inp) {"
           << "    inp.value = relPath;"
-          << "    const d = document.getElementById('quick-get-dest');"
-          << "    if (d && !d.value) d.value = './' + relPath.split('/').pop();"
           << "    inp.focus();"
           << "  }"
-          << "}"
-          << "function submitQuickGetDirect() {"
-          << "  const f = document.getElementById('quick-get-file').value.trim();"
-          << "  const d = document.getElementById('quick-get-dest').value.trim();"
-          << "  const out = document.getElementById('quick-get-out');"
-          << "  if (!f) return;"
-          << "  out.style.display = 'block';"
-          << "  out.innerHTML = '<span style=\"color:#0969da;\">Đang tải tệp ' + f + '...</span>';"
-          << "  setTimeout(() => {"
-          << "    window.location.href = '/download?path=' + encodeURIComponent(f);"
-          << "    out.innerHTML = '<span style=\"color:var(--success);\">Đã khởi tạo tải xuống thành công! Lưu vào: ' + (d || f) + '</span>';"
-          << "  }, 300);"
           << "}"
           << "function submitPullPlanDirect() {"
           << "  const destInput = document.getElementById('pull-dest');"
@@ -687,8 +693,11 @@ public:
           << "  out.style.display = 'block';"
           << "  out.innerHTML = '<div style=\"background:#1f2328; color:#e6edf3; font-family:\\'JetBrains Mono\\', monospace; font-size:11px; line-height:1.6; padding:12px; border-radius:2px; max-height:360px; overflow-y:auto; border:1px solid #30363d; margin-top:8px; white-space:pre-wrap;\">' "
           << "    + '[SLUG DELTA SYNC] Đang phân tích kế hoạch đồng bộ và tính toán mã băm vi sai...\\n</div>';"
-          << "  fetch('/api/pull/dry-run')"
-          << "    .then(r => r.json())"
+          << "  fetch('/api/pull/dry-run?dest=' + encodeURIComponent(dest) + '&scope=' + encodeURIComponent(sc) + '&prune=' + pr)"
+          << "    .then(r => {"
+          << "      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);"
+          << "      return r.json();"
+          << "    })"
           << "    .then(data => {"
           << "      const newFiles = (data.new_files !== undefined) ? data.new_files : 0;"
           << "      const newBytes = (data.new_bytes !== undefined) ? data.new_bytes : 0;"
@@ -710,11 +719,11 @@ public:
           << "        + 'Băng thông mạng tiết kiệm:' + savedPct.toFixed(1) + '% (Dùng FastCDC & BLAKE3)\\n' "
           << "        + '--------------------------------------------------------------------------------\\n' "
           << "        + '[KẾT QUẢ] ĐÃ TÍNH TOÁN XONG. Chưa có thay đổi nào ghi vào đĩa.\\n' "
-          << "        + 'Bấm nút [Bắt Đầu Đồng Bộ Về Máy] để tải gói nén thư mục về.' "
+          << "        + 'Bấm nút [Bắt Đầu Đồng Bộ Về Máy] để tải hoặc đồng bộ trực tiếp.' "
           << "        + '</div>';"
           << "    })"
           << "    .catch(err => {"
-          << "      out.innerHTML = '<div style=\"padding:10px; background:#ffebe9; color:#cf222e; font-size:12px; font-family:monospace;\">Lỗi phân tích kế hoạch: ' + err + '</div>';"
+          << "      out.innerHTML = '<div style=\"padding:10px; background:#ffebe9; color:#cf222e; font-size:12px; font-family:monospace;\">Lỗi phân tích kế hoạch: ' + err.message + '</div>';"
           << "    });"
           << "}"
           << "function executeRealPullDirect() {"
@@ -731,17 +740,43 @@ public:
           << "  }"
           << "  if (out) {"
           << "    out.style.display = 'block';"
-          << "    out.innerHTML = '<div style=\"padding:12px; background:#dafbe1; border:1px solid rgba(26,127,55,0.4); border-radius:2px; font-size:11px; font-family:\\'JetBrains Mono\\', monospace; color:var(--success); line-height:1.6;\">' "
-          << "      + '<div style=\"font-weight:700; margin-bottom:4px; font-size:12px;\">Khởi tạo tải dữ liệu qua kênh an toàn...</div>' "
-          << "      + '<div>Gói nén thư mục (.zip) đang được tạo và bắt đầu tải xuống máy của bạn!</div>' "
-          << "      + '<div style=\"margin-top:8px; padding-top:8px; border-top:1px dashed rgba(26,127,55,0.3); color:#1f2328;\">' "
-          << "      + '<strong>Lưu ý:</strong> Do hạn chế sandbox trình duyệt, bạn giải nén file tải về vào thư mục đích <code>' + dest + '</code>.<br>' "
-          << "      + 'Để đồng bộ tự động trực tiếp ghi từng tệp vào thư mục bằng CLI, bạn có thể dùng lệnh:<br>' "
-          << "      + '<code style=\"background:#f6f8fa; padding:2px 6px; border:1px solid #d0d7de; border-radius:2px; display:inline-block; margin-top:4px;\">slug pull &lt;station_id&gt; --dest \"' + dest + '\"</code>' "
-          << "      + '</div>' "
+          << "    out.innerHTML = '<div style=\"background:#1f2328; color:#e6edf3; font-family:\\'JetBrains Mono\\', monospace; font-size:11px; line-height:1.6; padding:12px; border-radius:2px; border:1px solid #30363d; margin-top:8px;\">' "
+          << "      + '<span style=\"color:#54aeff;\">[SLUG SYNC] Đang khởi tạo đồng bộ dữ liệu vào: ' + dest + '...</span>' "
           << "      + '</div>';"
           << "  }"
-          << "  window.location.href = '/download-folder?dir=' + encodeURIComponent(currentDir);"
+          << "  fetch('/api/pull/execute', {"
+          << "    method: 'POST',"
+          << "    headers: { 'Content-Type': 'application/json' },"
+          << "    body: JSON.stringify({ dest: dest, dir: currentDir })"
+          << "  })"
+          << "  .then(r => r.json())"
+          << "  .then(res => {"
+          << "    if (res.status === 'ok') {"
+          << "      const bStr = (res.bytes > 1048576) ? (res.bytes/1048576).toFixed(2) + ' MiB' : (res.bytes/1024).toFixed(1) + ' KiB';"
+          << "      if (out) {"
+          << "        out.innerHTML = '<div style=\"padding:14px; background:#dafbe1; border:1px solid rgba(26,127,55,0.4); border-radius:2px; font-size:12px; font-family:\\'JetBrains Mono\\', monospace; color:var(--success); line-height:1.6;\">' "
+          << "          + '<div style=\"font-weight:700; margin-bottom:6px; font-size:13px;\">✅ ĐỒNG BỘ THÀNH CÔNG ' + res.copied + ' TỆP (' + bStr + ')!</div>' "
+          << "          + '<div>Toàn bộ tệp đã được ghi trực tiếp vào thư mục: <code>' + (res.dest || dest) + '</code></div>' "
+          << "          + '<div style=\"margin-top:10px; display:flex; gap:8px;\">' "
+          << "          + '<button type=\"button\" class=\"btn btn-sm\" onclick=\"fetch(\\'/api/fs/open-folder\\',{method:\\'POST\\',headers:{\\'Content-Type\\':\\'application/json\\'},body:JSON.stringify({path:\\'' + (res.dest || dest).replace(/\\\\/g, '\\\\\\\\').replace(/\\'/g, \"\\\\'\") + '\\'})})\">Mở Thư Mục Trong Explorer</button>' "
+          << "          + '<button type=\"button\" class=\"btn-sec btn-sm\" onclick=\"window.location.href=\\'/download-folder?dir=\\'+encodeURIComponent(currentDir)\">Tải Bản Nén ZIP Dự Phòng</button>' "
+          << "          + '</div>' "
+          << "          + '</div>';"
+          << "      }"
+          << "    } else {"
+          << "      if (out) {"
+          << "        out.innerHTML = '<div style=\"padding:12px; background:#dafbe1; border:1px solid rgba(26,127,55,0.4); border-radius:2px; font-size:11px; font-family:\\'JetBrains Mono\\', monospace; color:var(--success); line-height:1.6;\">' "
+          << "          + '<div style=\"font-weight:700; margin-bottom:4px; font-size:12px;\">Đang tải xuống gói nén thư mục (.zip)...</div>' "
+          << "          + '<div>Bạn hãy giải nén file tải về vào thư mục: <code>' + dest + '</code></div>' "
+          << "          + '<div style=\"margin-top:6px; color:#1f2328;\">Hoặc dùng lệnh CLI: <code style=\"background:#f6f8fa; padding:2px 6px; border:1px solid #d0d7de; border-radius:2px;\">slug pull &lt;station_id&gt; --dest \"' + dest + '\"</code></div>' "
+          << "          + '</div>';"
+          << "      }"
+          << "      window.location.href = '/download-folder?dir=' + encodeURIComponent(currentDir);"
+          << "    }"
+          << "  })"
+          << "  .catch(() => {"
+          << "    window.location.href = '/download-folder?dir=' + encodeURIComponent(currentDir);"
+          << "  });"
           << "}"
           << "</script>\n"
           << "<div id='upload-toast'></div>"
@@ -1263,14 +1298,14 @@ public:
           << "<div style='font-size:11px; color:var(--text-muted); margin-top:12px; line-height:1.6; border-top:1px solid var(--border-primary); padding-top:8px;'>"
           << "<strong style='color:var(--text-main);'>Slug Multi-Layer Security Architecture:</strong><br>"
           << "&bull; <strong>1. Gitignore Layer:</strong> Standard <code>.gitignore</code> pattern exclusions.<br>"
-          << "&bull; <strong>2. Policy Rules:</strong> Explicit administrator rules in <code>.slug/rules.conf</code> (allow/block path, ext, regex).<br>"
+          << "&bull; <strong>2. Policy Rules:</strong> Administrator filter rules (allow/block path, ext, regex).<br>"
           << "&bull; <strong>3. Smart Regex Guard:</strong> Fast entropy &amp; heuristic token detector (detects API keys, private keys, high-entropy secrets).<br>"
           << "&bull; <strong>4. AI Guard (LLM):</strong> Deep context-aware semantic analysis (only activated when AI server is configured)."
           << "</div>"
           << "</div></div>"
 
           << "<div class='grid'>"
-          << "<div class='card'><h3><span>Security Filter Rules (.slug/rules.conf)</span><button class='btn btn-sm' onclick='openAddRuleModal()'>+ Add Rule</button></h3>"
+          << "<div class='card'><h3><span>Security Filter Rules</span><button class='btn btn-sm' onclick='openAddRuleModal()'>+ Add Rule</button></h3>"
           << "<table><thead><tr><th>ID</th><th>Action</th><th>Type</th><th>Pattern</th><th>Action</th></tr></thead><tbody id='rules-tbody'>";
 
         for (const auto& r : rules) {
@@ -1290,7 +1325,7 @@ public:
         }
         h << "</tbody></table></div>"
 
-          << "<div class='card'><h3><span>Flagged &amp; Quarantined (.slug/index.db) <span id='audit-badge' class='badge badge-quarantined' style='margin-left:4px;'>" << audit_entries.size() << "</span></span>"
+          << "<div class='card'><h3><span>Flagged &amp; Quarantined Files <span id='audit-badge' class='badge badge-quarantined' style='margin-left:4px;'>" << audit_entries.size() << "</span></span>"
           << "<span style='display:flex; align-items:center; gap:6px;'>"
           << "<input type='text' id='audit-search' class='table-search-input' placeholder='Filter file or reason...' oninput='filterAudit()' style='width:160px;'>"
           << "<button class='btn-sec btn-sm' onclick='allowAllAuditFiles()' title='Whitelist all currently flagged files'>Whitelist All</button>"
@@ -1312,7 +1347,7 @@ public:
         h << "</tbody></table></div></div></div>"
 
           << "<div class='card' style='margin-bottom: 16px;'>"
-          << "<h3><span>Recent Security Audit Activity (.slug/audit.log) <span id='logs-badge' class='badge badge-excluded' style='margin-left:4px;'>" << events.size() << "</span></span>"
+          << "<h3><span>Recent Security Audit Activity <span id='logs-badge' class='badge badge-excluded' style='margin-left:4px;'>" << events.size() << "</span></span>"
           << "<span style='display:flex; align-items:center; gap:6px;'>"
           << "<input type='text' id='logs-search' class='table-search-input' placeholder='Filter audit logs...' oninput='filterAuditLogs()' style='width:180px;'>"
           << "</span></h3>"
@@ -2627,7 +2662,6 @@ function switchRole(role) {
   });
   if (role === 'host') {
     renderHostedWorkspaces();
-    renderInactiveWorkspaces();
   }
   if (role === 'env') {
     loadEnvVaultList();
@@ -2649,37 +2683,21 @@ function switchRole(role) {
 
 let _inspectSlugTimer = null;
 function checkHostPathHasSlug(path) {
-  const note = document.getElementById('slug-detect-note');
-  if (!note) return;
   const p = (path || '').trim();
-  if (!p) {
-    note.style.display = 'none';
-    note.innerHTML = '';
-    return;
-  }
+  if (!p) return;
   if (_inspectSlugTimer) clearTimeout(_inspectSlugTimer);
   _inspectSlugTimer = setTimeout(() => {
     fetch('/api/fs/inspect-path?path=' + encodeURIComponent(p))
       .then(r => r.json())
       .then(data => {
-        note.style.display = 'block';
-        if (data.exists && data.has_slug) {
-          note.innerHTML = `<span style="color:#1a7f37; display:inline-flex; align-items:center; gap:6px;">${ICONS.shield} <strong>Slug Detection:</strong> Đã phát hiện cấu hình <code>.slug/</code> thực tế &mdash; Slug sẽ tự động khôi phục tài khoản, quy tắc lọc (.slugignore) và bảo toàn lịch sử cách ly.</span>`;
-        } else if (data.exists) {
-          note.innerHTML = `<span style="color:#0969da; display:inline-flex; align-items:center; gap:6px;">${ICONS.folder} <strong>Thư mục mới:</strong> Thư mục hợp lệ (chưa có <code>.slug/</code>) &mdash; Slug sẽ khởi tạo mới cấu hình bảo mật Post-Quantum.</span>`;
-        } else {
-          note.innerHTML = `<span style="color:#9a6700; display:inline-flex; align-items:center; gap:6px;">${ICONS.plus} <strong>Khởi tạo thư mục mới:</strong> Thư mục chưa có trên máy &mdash; Slug sẽ tự động tạo mới thư mục này khi bắt đầu chia sẻ.</span>`;
-        }
-        if (data.next_free_port) {
+        if (data && data.next_free_port) {
           const portInp = document.getElementById('host-port');
           if (portInp && (!portInp.value || portInp.value === '9443')) {
             portInp.placeholder = String(data.next_free_port);
           }
         }
       })
-      .catch(() => {
-        note.style.display = 'none';
-      });
+      .catch(() => {});
   }, 200);
 }
 
@@ -2825,104 +2843,10 @@ function renderHostedWorkspaces() {
   }).join('');
 }
 
-function renderInactiveWorkspaces() {
-  const container = document.getElementById('inactive-workspaces-list');
-  const countBadge = document.getElementById('inactive-count');
-  if (countBadge) countBadge.textContent = inactiveWorkspaces.length;
-  if (!container) return;
-
-  if (inactiveWorkspaces.length === 0) {
-    container.innerHTML = '<div style="text-align:center; padding:16px; color:var(--text-muted); font-size:12px;">Không có trạm phát nào trong lịch sử tạm dừng.</div>';
-    return;
-  }
-
-  container.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Đường Dẫn Workspace</th>
-          <th>Cổng Cũ</th>
-          <th>Cấu Hình .slug Sẵn Có</th>
-          <th>Lần Host Cuối</th>
-          <th>Thao Tác Khôi Phục</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${inactiveWorkspaces.map(iw => `
-          <tr>
-            <td>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <span style="color:#0969da;">${ICONS.folder}</span>
-                <strong>${iw.path}</strong>
-              </div>
-            </td>
-            <td><code>${iw.port}</code></td>
-            <td>
-              <span class="badge badge-pqc" title="Đã có .slug/rules.conf và .slug/acl.db">
-                ${ICONS.shield} Đã có .slug (${iw.userCount || 3} users, ${iw.ruleCount || 8} rules)
-              </span>
-            </td>
-            <td><span style="font-size:11px; color:var(--text-muted);">${iw.lastHosted || 'Gần đây'}</span></td>
-            <td>
-              <button class="btn btn-xs" onclick="resumeWorkspace('${iw.id}')">
-                ${ICONS.power} Khôi Phục Hosting
-              </button>
-              <button class="btn-danger btn-xs" onclick="removeInactiveWorkspace('${iw.id}')">
-                ${ICONS.trash} Xóa
-              </button>
-            </td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-function resumeWorkspace(savedId) {
-  const iw = inactiveWorkspaces.find(x => x.id === savedId);
-  if (!iw) return;
-
-  showToast(`Đang khôi phục chia sẻ workspace '${iw.path}' trên cổng ${iw.port}...`);
-  fetch('/api/host/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      path: iw.path,
-      port: iw.port,
-      suite: iw.suite || '3',
-      filter: iw.filterMode || 'protected'
-    })
-  })
-  .then(r => r.json())
-  .then(res => {
-    if (res.status === 'ok') {
-      inactiveWorkspaces = inactiveWorkspaces.filter(x => x.id !== savedId);
-      saveWorkspaceState();
-      loadHostedWorkspaces();
-      renderInactiveWorkspaces();
-      renderAuditWorkspaceFiles();
-      showToast(`Đã khôi phục thành công workspace '${iw.path}' trên cổng ${iw.port}!`);
-    } else {
-      alert('Không thể khôi phục workspace: ' + (res.message || 'Lỗi'));
-    }
-  })
-  .catch(err => {
-    alert('Lỗi kết nối API: ' + err.message);
-  });
-}
-
-function removeInactiveWorkspace(savedId) {
-  inactiveWorkspaces = inactiveWorkspaces.filter(x => x.id !== savedId);
-  saveWorkspaceState();
-  renderInactiveWorkspaces();
-  showToast('Đã xóa workspace khỏi lịch sử tạm dừng.');
-}
-
-function saveWorkspaceState() {
-  try {
-    localStorage.setItem('slug_inactive_workspaces', JSON.stringify(inactiveWorkspaces));
-  } catch(e) {}
-}
+function renderInactiveWorkspaces() {}
+function resumeWorkspace() {}
+function removeInactiveWorkspace() {}
+function saveWorkspaceState() {}
 
 function toggleAdminPanel(hostId) {
   const panel = document.getElementById('admin-drawer-' + hostId);
@@ -3268,7 +3192,7 @@ function startHosting(e) {
 function stopHost(id) {
   const target = hostedWorkspaces.find(w => w.id === id);
   const p = target ? target.port : parseInt(id.replace('host-', ''));
-  if (confirm(`Dừng chia sẻ thư mục trên cổng ${p}? Cấu hình .slug sẽ được bảo toàn để bạn có thể khôi phục bất cứ lúc nào.`)) {
+  if (confirm(`Dừng chia sẻ thư mục trên cổng ${p}?`)) {
     showToast(`Đang dừng trạm phát trên cổng ${p}...`);
     fetch('/api/host/stop', {
       method: 'POST',
@@ -3277,24 +3201,8 @@ function stopHost(id) {
     })
     .then(r => r.json())
     .then(res => {
-      if (target) {
-        inactiveWorkspaces.unshift({
-          id: 'saved-' + target.port,
-          path: target.path,
-          port: target.port,
-          suite: target.suite,
-          suiteName: target.suiteName,
-          filterMode: target.filterMode,
-          hasSlugDir: true,
-          userCount: (target.users || []).length,
-          ruleCount: 8,
-          lastHosted: 'Vừa dừng lúc ' + new Date().toLocaleTimeString()
-        });
-        saveWorkspaceState();
-      }
       loadHostedWorkspaces();
-      renderInactiveWorkspaces();
-      showToast(res.message || "Đã dừng trạm phát. Đã lưu vào mục Khôi Phục Trạm Phát (.slug)!");
+      showToast(res.message || `Đã dừng chia sẻ trên cổng ${p} thành công!`);
     })
     .catch(err => {
       alert('Lỗi dừng trạm phát: ' + err.message);
@@ -4146,7 +4054,7 @@ function runAuditAllowAll() {
 
 function runAuditClear() {
   const currentPath = getSelectedAuditPath();
-  if (confirm('Xóa sạch bộ đệm kiểm toán (.slug/index.db)? Toàn bộ trạng thái cách ly sẽ được lập chỉ mục lại từ đầu.')) {
+  if (confirm('Xóa sạch bộ đệm kiểm toán? Toàn bộ trạng thái cách ly sẽ được lập chỉ mục lại từ đầu.')) {
     fetch('/api/audit/clear', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4429,13 +4337,7 @@ document.addEventListener("DOMContentLoaded", function() {
 });
 
 window.onload = function() {
-  try {
-    const savedInactive = localStorage.getItem('slug_inactive_workspaces');
-    if (savedInactive) inactiveWorkspaces = JSON.parse(savedInactive);
-  } catch(e) {}
-
   loadHostedWorkspaces();
-  renderInactiveWorkspaces();
   renderAuditWorkspaceFiles();
   loadEnvVaultList();
   runNetworkInspection();
@@ -4624,7 +4526,7 @@ window.onload = function() {
     </div>
   </div>
 
-  <!-- ==================== [SECTION 2: HOST MODE & .SLUG RECOVERY] ==================== -->
+  <!-- ==================== [SECTION 2: HOST MODE - CHIA SẺ WORKSPACE] ==================== -->
   <div id="section-host" style="display:none;">
     <!-- Card 2: Khởi Tạo Trạm Phát Mới (RA - Host Mode) -->
     <div class="card" id="host-config-card" style="max-width:520px; margin:20px auto 26px auto; padding:28px 26px; box-shadow:0 3px 12px rgba(0,0,0,0.06); border:1px solid #d0d7de; border-radius:2px;">
@@ -4648,13 +4550,12 @@ window.onload = function() {
         <div class="form-group" style="margin-bottom:0;">
           <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Đường Dẫn Thư Mục (Workspace Path) <span style="color:var(--danger); font-weight:bold;">* Bắt buộc</span></label>
           <div style="display:flex; gap:8px; align-items:stretch;">
-            <input type="text" id="host-path" class="input-text" value="" placeholder="Bắt buộc: Bấm [Chọn Thư Mục] hoặc nhập..." oninput="checkHostPathHasSlug(this.value)" style="flex:1; height:38px; box-sizing:border-box; font-size:12px;" required>
-            <input type="file" id="dir-picker-host-path" webkitdirectory directory style="display:none;" onchange="handleDirInputSelected(this, 'host-path'); checkHostPathHasSlug(document.getElementById('host-path').value);">
+            <input type="text" id="host-path" class="input-text" value="" placeholder="Bắt buộc: Bấm [Chọn Thư Mục] hoặc nhập..." style="flex:1; height:38px; box-sizing:border-box; font-size:12px;" required>
+            <input type="file" id="dir-picker-host-path" webkitdirectory directory style="display:none;" onchange="handleDirInputSelected(this, 'host-path');">
             <button type="button" class="btn-sec" onclick="chooseLocalSaveLocation('host-path')" style="height:38px !important; box-sizing:border-box; padding:0 14px; font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; border-radius:var(--radius-sharp); cursor:pointer;">
               ${ICONS.folder} <span>Chọn...</span>
             </button>
           </div>
-          <div id="slug-detect-note" style="display:none; font-size:11px; margin-top:4px;"></div>
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1.6fr; gap:12px;">
@@ -4729,17 +4630,6 @@ window.onload = function() {
         <button class="btn-sec btn-sm" onclick="renderHostedWorkspaces()">${ICONS.refresh} Làm Mới</button>
       </h3>
       <div id="hosted-workspaces-list"></div>
-    </div>
-
-    <!-- KHÔI PHỤC TRẠM PHÁT ĐÃ TỪNG HOST (.SLUG RESUME CENTER) -->
-    <div class="card" style="border:1px solid #54aeff;">
-      <h3>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${ICONS.shield} <span>Khôi Phục Trạm Phát Đã Từng Host (.slug Resume Center) (<span id="inactive-count">0</span>)</span>
-        </div>
-        <span class="badge badge-pqc">Tự Động Bảo Toàn .slug</span>
-      </h3>
-      <div id="inactive-workspaces-list"></div>
     </div>
   </div>
 
