@@ -119,6 +119,34 @@ void WorkspaceManager::update_registry(const WorkspaceInfo& info, bool remove) {
     platform::PathUtils::write_text_file_atomic(registry_file_path(), j.dump(2));
 }
 
+static bool is_port_available(uint16_t port) {
+#if defined(SLUG_PLATFORM_WINDOWS)
+    SOCKET sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) return false;
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+
+    int res = ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    ::closesocket(sock);
+    return (res == 0);
+#else
+    int sock = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return false;
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+
+    int res = ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    ::close(sock);
+    return (res == 0);
+#endif
+}
+
 uint16_t WorkspaceManager::find_available_port(uint16_t starting_port) {
     if (starting_port < 1024) starting_port = 9443;
     auto reg = load_registry();
@@ -143,35 +171,9 @@ uint16_t WorkspaceManager::find_available_port(uint16_t starting_port) {
         if (in_use) continue;
 
         // 3. Test binding OS TCP socket
-#if defined(SLUG_PLATFORM_WINDOWS)
-        SOCKET sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (sock == INVALID_SOCKET) continue;
-
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons(candidate);
-
-        int res = ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-        ::closesocket(sock);
-        if (res == 0) {
+        if (is_port_available(candidate)) {
             return candidate;
         }
-#else
-        int sock = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) continue;
-
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons(candidate);
-
-        int res = ::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-        ::close(sock);
-        if (res == 0) {
-            return candidate;
-        }
-#endif
     }
     return starting_port;
 }

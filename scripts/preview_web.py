@@ -284,7 +284,17 @@ def scan_workspace_real(target_dir):
                 sz = 0
                 sz_str = "0 B"
 
-            if st == 'QUARANTINED':
+            if st == 'BLOCKED_MANUAL':
+                quarantined_count += 1
+                if len(quarantined_files) < 15:
+                    quarantined_files.append({
+                        "name": rel_path,
+                        "size": sz_str,
+                        "tiers": ["Manual Guard"],
+                        "reason": "Người tự kiểm toán (Manual Guard block)",
+                        "unquarantined": False
+                    })
+            elif st == 'QUARANTINED':
                 quarantined_count += 1
                 if len(quarantined_files) < 15:
                     quarantined_files.append({
@@ -333,8 +343,41 @@ def get_file_status(name):
     global UNQUARANTINED_FILES, INCLUDED_EXCLUDED_FILES
     if name in UNQUARANTINED_FILES:
         return 'CLEAN_UNQUARANTINED'
+
+    # Check .slug/rules.conf and .slugignore for manual blocks and whitelist
+    rules = []
+    for rf_name in [os.path.join(BASE_DIR, ".slug", "rules.conf"), os.path.join(BASE_DIR, ".slugignore")]:
+        if os.path.exists(rf_name):
+            try:
+                with open(rf_name, "r", encoding="utf-8") as f:
+                    rules.extend([l.strip() for l in f if l.strip() and not l.strip().startswith("#")])
+            except Exception: pass
+
+    # Sequential rule evaluation: later rules take precedence
+    rule_status = None
+    for r in rules:
+        is_whitelist = r.startswith("!")
+        pat = r[1:].strip() if is_whitelist else r
+        clean_pat = pat.rstrip("/")
+        matches = False
+        if clean_pat == name or clean_pat == name + "/":
+            matches = True
+        elif clean_pat.startswith("*") and name.endswith(clean_pat[1:]):
+            matches = True
+        elif clean_pat.endswith("*") and name.startswith(clean_pat[:-1]):
+            matches = True
+
+        if matches:
+            rule_status = 'CLEAN_WHITELIST' if is_whitelist else 'BLOCKED_MANUAL'
+
+    if rule_status == 'CLEAN_WHITELIST':
+        return 'CLEAN'
+    if rule_status == 'BLOCKED_MANUAL':
+        return 'BLOCKED_MANUAL'
+
     lower = name.lower()
-    if lower.startswith('.env') or lower.endswith('.pem') or lower.endswith('.key') or 'id_rsa' in lower or 'secret' in lower:
+    is_template_sample = (lower in ['.env.example', '.env.sample', '.env.template'] or lower.endswith('.example') or lower.endswith('.sample'))
+    if (lower.startswith('.env') and not is_template_sample) or lower.endswith('.pem') or lower.endswith('.key') or 'id_rsa' in lower or 'secret' in lower:
         return 'QUARANTINED'
     if lower in ['node_modules', 'target', '.git', 'build', '__pycache__', '.vs'] or lower.endswith('.obj') or lower.endswith('.exe') or lower.endswith('.pdb'):
         if name in INCLUDED_EXCLUDED_FILES:
@@ -871,6 +914,20 @@ function toggleUnquarantine(fname) {{
   }}).then(() => window.location.reload());
 }}
 
+function returnToPortal() {{
+  window.location.href = '/';
+}}
+
+function toggleManualBlockFile(p, block) {{
+  const ep = block ? '/api/admin/manual-block' : '/api/admin/manual-unblock';
+  const msg = block ? ('Bạn có chắc muốn chặn "' + p + '" khỏi chia sẻ mạng?\\n(Gắn nhãn: Người tự kiểm toán - Manual Guard)') : ('Bạn có chắc muốn gỡ chặn "' + p + '"?');
+  if (!confirm(msg)) return;
+  fetch(ep, {{ method: 'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{path: p, is_dir: p.endsWith('/')}}) }})
+    .then(r => r.json())
+    .then(res => {{ if (res.status === 'ok') window.location.reload(); else alert('Lỗi: ' + (res.message || 'Không thể thao tác')); }})
+    .catch(e => alert('Lỗi: ' + e));
+}}
+
 function selectFileForGet(relPath) {{
   const inp = document.getElementById('quick-get-file');
   if (inp) {{
@@ -1235,18 +1292,27 @@ def generate_folder_rows(abs_target, norm_rel):
                     is_dir = entry.is_dir()
                     st = entry.stat()
                     name = entry.name
+                    if name in [".slug", ".git"] or name.startswith(".slug"):
+                        continue
                     sub = (norm_rel + "/" + name) if norm_rel else name
                     status = get_file_status(name)
                     size_str = format_size(st.st_size) if not is_dir else "-"
                     
                     copy_btn = f'<button type="button" class="btn-sec btn-xs" onclick="event.stopPropagation(); copyText(\'{sub}\', \'Đường dẫn\')" title="Sao chép đường dẫn">{SVG_ICONS["copy"]} Copy Path</button>'
                     if is_dir:
-                        badge = f'<span class="badge badge-available"><span class="status-dot"></span> Thư Mục</span>'
-                        action = f'<button type="button" class="btn-sec btn-xs" onclick="openFolder(\'{sub}\')">{SVG_ICONS["folder"]} Mở</button> {copy_btn}'
+                        is_blocked = (status == 'BLOCKED_MANUAL')
+                        badge = '<span class="badge badge-quarantined"><span class="status-dot"></span> Chặn (Manual Guard)</span>' if is_blocked else '<span class="badge badge-available"><span class="status-dot"></span> Thư Mục</span>'
+                        block_btn = f'<button type="button" class="btn-sec btn-xs" onclick="toggleManualBlockFile(\'{sub}/\', false)">Gỡ Chặn</button>' if is_blocked else f'<button type="button" class="btn-danger btn-xs" onclick="toggleManualBlockFile(\'{sub}/\', true)">Chặn Thư Mục</button>'
+                        action = f'<button type="button" class="btn-sec btn-xs" onclick="openFolder(\'{sub}\')">{SVG_ICONS["folder"]} Mở</button> {copy_btn} {block_btn}'
                         row_click = f'onclick="openFolder(\'{sub}\')"'
                         name_display = f'{SVG_ICONS["folder"]} <strong style="margin-left:6px;">{name}</strong>'
                     else:
-                        if status == 'QUARANTINED':
+                        if status == 'BLOCKED_MANUAL':
+                            badge = '<span class="badge badge-quarantined"><span class="status-dot"></span> Chặn (Manual Guard)</span>'
+                            action = f'<button type="button" class="btn-sec btn-xs" onclick="toggleManualBlockFile(\'{sub}\', false)">Gỡ Chặn (Unblock)</button> {copy_btn}'
+                            row_click = f'onclick="selectFileForGet(\'{sub}\')"'
+                            name_display = f'{SVG_ICONS["file"]} <strong style="color:var(--danger); margin-left:6px;">{name}</strong>'
+                        elif status == 'QUARANTINED':
                             badge = '<span class="badge badge-quarantined"><span class="status-dot"></span> Cách Ly Secret</span>'
                             action = f'<button type="button" class="btn btn-xs" onclick="toggleUnquarantine(\'{name}\')">Gỡ Cách Ly</button> {copy_btn}'
                             row_click = f'onclick="selectFileForGet(\'{sub}\')"'
@@ -1264,7 +1330,8 @@ def generate_folder_rows(abs_target, norm_rel):
                             name_display = f'{SVG_ICONS["file"]} <span style="color:var(--text-muted); margin-left:6px;">{name}</span>'
                         else:
                             badge = '<span class="badge badge-available"><span class="status-dot"></span> Sạch (PQC Ready)</span>'
-                            action = f'<button type="button" class="btn-sec btn-xs" onclick="downloadFile(\'{sub}\')">{SVG_ICONS["download"]} Tải Về</button> {copy_btn}'
+                            action = f'<button type="button" class="btn-sec btn-xs" onclick="downloadFile(\'{sub}\')">{SVG_ICONS["download"]} Tải Về</button> ' \
+                                     f'<button type="button" class="btn-danger btn-xs" onclick="toggleManualBlockFile(\'{sub}\', true)">Chặn (Manual Guard)</button> {copy_btn}'
                             row_click = f'onclick="selectFileForGet(\'{sub}\')"'
                             name_display = f'{SVG_ICONS["file"]} <span style="margin-left:6px;">{name}</span>'
 

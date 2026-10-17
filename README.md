@@ -167,13 +167,13 @@ Khi giảng viên hoặc trưởng nhóm cần thu bài nộp của học sinh, 
    ```bash
    slug add ./bai_nop -p 9443
    ```
-   Hệ thống in ra **Mã OTP quyền Ghi `[w]` Write-Only** (hoặc xem nhanh bằng `slug totp -p 9443 -r w`).
+   Hệ thống in ra **Mã OTP quyền Ghi `[w]` Write-Only** (dành cho kết nối bảo mật 1 máy). Để cả lớp 40–50 sinh viên cùng nộp bài đồng thời, giảng viên tạo nhanh **tài khoản chung quyền Ghi `[w]`** trên Trạm Điều Khiển Web hoặc qua `slug user add` (ví dụ: user `sinhvien` với quyền `[w] Write-Only`).
 2. **Phía học sinh, sinh viên nộp bài:**
-   - Học sinh chỉ cần mở trình duyệt kéo thả bài làm vào Web Dropbox hoặc dùng lệnh CLI:
+   - Học sinh chỉ cần mở trình duyệt đăng nhập tài khoản chung rồi kéo thả bài làm vào Web Dropbox hoặc dùng lệnh CLI:
      ```bash
      slug push ./bai_lam.zip 192.168.1.107:9443?otp=70788146
      ```
-   - **Bảo mật & Chống chép bài:** Tầng `SlugVFS Jail` cưỡng chế quyền `WRITE_ONLY`, học sinh chỉ được phép tải bài lên, **hoàn toàn bị cấm xem danh sách hoặc tải bài của các bạn khác về**. Không cần tạo tài khoản hay cài đặt máy chủ cồng kềnh.
+   - **Bảo mật & Chống chép bài:** Tầng `SlugVFS Jail` cưỡng chế quyền `WRITE_ONLY`, học sinh chỉ được phép tải bài lên, **hoàn toàn bị cấm xem danh sách hoặc tải bài của các bạn khác về**. Không lo nghẽn mạng WAN, chạy mượt mà ngay cả khi phòng máy mất Internet.
 
 ---
 

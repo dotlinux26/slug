@@ -100,7 +100,11 @@ int ProcessUtils::run_process_with_env(const std::vector<std::string>& command_a
             std::wstring s(var);
             size_t eq = s.find(L'=');
             if (eq != std::wstring::npos && eq > 0) {
-                std::string k(s.begin(), s.begin() + eq);
+                std::string k;
+                k.reserve(eq);
+                for (size_t i = 0; i < eq; ++i) {
+                    k.push_back(static_cast<char>(s[i] & 0xFF));
+                }
                 if (injected_env.find(k) == injected_env.end()) {
                     for (wchar_t c : s) env_block.push_back(c);
                     env_block.push_back(L'\0');

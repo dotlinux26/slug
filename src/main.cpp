@@ -528,13 +528,15 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             is_excluded = true; excl_rule = "Build output directory";
         } else if (lower.ends_with(".obj") || lower.ends_with(".o") || lower.ends_with(".pdb") || lower.ends_with(".exe") || lower.ends_with(".dll")) {
             is_excluded = true; excl_rule = "Compiled binary artifact";
-        } else if (gi.is_ignored(rel_path, is_dir)) {
-            is_excluded = true; excl_rule = "Khớp quy tắc trong .gitignore / .slugignore";
         } else {
             const auto* rm = rules_mgr.match(rel);
+            bool is_whitelisted = (rm && rm->action == policy::RuleAction::ALLOW);
             if (rm && rm->action == policy::RuleAction::BLOCK) {
                 is_excluded = true;
                 excl_rule = "Slug Rule: " + rm->value;
+            } else if (!is_whitelisted && gi.is_ignored(rel_path, is_dir)) {
+                is_excluded = true;
+                excl_rule = "Khớp quy tắc trong .gitignore / .slugignore";
             }
         }
 
@@ -597,7 +599,11 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         }
 
         auto finding = scanner.scan_content(rel, sv, true);
-        if (finding.has_secret || filename.starts_with(".env") || filename.ends_with(".key") || filename.ends_with(".pem") || filename == "id_rsa") {
+        bool is_template_sample = (filename == ".env.example" || filename == ".env.sample" || filename == ".env.template" ||
+                                   core::Utils::ends_with(filename, ".example") || core::Utils::ends_with(filename, ".sample"));
+        bool is_env_secret = (filename.starts_with(".env") && !is_template_sample);
+
+        if ((finding.has_secret || is_env_secret || filename.ends_with(".key") || filename.ends_with(".pem") || filename == "id_rsa") && !is_whitelisted) {
             std::string reason = finding.has_secret ? finding.reason : "Tên tệp khớp khuôn mẫu credential bí mật";
             std::ostringstream ss;
             ss << std::fixed << std::setprecision(2) << entropy;
@@ -624,11 +630,17 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             if (clean.size() < 250) {
                 std::ostringstream ss;
                 ss << std::fixed << std::setprecision(2) << entropy;
+                std::string note = "Shannon entropy: " + ss.str() + " (An Toàn)";
+                if (is_whitelisted) {
+                    note = "Được cho phép bởi Quy tắc Whitelist: " + (rm ? rm->value : "Whitelist");
+                } else if (is_template_sample) {
+                    note = "Tệp mẫu cấu hình (Example / Template safe)";
+                }
                 clean.push_back(nlohmann::json{
                     {"name", rel},
                     {"size", core::Utils::format_size(sz)},
-                    {"status", "Clean"},
-                    {"note", "Shannon entropy: " + ss.str() + " (An Toàn)"}
+                    {"status", is_whitelisted ? "Whitelisted" : "Clean"},
+                    {"note", note}
                 });
             }
         }

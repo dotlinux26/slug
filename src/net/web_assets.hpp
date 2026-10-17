@@ -581,7 +581,7 @@ public:
           << "</div>"
           << "<div id='pull-plan-out' style='display:none; margin-top:10px;'></div>"
           << "</div>"
-
+          << "<script>\n"
           << "function copyTextDirect(val, label) {"
           << "  if (navigator.clipboard && navigator.clipboard.writeText) {"
           << "    navigator.clipboard.writeText(val).catch(() => {});"
@@ -2374,12 +2374,19 @@ function renderActiveRuleChips() {
     c.innerHTML = '<span style="font-size:11px; color:var(--text-muted); font-style:italic;">Chưa có quy tắc nào. Chọn mẫu ở trên hoặc tự thêm.</span>';
     return;
   }
-  c.innerHTML = currentWorkspaceRules.map((r, idx) => `
-    <span class="badge" style="background:#f6f8fa; border:1px solid #d0d7de; color:#1f2328; padding:3px 8px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">
-      <code>${r}</code>
-      <span onclick="removeRuleChip(${idx})" style="cursor:pointer; color:#cf222e; font-weight:bold; font-size:14px; line-height:1; padding:0 2px;" title="Xóa quy tắc này">&times;</span>
-    </span>
-  `).join('');
+  c.innerHTML = currentWorkspaceRules.map((r, idx) => {
+    const isAllow = r.startsWith('!') || r.includes('action="allow"');
+    const bg = isAllow ? '#dafbe1' : '#f6f8fa';
+    const border = isAllow ? '#82e596' : '#d0d7de';
+    const color = isAllow ? '#1a7f37' : '#1f2328';
+    const badgeLabel = isAllow ? '<span style="font-size:10px; font-weight:700; color:#1a7f37; margin-right:4px;">[WHITELIST]</span>' : '';
+    return `
+      <span class="badge" style="background:${bg}; border:1px solid ${border}; color:${color}; padding:3px 8px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">
+        ${badgeLabel}<code>${r}</code>
+        <span onclick="removeRuleChip(${idx})" style="cursor:pointer; color:#cf222e; font-weight:bold; font-size:14px; line-height:1; padding:0 2px;" title="Xóa quy tắc này">&times;</span>
+      </span>
+    `;
+  }).join('');
   const ta = document.getElementById('rules-raw-textarea');
   if (ta && !isRulesTextMode) {
     ta.value = currentWorkspaceRules.join('\n');
@@ -4868,17 +4875,19 @@ window.onload = function() {
             <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.bak')">+ *.bak</button>
             <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.key')">+ *.key</button>
             <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.pem')">+ *.pem</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('!.env.example')" style="color:#1a7f37; background:#dafbe1; border-color:#82e596; font-weight:700;">+ !.env.example (Whitelist)</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('!*.example')" style="color:#1a7f37; background:#dafbe1; border-color:#82e596; font-weight:700;">+ !*.example (Whitelist)</button>
           </div>
           <div style="font-size:11px; color:#656d76; margin-top:8px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:var(--radius-sharp); padding:6px 10px; display:flex; align-items:center; gap:8px;">
-            <span style="color:#0969da;">${ICONS.shield}</span>
-            <span><strong>Mẹo với file .env:</strong> Chức năng này giúp loại trừ các file bí mật ra khỏi mạng. Nếu bạn muốn mã hóa để chia sẻ file .env an toàn với đồng đội, hãy chuyển sang <strong><a href="javascript:void(0)" onclick="switchRole('env')" style="color:#0969da; text-decoration:underline;">[Tab 4: EnvShield &amp; Vault]</a></strong>.</span>
+            <span style="color:#1a7f37;">${ICONS.shield}</span>
+            <span><strong>Mẹo Whitelist &amp; file .env:</strong> Thêm tiền tố <code>!</code> để tạo ngoại lệ Whitelist (ví dụ: <code>!.env.example</code> sẽ cho phép chia sẻ file mẫu ngay cả khi đang chặn <code>.env*</code>). Để mã hóa và chia sẻ file .env thật an toàn, hãy chuyển sang <strong><a href="javascript:void(0)" onclick="switchRole('env')" style="color:#0969da; text-decoration:underline;">[Tab 4: EnvShield &amp; Vault]</a></strong>.</span>
           </div>
         </div>
 
         <!-- NHẬP MẪU MỚI -->
         <div id="rules-builder-view">
           <div style="display:flex; gap:8px; margin-bottom:10px;">
-            <input type="text" id="custom-rule-input" class="input-text" placeholder="Nhập mẫu cần loại trừ (ví dụ: *.bak, cache/, temp/)..." style="flex:1; height:34px; font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomRule();}">
+            <input type="text" id="custom-rule-input" class="input-text" placeholder="Nhập mẫu loại trừ (vd: *.bak) hoặc cho phép/whitelist với dấu ! (vd: !.env.example)..." style="flex:1; height:34px; font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomRule();}">
             <button type="button" class="btn-sec" onclick="addCustomRule()" style="height:34px; padding:0 16px; font-size:12px; white-space:nowrap;">+ Thêm</button>
           </div>
 

@@ -338,11 +338,13 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         }
     }
 
+    bool is_localhost = (peer_ip == "127.0.0.1" || peer_ip == "::1" || tunneled_session_id > 0);
+
     if (!current_session && !ticket.empty()) {
-        if (ticket == "local_admin") {
+        if (ticket == "local_admin" && is_localhost) {
             new_session_token = create_session("host_admin", core::Role::READ_WRITE, 86400, "local_admin");
             current_session = validate_session(new_session_token);
-        } else {
+        } else if (ticket != "local_admin") {
             auto sess_opt = control_server_.find_session_by_ticket(ticket);
             if (sess_opt) {
                 new_session_token = create_session(sess_opt->identity, sess_opt->role, 14400, ticket);
@@ -377,7 +379,6 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
     }
 
     // Local loopback status query for host CLI (slug status, slug totp, slug web)
-    bool is_localhost = (peer_ip == "127.0.0.1" || peer_ip == "::1" || tunneled_session_id > 0);
     if (path == "/api/status" && is_localhost) {
         json j;
         j["port"] = control_server_.port();

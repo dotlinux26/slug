@@ -47,7 +47,7 @@ docs/
 
 ### 3.2. Thu bài thi / bài tập sinh viên phòng máy một chạm (Blind Drop)
 - **Thực trạng:** Giảng viên cần thu bài 40–50 sinh viên nhanh chóng, không bị nghẽn mạng WAN như Google Drive, không phức tạp như tạo tài khoản FTP/Domain, và **đặc biệt phải chống nhìn trộm / chép bài của bạn khác**. `python -m http.server` không hỗ trợ tính năng này (ai cũng xem và tải được file người khác vừa nộp).
-- **Lời giải Slug:** Giảng viên khởi tạo workspace với quyền Ghi **Write-Only (`[w]`)**. Sinh viên kéo thả bài vào trình duyệt Web Dropbox hoặc gõ `slug push`. Tầng `SlugVFS Jail` cưỡng chế chặn lệnh đọc (`read_file`) và liệt kê (`list_dir`) đối với máy khách, đảm bảo sinh viên chỉ nộp được bài mà không thể xem bài của bạn khác. Zero-setup, chạy offline hoàn toàn.
+- **Lời giải Slug:** Giảng viên khởi tạo workspace với quyền Ghi **Write-Only (`[w]`)**, cấp tài khoản chung quyền nộp bài cho cả lớp (hoặc cấp mã OTP riêng cho từng máy). Sinh viên đăng nhập tài khoản chung rồi kéo thả bài vào trình duyệt Web Dropbox hoặc gõ `slug push`. Tầng `SlugVFS Jail` cưỡng chế chặn lệnh đọc (`read_file`) và liệt kê (`list_dir`) đối với máy khách, đảm bảo sinh viên chỉ nộp được bài mà không thể xem bài của bạn khác. Zero-setup, chạy offline hoàn toàn.
 
 ### 3.3. Chia sẻ mã nguồn nhóm có kiểm soát (Selective Staging)
 - **Thực trạng:** Lập trình viên muốn gửi nhanh thư mục code cho bạn cùng nhóm để gỡ lỗi. Các công cụ FTP hay HTTP Server chỉ là "đường ống thụ động" — gặp gì gửi nấy, dẫn đến việc gửi thừa hàng trăm MB rác build (`node_modules/`, `build/`) và lỡ tay chia sẻ nhầm file `.env` chứa token/khóa bí mật.

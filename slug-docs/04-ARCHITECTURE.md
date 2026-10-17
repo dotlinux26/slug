@@ -130,3 +130,81 @@ Hệ thống chia sẻ workspace phải đảm bảo việc một host chạy Li
    * Khi ghi xuống đĩa, Slug sử dụng `std::filesystem::path::preferred_separator` để ánh xạ chính xác sang cấu trúc thư mục bản địa của hệ điều hành.
 3. **Cơ Chế Khóa VFS (Path Jailing):**
    * Hàm `resolve_safe_path` thực hiện chuẩn hóa `weakly_canonical` và kiểm tra tiền tố thư mục gốc, lập tức từ chối mọi thủ thuật vượt ngục thư mục như `../../etc/passwd` hoặc `..\..\Windows\System32`.
+
+---
+
+## 5. Kiến Trúc Mật Mã Toàn Diện & Sự Khác Biệt Giữa 3 Bộ Suite
+
+Slug thiết kế kiến trúc mật mã theo mô hình trừu tượng hóa đa tầng (`ICryptoSuite`), cho phép hệ thống linh hoạt chuyển đổi giữa mật mã cổ điển, mật mã hiện đại tốc độ cao và mật mã Hậu Lượng Tử (Post-Quantum Cryptography - PQC) mà không làm thay đổi tầng giao vận hay giao thức tệp ảo.
+
+### 5.1. Bảng So Sánh Chi Tiết 3 Bộ Suite Mật Mã
+
+| Tiêu Chí / Thuật Toán | **Suite 1: Classical** | **Suite 2: Modern (Mặc định)** | **Suite 3: Pure PQC** |
+| :--- | :--- | :--- | :--- |
+| **Mã định danh (Suite ID)** | `0x01` (`classical`) | `0x02` (`modern`) | `0x03` (`pqc`) |
+| **Hàm băm (Hashing)** | SHA-256 (NIST FIPS 180-4) | **BLAKE3** (Merkle Tree 256-bit) | **BLAKE3** (Merkle Tree 256-bit) |
+| **Phái sinh khóa (KDF)** | HKDF-SHA256 (RFC 5869) | **BLAKE3-KDF** (Key Derivation) | **BLAKE3-KDF** (Key Derivation) |
+| **Trao đổi khóa (KEM / ECDH)**| **X25519** (Curve25519 ECDH, 32B) | **X25519** (Curve25519 ECDH, 32B) | **ML-KEM-768** (NIST FIPS 203 PQC) |
+| **Chữ ký số (Signature)** | **Ed25519** (RFC 8032, 64B sig) | **Ed25519** (RFC 8032, 64B sig) | **ML-DSA-65** (NIST FIPS 204 PQC) |
+| **Mã hóa đối xứng (AEAD)** | **XChaCha20-Poly1305** (24B Nonce)| **XChaCha20-Poly1305** (24B Nonce)| **XChaCha20-Poly1305** (24B Nonce)|
+| **Kích thước Public Key** | 32 bytes | 32 bytes | **1.184 bytes** |
+| **Kích thước Ciphertext KEM**| 32 bytes | 32 bytes | **1.088 bytes** |
+| **Kháng Máy Tính Lượng Tử** | ❌ Không (Bị thuật toán Shor phá) | ⚠️ Kháng lượng tử tầng đối xứng | ✅ **100% Kháng Lượng Tử Toàn Diện** |
+| **Tốc độ bắt tay (Handshake)**| Cực nhanh (< 1 ms LAN) | Siêu tốc (< 0.5 ms LAN) | Rất nhanh (~1–2 ms LAN) |
+| **Mục đích sử dụng** | Thiết bị nhúng, CPU đời cũ, chuẩn tương thích quốc tế rộng rãi | Cân bằng hoàn hảo tốc độ & hiệu năng cao cho môi trường lập trình hàng ngày | Bảo mật tuyệt đối trước mối đe dọa "Thu thập trước, giải mã sau" (Store-Now-Decrypt-Later) |
+
+---
+
+### 5.2. Bản Chất Khác Biệt Của Từng Bộ Suite
+
+1. **Suite 1 (Classical - Chuẩn Cổ Điển Tin Cậy):**
+   - Sử dụng hoàn toàn các nguyên thủy mật mã đã được kiểm chứng qua hàng chục năm: **SHA-256**, **HKDF-SHA256**, **X25519**, **Ed25519**.
+   - Phù hợp nhất cho môi trường yêu cầu tuân thủ nghiêm ngặt các chứng chỉ kế thừa hoặc chạy trên phần cứng vi điều khiển/nhúng không có tập lệnh mở rộng SIMD.
+
+2. **Suite 2 (Modern - Hiện Đại Tối Ưu Tốc Độ):**
+   - Đột phá về tốc độ nhờ thay thế toàn bộ tầng băm và KDF bằng **BLAKE3**.
+   - BLAKE3 tận dụng cấu trúc cây Merkle kết hợp song song hóa phần cứng SIMD (AVX-512, AVX2, ARM Neon), cho tốc độ băm tệp nhanh hơn SHA-256 từ 6–12 lần, giúp việc tính toán checksum của các file dự án lớn hàng gigabyte diễn ra tức thì.
+   - Vẫn sử dụng khóa trao đổi X25519 siêu nhẹ (32 bytes), giữ độ trễ kết nối ở mức tối thiểu.
+
+3. **Suite 3 (Pure PQC - Hậu Lượng Tử Thuần Khiết):**
+   - Triển khai đầy đủ hai bộ tiêu chuẩn mật mã Hậu Lượng Tử chính thức được Viện Tiêu chuẩn và Công nghệ Quốc gia Hoa Kỳ ban hành vào tháng 8/2024:
+     - **ML-KEM-768 (FIPS 203)**: Cơ chế đóng gói khóa dựa trên bài toán Mạng Tinh Thể (Module Lattice - M-LWE), thay thế hoàn toàn thuật toán Diffie-Hellman / RSA.
+     - **ML-DSA-65 (FIPS 204)**: Thuật toán chữ ký số hậu lượng tử dựa trên Module Learning with Errors, đảm bảo định danh không thể bị giả mạo ngay cả khi máy tính lượng tử quy mô lớn xuất hiện.
+   - Triệt tiêu hoàn toàn kịch bản tấn công **"Thu thập dữ liệu hôm nay, chờ có máy tính lượng tử để giải mã trong tương lai" (Store-Now-Decrypt-Later)**.
+
+---
+
+### 5.3. Các Kỹ Thuật Mật Mã "Hardcore" Được Ứng Dụng Tổng Quát Trong Toàn Bộ Slug
+
+Kiến trúc mật mã của Slug không dừng lại ở việc gọi API thư viện, mà áp dụng các nguyên lý bảo mật thực chiến ở mức sâu nhất:
+
+#### 1. Forward Secrecy Tuyệt Đối (Bảo Mật Chuyển Tiếp Từng Phiên)
+- Mọi phiên kết nối đều sinh ra cặp khóa KEM dùng một lần (**Ephemeral Keypair**). 
+- `SharedSecret` chỉ tồn tại trong bộ nhớ RAM tạm thời và được dọn dẹp bằng kỹ thuật ghi đè an toàn (`explicit_bzero` / `SecureZeroMemory`) ngay khi phiên làm việc chấm dứt.
+- Kể cả khi kẻ tấn công đánh cắp được máy tính của Host hoặc Client sau đó, toàn bộ dữ liệu gói tin bắt được trên mạng trước đây vĩnh viễn không thể giải mã được.
+
+#### 2. Kỹ Thuật Directional Salt & Nonce Anti-Collision (Chống Đụng Độ Nonce Cho XChaCha20)
+- Với mật mã dòng ChaCha20, việc **tái sử dụng Nonce với cùng một khóa (Nonce Reuse)** là thảm họa bảo mật (dẫn đến việc giải mã được cả hai luồng bản rõ qua phép XOR).
+- Slug giải quyết triệt để vấn đề này trong môi trường mạng Full-Duplex (cả hai chiều gửi nhận đồng thời) bằng cơ chế:
+  - Sinh **2 Muối Độc Lập** từ `SharedSecret`: `ClientToServer_Salt` (16 bytes) và `ServerToClient_Salt` (16 bytes).
+  - Ghép với bộ đếm gói tin đơn điệu tăng dần (**Monotonic 64-bit SeqNum**): $\text{Nonce} = \text{Salt}_{16} \parallel \text{SeqNum}_8$.
+  - Dù hai bên gửi gói tin số `SeqNum = 1` tại cùng một tích tắc, Nonce 24 bytes ở hai chiều vẫn hoàn toàn độc lập, đảm bảo an toàn tuyệt đối.
+
+#### 3. Bọc Khối Dữ Liệu Phân Mảnh Kèm AAD (Chunk-Level Authenticated Streaming)
+- Slug không mã hóa cả file lớn vào một mảng bộ nhớ (tránh cạn kiệt RAM). Dữ liệu được băm nhỏ thành các khối chuẩn 64 KiB.
+- Mỗi khối dữ liệu được bọc bởi **XChaCha20-Poly1305 AEAD** với trường dữ liệu bổ sung (**Associated Data - AAD**) chứa:
+  $$\text{AAD} = \text{PacketLength}\ (4\text{ bytes}) \parallel \text{SeqNum}\ (8\text{ bytes})$$
+- Phép xác thực MAC Poly1305 (16 bytes tag) bảo vệ toàn vẹn cả phần thân dữ liệu lẫn header. Kẻ tấn công trên đường truyền không thể:
+  - Cắt ngắn hoặc chèn thêm byte vào gói tin.
+  - Tráo đổi thứ tự giữa các chunk.
+  - Phát lại gói tin cũ (nhờ cửa sổ trượt Anti-Replay Sliding Window).
+
+#### 4. EnvShield: Phòng Vệ Bí Mật Trong RAM (Zero-Plaintext In-Memory Injection)
+- Giải quyết bài toán bảo vệ file `.env` trước các AI coding agent:
+  - **Lúc nghỉ (At Rest):** File `.env` gốc được mã hóa thành `.env.pqc` trong workspace và cất bản dự phòng vào Central Vault (`~/.slug/env_vault/`), hoàn toàn xóa sổ file `.env` plaintext trên ổ cứng.
+  - **Lúc chạy (In Execution):** Lệnh `slug env run -- <lệnh>` đọc `.env.pqc`, giải mã trực tiếp vào bộ nhớ RAM, phân tích thành các cặp biến môi trường rồi tiêm thẳng vào khối `Environment Block` khi tạo tiến trình con của hệ điều hành (`CreateProcessW` trên Windows, `execve` trên Linux).
+  - Tiến trình con thực thi với đầy đủ biến môi trường, trong khi ổ cứng hoàn toàn sạch sẽ, không có bất kỳ byte plaintext nào cho AI đọc trộm.
+
+#### 5. Cơ Chế Xác Thực Đa Lớp: Vé Phiên Dùng 1 Lần (TOTP / Ephemeral Ticket)
+- Trước khi nâng cấp lên kênh PQC AEAD đầy đủ, Slug xác thực người dùng bằng mã OTP 8 chữ số (chu kỳ xoay vòng 30 giây, tự hủy ngay khi xác thực thành công) hoặc vé phiên có chữ ký số.
+- Phân tách quyền hạn rõ ràng thành 3 mức cố định tại tầng VFS: `READ_WRITE` (`[rw]`), `READ_ONLY` (`[r]`), và `WRITE_ONLY` (`[w]`), ngăn ngừa triệt để mọi hành vi lạm quyền hoặc vượt ranh giới tài nguyên.

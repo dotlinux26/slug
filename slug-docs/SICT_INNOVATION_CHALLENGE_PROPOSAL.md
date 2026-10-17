@@ -107,8 +107,8 @@ Trong các công cụ truyền file thông thường, nếu người dùng quên
 - Một file bị AI Guard hoặc quy tắc bảo mật đánh dấu cách ly (`QUARANTINED` / `RULE_BLOCKED`) sẽ bị từ chối ngay tại ranh giới filesystem.
 - Kể cả khi client cố tình gửi request tải trực tiếp một chunk của file đó mà bỏ qua manifest, máy chủ Slug vẫn chặn đứng tại chỗ.
 
-### 3.4. Thu bài tập một chiều với OTP Write-Only (`[w]` Blind Drop)
-- Giáo viên chỉ cần chạy `slug add ./bai_nop -p 9443` và cấp mã OTP `[w]` cho sinh viên.
+### 3.4. Thu bài tập một chiều Write-Only (`[w]` Blind Drop)
+- Giáo viên chỉ cần chạy `slug add ./bai_nop -p 9443` và cấp tài khoản chung quyền `[w]` (hoặc cấp mã OTP `[w]` cho từng máy) cho sinh viên.
 - Sinh viên chỉ có quyền tải bài lên qua Web Dropbox hoặc lệnh `slug push`.
 - Tầng `SlugVFS Jail` cưỡng chế chặn tuyệt đối quyền đọc (`read_file`) và liệt kê (`list_dir`) đối với role này. Sinh viên hoàn toàn không thể xem hoặc tải bài của nhau về chép.
 

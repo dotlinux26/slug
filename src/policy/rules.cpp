@@ -64,12 +64,17 @@ SlugRule RulesManager::parse_rule_line(const std::string& line) {
             } catch (...) {}
         }
     } else {
-        // Plain gitignore-style rule in rules.conf
+        // Plain gitignore-style rule in rules.conf / .slugignore
         static std::atomic<uint64_t> rule_counter{1};
-        rule.value = s;
-        rule.action = RuleAction::BLOCK;
-        rule.type = RuleType::PATH;
         rule.id = "rule_" + std::to_string(rule_counter++);
+        rule.type = RuleType::PATH;
+        if (s.front() == '!') {
+            rule.action = RuleAction::ALLOW;
+            rule.value = core::Utils::trim(s.substr(1));
+        } else {
+            rule.action = RuleAction::BLOCK;
+            rule.value = s;
+        }
     }
     return rule;
 }
@@ -152,25 +157,44 @@ bool RulesManager::remove_rule(const std::string& id) {
 }
 
 const SlugRule* RulesManager::match(const std::string& protocol_path, std::string_view content) const {
+    const SlugRule* last_match = nullptr;
     for (const auto& r : rules_) {
+        bool matches = false;
         switch (r.type) {
             case RuleType::PATH: {
                 std::string pat = r.value;
                 if (pat.rfind("./", 0) == 0) pat = pat.substr(2);
 
-                if (protocol_path == pat || protocol_path == r.value || protocol_path.rfind(pat, 0) == 0) {
-                    return &r;
-                }
-                // Check filename match (e.g. rule ".env" matches "subfolder/.env")
-                std::filesystem::path pp(protocol_path);
-                if (pp.filename().string() == pat || pp.filename().string() == r.value) {
-                    return &r;
-                }
-                // Check wildcard pattern match
-                if (pat.find('*') != std::string::npos) {
-                    if (pat.back() == '*') {
-                        std::string prefix = pat.substr(0, pat.size() - 1);
-                        if (protocol_path.rfind(prefix, 0) == 0) return &r;
+                if (protocol_path == pat || protocol_path == r.value) {
+                    matches = true;
+                } else {
+                    std::filesystem::path pp(protocol_path);
+                    std::string fname = pp.filename().generic_string();
+                    if (fname == pat || fname == r.value) {
+                        matches = true;
+                    } else if (!pat.empty() && pat.back() == '/') {
+                        // Directory match: e.g. "node_modules/" matches "node_modules/foo" or "sub/node_modules/foo"
+                        if (protocol_path.rfind(pat, 0) == 0 || protocol_path.find("/" + pat) != std::string::npos) {
+                            matches = true;
+                        }
+                    } else if (pat.find('*') != std::string::npos) {
+                        if (pat.front() == '*' && pat.back() != '*') {
+                            // Suffix wildcard: e.g. "*.example", "*.tmp", "*.bak"
+                            std::string suffix = pat.substr(1);
+                            if (core::Utils::ends_with(protocol_path, suffix) || core::Utils::ends_with(fname, suffix)) {
+                                matches = true;
+                            }
+                        } else if (pat.back() == '*' && pat.front() != '*') {
+                            // Prefix wildcard: e.g. ".env*"
+                            std::string prefix = pat.substr(0, pat.size() - 1);
+                            if (protocol_path.rfind(prefix, 0) == 0 || fname.rfind(prefix, 0) == 0) {
+                                matches = true;
+                            }
+                        } else if (pat == "*") {
+                            matches = true;
+                        }
+                    } else if (protocol_path.rfind(pat + "/", 0) == 0 || protocol_path.find("/" + pat + "/") != std::string::npos) {
+                        matches = true;
                     }
                 }
                 break;
@@ -180,14 +204,15 @@ const SlugRule* RulesManager::match(const std::string& protocol_path, std::strin
                 for (const auto& ext : exts) {
                     std::string clean_ext = core::Utils::trim(ext);
                     if (core::Utils::ends_with(protocol_path, clean_ext)) {
-                        return &r;
+                        matches = true;
+                        break;
                     }
                 }
                 break;
             }
             case RuleType::CONTENT: {
                 if (!content.empty() && content.find(r.value) != std::string_view::npos) {
-                    return &r;
+                    matches = true;
                 }
                 break;
             }
@@ -195,14 +220,17 @@ const SlugRule* RulesManager::match(const std::string& protocol_path, std::strin
                 if (!content.empty()) {
                     std::string c_str(content);
                     if (std::regex_search(c_str, r.regex)) {
-                        return &r;
+                        matches = true;
                     }
                 }
                 break;
             }
         }
+        if (matches) {
+            last_match = &r;
+        }
     }
-    return nullptr;
+    return last_match;
 }
 
 } // namespace slug::policy

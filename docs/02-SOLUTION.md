@@ -64,13 +64,15 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
   - Dùng `python -m http.server`: Không hỗ trợ upload. Nếu dùng script upload thì ai cũng nhìn thấy và tải được bài của bạn khác về.
   - Dùng FTP/SMB: Cấu hình phức tạp, cần tạo tài khoản user hệ thống, phân quyền thư mục cồng kềnh.
 - **Giải pháp với Slug:**
-  1. Giảng viên chỉ cần gõ 1 lệnh duy nhất:
+  1. Giảng viên chỉ cần gõ 1 lệnh khởi tạo trạm thu bài:
      ```bash
      slug add ./nop_bai -p 9443
      ```
-  2. Slug tự động sinh ra **mã OTP Quyền Ghi (`[w]` Write-Only)**. Giảng viên đọc mã OTP này cho cả lớp hoặc chiếu lên máy chiếu.
+  2. Giảng viên cấp tài khoản chung quyền Ghi (`[w]` Write-Only / Nộp bài) cho sinh viên:
+     - Giảng viên tạo nhanh tài khoản chung (hoặc tài khoản lớp) trên Web Trạm Điều Khiển hoặc qua lệnh CLI (ví dụ: username `sinhvien` với vai trò `[w] Write-Only`) để cả lớp cùng đăng nhập nộp bài đồng thời mà không bị giới hạn 1 máy.
+     - *(Lưu ý: Mã OTP 8 chữ số là vé định danh bảo mật dùng một lần cho từng phiên/1 máy riêng lẻ; đối với lớp học đông người, cơ chế tài khoản RBAC chung với quyền `[w]` giúp toàn bộ 40–50 sinh viên cùng nộp bài thuận tiện).*
   3. Sinh viên mở trình duyệt Web hoặc dùng lệnh nộp bài:
-     - Sinh viên kéo thả bài làm vào Web Dropbox hoặc gõ `slug push`.
+     - Sinh viên đăng nhập tài khoản chung rồi kéo thả bài làm vào Web Dropbox hoặc gõ `slug push`.
      - **Cơ chế VFS Jail & RBAC:** Tầng hệ thống tập tin ảo của Slug cưỡng chế quyền `WRITE_ONLY`. Sinh viên chỉ được phép ghi file lên server, **hoàn toàn bị cấm liệt kê thư mục (`list_dir`) hoặc đọc tệp (`read_file`)**.
   - **Lợi ích:** Thu bài cực kỳ gọn nhẹ, zero-setup, chống nhìn trộm bài thi triệt để, hoạt động mượt mà ngay cả khi phòng máy mất kết nối Internet quốc tế.
 
