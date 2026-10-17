@@ -3386,47 +3386,8 @@ int cmd_portal(int argc, char* argv[]) {
 
             if (path == "/api/fs/pick-folder") {
                 nlohmann::json res;
-                std::string chosen_path = "";
-#if defined(SLUG_PLATFORM_WINDOWS)
-                std::string ps_cmd = "powershell -NoProfile -NonInteractive -Command \""
-                    "Add-Type -AssemblyName System.Windows.Forms; "
-                    "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
-                    "$f.Description = 'Chọn thư mục để chia sẻ qua Slug Post-Quantum Gateway'; "
-                    "$f.ShowNewFolderButton = $true; "
-                    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
-                    "  [Console]::Out.Write($f.SelectedPath) "
-                    "}\"";
-                FILE* pipe = _popen(ps_cmd.c_str(), "r");
-                if (pipe) {
-                    char buf[512];
-                    while (fgets(buf, sizeof(buf), pipe)) {
-                        chosen_path += buf;
-                    }
-                    _pclose(pipe);
-                }
-                while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
-                    chosen_path.pop_back();
-                }
-#elif defined(SLUG_PLATFORM_POSIX)
-                FILE* pipe = popen("zenity --file-selection --directory --title='Chọn thư mục chia sẻ qua Slug' 2>/dev/null", "r");
-                if (pipe) {
-                    char buf[512];
-                    while (fgets(buf, sizeof(buf), pipe)) {
-                        chosen_path += buf;
-                    }
-                    pclose(pipe);
-                }
-                while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
-                    chosen_path.pop_back();
-                }
-#endif
-                if (!chosen_path.empty()) {
-                    res["status"] = "ok";
-                    res["path"] = chosen_path;
-                } else {
-                    res["status"] = "cancelled";
-                    res["path"] = "";
-                }
+                res["status"] = "cancelled";
+                res["path"] = "";
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 return;
             }

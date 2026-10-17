@@ -1521,25 +1521,10 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/fs/pick-folder":
-            folder = ""
-            if sys.platform == "win32":
-                ps_script = (
-                    "Add-Type -AssemblyName System.Windows.Forms; "
-                    "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
-                    "$f.Description = 'Slug: Chon thu muc workspace'; "
-                    "$f.ShowNewFolderButton = $true; "
-                    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"
-                )
-                try:
-                    res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_script], capture_output=True, text=True, timeout=60)
-                    folder = res.stdout.strip()
-                except Exception:
-                    folder = ""
-            has_slug = os.path.exists(os.path.join(folder, ".slug")) if folder else False
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "path": folder, "has_slug": has_slug}).encode("utf-8"))
+            self.wfile.write(json.dumps({"status": "cancelled", "path": ""}).encode("utf-8"))
             return
 
         if path == "/api/workspace/rules":

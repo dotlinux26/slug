@@ -3571,26 +3571,7 @@ function updateEnvTargetLabel(val) {
 }
 
 async function chooseLocalSaveLocation(destId) {
-  try {
-    const res = await fetch('/api/fs/pick-folder').then(r => r.json());
-    if (res.status === 'ok' && res.path) {
-      const target = document.getElementById(destId);
-      if (target) {
-        target.value = res.path;
-        if (destId === 'env-target-folder') updateEnvTargetLabel(res.path);
-        if (destId === 'host-path' && typeof checkHostPathHasSlug === 'function') {
-          checkHostPathHasSlug(res.path);
-        }
-        if (destId === 'custom-audit-path' && typeof setCustomAuditWorkspace === 'function') {
-          setCustomAuditWorkspace();
-        }
-      }
-      return;
-    } else if (res.status === 'cancelled') {
-      return;
-    }
-  } catch(e) {}
-
+  // 1. Uu tien Native Browser Directory Picker (Chrome/Edge/Brave/Opera - mo truc tiep tuc thi 0ms)
   if (window.showDirectoryPicker) {
     try {
       const handle = await window.showDirectoryPicker();
@@ -3602,6 +3583,9 @@ async function chooseLocalSaveLocation(destId) {
           if (destId === 'host-path' && typeof checkHostPathHasSlug === 'function') {
             checkHostPathHasSlug(handle.name);
           }
+          if (destId === 'custom-audit-path' && typeof setCustomAuditWorkspace === 'function') {
+            setCustomAuditWorkspace();
+          }
         }
         return;
       }
@@ -3610,12 +3594,15 @@ async function chooseLocalSaveLocation(destId) {
     }
   }
 
-  const picker = document.getElementById('dir-picker-' + destId);
+  // 2. Fallback sang the input HTML5 co san trong DOM
+  const picker = document.getElementById('dir-picker-' + destId) ||
+                 (destId === 'env-target-folder' ? (document.getElementById('dir-picker-env-target-folder') || document.getElementById('dir-picker-env-target')) : null);
   if (picker) {
     picker.click();
     return;
   }
 
+  // 3. Fallback tao input file dynamic
   const tempInput = document.createElement('input');
   tempInput.type = 'file';
   tempInput.webkitdirectory = true;
@@ -3632,6 +3619,9 @@ async function chooseLocalSaveLocation(destId) {
         if (destId === 'env-target-folder') updateEnvTargetLabel(name);
         if (destId === 'host-path' && typeof checkHostPathHasSlug === 'function') {
           checkHostPathHasSlug(name);
+        }
+        if (destId === 'custom-audit-path' && typeof setCustomAuditWorkspace === 'function') {
+          setCustomAuditWorkspace();
         }
       }
     }
@@ -5100,7 +5090,7 @@ window.onload = function() {
           </label>
           <div class="path-picker-row" style="display:flex; gap:8px; align-items:stretch;">
             <input type="text" id="env-target-folder" class="input-text" style="flex:1; height:34px; box-sizing:border-box; font-size:12px;" value="" placeholder="Bắt buộc: Bấm [Chọn Thư Mục Máy...] hoặc chọn từ host bên dưới..." oninput="updateEnvTargetLabel(this.value)" required>
-            <input type="file" id="dir-picker-env-target" webkitdirectory directory style="display:none;" onchange="handleDirInputSelected(this, 'env-target-folder'); updateEnvTargetLabel(document.getElementById('env-target-folder').value);">
+            <input type="file" id="dir-picker-env-target-folder" webkitdirectory directory style="display:none;" onchange="handleDirInputSelected(this, 'env-target-folder'); updateEnvTargetLabel(document.getElementById('env-target-folder').value);">
             <button type="button" class="btn-sec" onclick="chooseLocalSaveLocation('env-target-folder')" style="height:34px !important; box-sizing:border-box; padding:0 14px; font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;">
               ${ICONS.folder} Chọn Thư Mục Máy...
             </button>
