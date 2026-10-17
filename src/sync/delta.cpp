@@ -3,6 +3,7 @@
 #include "src/core/utils.hpp"
 #include "src/platform/fs.hpp"
 #include <set>
+#include <unordered_set>
 
 namespace slug::sync {
 
@@ -108,8 +109,14 @@ DeltaPlan DeltaCalculator::compute_plan(
             continue;
         }
 
-        // Modified file: compare chunks to find exactly which changed
+        // Modified file: compare chunks by content address (Blake3 hash) for robust deduplication
         auto local_chunks = Chunker::chunk_buffer(*local_data);
+        std::unordered_set<std::string> local_hashes;
+        local_hashes.reserve(local_chunks.size());
+        for (const auto& lc : local_chunks) {
+            local_hashes.insert(lc.blake3_hash);
+        }
+
         FileDelta fd;
         fd.relative_path = rem_file.relative_path;
         fd.is_modified = true;
@@ -117,13 +124,7 @@ DeltaPlan DeltaCalculator::compute_plan(
 
         uint64_t file_transfer_bytes = 0;
         for (const auto& rem_chunk : rem_file.chunks) {
-            bool chunk_match = false;
-            if (rem_chunk.index < local_chunks.size()) {
-                if (local_chunks[rem_chunk.index].blake3_hash == rem_chunk.blake3_hash &&
-                    local_chunks[rem_chunk.index].size == rem_chunk.size) {
-                    chunk_match = true;
-                }
-            }
+            bool chunk_match = (local_hashes.find(rem_chunk.blake3_hash) != local_hashes.end());
             if (!chunk_match) {
                 fd.needed_chunk_indices.push_back(rem_chunk.index);
                 file_transfer_bytes += rem_chunk.size;

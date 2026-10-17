@@ -1,6 +1,8 @@
 #include "src/core/vfs.hpp"
 #include "src/platform/fs.hpp"
 #include "src/crypto/blake3_wrapper.hpp"
+#include "src/ai/scanner.hpp"
+#include "src/core/utils.hpp"
 #include <algorithm>
 #include <fstream>
 
@@ -149,17 +151,18 @@ std::pair<VfsStatus, std::vector<VfsEntry>> SlugVFS::list_directory(std::string_
         if (fname == ".slug" || fname == ".git") continue;
 
         fs::path rel_p = fs::relative(item.path(), server_root_, ec);
-        std::string vpath = "/" + rel_p.string();
+        std::string proto_rel = platform::PathUtils::to_protocol_path(rel_p);
+        std::string vpath = "/" + proto_rel;
         bool is_dir = item.is_directory(ec);
 
         // Filter evaluation
         if (filter_mode_ != FilterMode::NONE) {
             bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
-            auto dec = policy_engine_.evaluate(rel_p.string(), is_dir, {}, ignore_gi);
+            auto dec = policy_engine_.evaluate(proto_rel, is_dir, {}, ignore_gi);
             if (!dec.is_allowed) continue;
 
             if (enable_ai_ && audit_index_ && !is_dir) {
-                if (audit_index_->is_flagged(rel_p.string())) continue;
+                if (audit_index_->is_flagged(proto_rel)) continue;
             }
         }
 
@@ -204,6 +207,18 @@ std::pair<VfsStatus, std::vector<uint8_t>> SlugVFS::read_file(std::string_view v
     if (!data) {
         return {VfsStatus::IO_ERROR, {}};
     }
+
+    // Evaluate content-level rules on read file data
+    if (filter_mode_ != FilterMode::NONE) {
+        std::string_view text_view(reinterpret_cast<const char*>(data->data()), data->size());
+        bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
+        std::string proto = (resolved.virtual_path == "/") ? "" : resolved.virtual_path.substr(1);
+        auto dec = policy_engine_.evaluate(proto, false, text_view, ignore_gi);
+        if (!dec.is_allowed) {
+            return {VfsStatus::FILTERED, {}};
+        }
+    }
+
     return {VfsStatus::OK, std::move(*data)};
 }
 
@@ -216,6 +231,36 @@ VfsStatus SlugVFS::write_file(std::string_view virtual_path, std::span<const uin
     std::error_code ec;
     if (!overwrite && fs::exists(resolved.real_path, ec)) {
         return VfsStatus::ACCESS_DENIED;
+    }
+
+    // Evaluate content-level rules and AI Secret Guard on incoming file data
+    if (filter_mode_ != FilterMode::NONE) {
+        std::string_view text_view(reinterpret_cast<const char*>(data.data()), data.size());
+        bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
+        std::string proto = (resolved.virtual_path == "/") ? "" : resolved.virtual_path.substr(1);
+        auto dec = policy_engine_.evaluate(proto, false, text_view, ignore_gi);
+        if (!dec.is_allowed) {
+            return VfsStatus::FILTERED;
+        }
+
+        if (enable_ai_ && ai::AiScanner::is_scannable_file(resolved.real_path)) {
+            ai::AiScanner scanner;
+            std::string text(data.begin(), data.end());
+            auto finding = scanner.scan_content(proto, text, false);
+            if (finding.has_secret) {
+                if (audit_index_) {
+                    ai::AuditIndexEntry idx_entry;
+                    idx_entry.file_path = proto;
+                    idx_entry.blake3_hash = crypto::Blake3::hash_hex(data);
+                    idx_entry.scanned_at = core::Utils::current_timestamp();
+                    idx_entry.status = (finding.detector == "AI Guard") ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
+                    idx_entry.line_number = finding.line_number;
+                    idx_entry.reason = finding.reason;
+                    audit_index_->update_entry(idx_entry);
+                }
+                return VfsStatus::FILTERED;
+            }
+        }
     }
 
     platform::PathUtils::ensure_directory(resolved.real_path.parent_path());

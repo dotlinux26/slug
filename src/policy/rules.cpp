@@ -64,10 +64,11 @@ SlugRule RulesManager::parse_rule_line(const std::string& line) {
         }
     } else {
         // Plain gitignore-style rule in rules.conf
-        rule.id = "rule_" + std::to_string(rule.value.size());
+        static std::atomic<uint64_t> rule_counter{1};
+        rule.value = s;
         rule.action = RuleAction::BLOCK;
         rule.type = RuleType::PATH;
-        rule.value = s;
+        rule.id = "rule_" + std::to_string(rule_counter++);
     }
     return rule;
 }

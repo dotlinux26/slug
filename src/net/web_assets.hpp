@@ -24,6 +24,41 @@ struct WebSession; // forward declaration
 
 class WebAssets {
 public:
+    static std::string html_escape(std::string_view s) {
+        std::string res;
+        res.reserve(s.size());
+        for (char c : s) {
+            switch (c) {
+                case '&': res += "&amp;"; break;
+                case '<': res += "&lt;"; break;
+                case '>': res += "&gt;"; break;
+                case '"': res += "&quot;"; break;
+                case '\'': res += "&#39;"; break;
+                default: res += c; break;
+            }
+        }
+        return res;
+    }
+
+    static std::string js_escape(std::string_view s) {
+        std::string res;
+        res.reserve(s.size());
+        for (char c : s) {
+            switch (c) {
+                case '\\': res += "\\\\"; break;
+                case '\'': res += "\\'"; break;
+                case '"': res += "\\\""; break;
+                case '\n': res += "\\n"; break;
+                case '\r': res += "\\r"; break;
+                case '<': res += "\\x3C"; break;
+                case '>': res += "\\x3E"; break;
+                case '&': res += "\\x26"; break;
+                default: res += c; break;
+            }
+        }
+        return res;
+    }
+
     static std::string render_forbidden_page(const std::string& reason) {
         std::ostringstream h;
         h << "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>"
@@ -38,7 +73,7 @@ public:
           << ".footer { margin-top: 24px; font-size: 12px; color: var(--text-muted); text-align: center; border-top: 1px solid var(--border-primary); padding-top: 14px; font-family: 'JetBrains Mono', monospace; }"
           << "</style></head><body><div class='card'>"
           << "<h1><span>Access Denied (403)</span> <span class='badge'>PQC Shield</span></h1>"
-          << "<div class='msg'>" << reason << "</div>"
+          << "<div class='msg'>" << html_escape(reason) << "</div>"
           << "<div class='msg'>Anonymous or unauthenticated web access to this Slug workspace is strictly prohibited. You must authenticate through the Slug CLI to negotiate a Post-Quantum session certificate.</div>"
           << "<div class='cli-box'>"
           << "<span style='color:var(--text-muted);'># Step 1: Connect via Slug CLI (authenticates and saves context)</span><br>"
@@ -61,8 +96,19 @@ public:
         const std::string& identity,
         core::Role role)
     {
-        auto manifest = sync::ManifestBuilder::build(workspace_root, 1, static_cast<uint8_t>(suite_id), true);
+        auto manifest = sync::ManifestBuilder::build(workspace_root, 1, static_cast<uint8_t>(suite_id), false);
+        return render_directory_listing(workspace_root, port, suite_id, rel_subpath, identity, role, manifest);
+    }
 
+    static std::string render_directory_listing(
+        const std::filesystem::path& workspace_root,
+        uint16_t port,
+        core::SuiteID suite_id,
+        const std::string& rel_subpath,
+        const std::string& identity,
+        core::Role role,
+        const sync::WorkspaceManifest& manifest)
+    {
         std::string norm_sub = rel_subpath;
         while (!norm_sub.empty() && norm_sub.front() == '/') norm_sub.erase(0, 1);
         while (!norm_sub.empty() && norm_sub.back() == '/') norm_sub.pop_back();
@@ -327,17 +373,17 @@ public:
           << "  if (e.dataTransfer && e.dataTransfer.files) uploadFiles(e.dataTransfer.files);"
           << "});"
           << "</script></head><body>"
-          << "<div class='container' id='drop-container'>"
+          << "<div class='container'>"
           << "<div class='top-bar'>"
           << "<h1><span>Slug Workspace Explorer</span> <span class='badge badge-pqc'>" << core::suite_to_string(suite_id) << "</span></h1>"
           << "<div style='display:flex; align-items:center; gap:8px;'>"
-          << "<div class='user-badge'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg> " << identity << " <span class='role-tag'>" << core::role_to_string(role) << "</span></div>"
+          << "<div class='user-badge'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg> " << html_escape(identity) << " <span class='role-tag'>" << core::role_to_string(role) << "</span></div>"
           << (identity == "host_admin" ? "<a class='btn-sec' href='/admin'>Admin Dashboard</a>" : "")
           << "<a class='btn-sec' href='/logout' style='color:var(--danger);'>Logout</a>"
           << "</div></div>"
 
           << "<div class='ws-summary-box'>"
-          << "<div><strong>REMOTE WORKSPACE:</strong> " << workspace_root.filename().string() << " (Port " << port << ")</div>"
+          << "<div><strong>REMOTE WORKSPACE:</strong> " << html_escape(workspace_root.filename().string()) << " (Port " << port << ")</div>"
           << "<div>Available: <strong>" << core::Utils::format_size(total_workspace_size) << "</strong> (" << manifest.files.size() << " files) &bull; Filtered: <strong>" << manifest.skipped.size() << "</strong> items</div>"
           << "</div>"
 
@@ -353,7 +399,7 @@ public:
             while (std::getline(ss, segment, '/')) {
                 if (segment.empty()) continue;
                 accumulated += (accumulated.empty() ? "" : "/") + segment;
-                h << " / <a href='/drop?dir=" << accumulated << "'>" << segment << "</a>";
+                h << " / <a href='/drop?dir=" << html_escape(accumulated) << "'>" << html_escape(segment) << "</a>";
             }
         }
         h << "</div>"
@@ -393,25 +439,25 @@ public:
                 h << "<tr class='item-row'>";
                 if (item.is_dir) {
                     h << "<td></td>"
-                      << "<td><a class='entry-name' href='/drop?dir=" << item.full_rel_path << "'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> " << item.name << "/</a></td>"
+                      << "<td><a class='entry-name' href='/drop?dir=" << html_escape(item.full_rel_path) << "'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> " << html_escape(item.name) << "/</a></td>"
                       << "<td style='color:var(--text-muted);'>folder</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
-                      << "<td><span class='badge " << item.status_badge_class << "' title='" << item.status_detail << "'>" << item.status << "</span></td>"
-                      << "<td style='text-align:right;'><a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/drop?dir=" << item.full_rel_path << "'>Browse</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" << item.full_rel_path << "\", \"đường dẫn thư mục\")'>Copy Path</button></td>";
+                      << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
+                      << "<td style='text-align:right;'><a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/drop?dir=" << html_escape(item.full_rel_path) << "'>Browse</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'>Copy Path</button></td>";
                 } else {
                     std::string chk = item.selectable
-                        ? ("<input type='checkbox' class='file-check' data-path='" + item.full_rel_path + "' data-size='" + std::to_string(item.size) + "' onchange='updateSelection()'>")
+                        ? ("<input type='checkbox' class='file-check' data-path='" + html_escape(item.full_rel_path) + "' data-size='" + std::to_string(item.size) + "' onchange='updateSelection()'>")
                         : "<input type='checkbox' disabled title='File is shielded/quarantined'>";
 
                     std::string act = item.selectable
-                        ? ("<a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/download?path=" + item.full_rel_path + "'>Download</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" + item.full_rel_path + "\", \"đường dẫn tệp\")'>Copy Path</button>")
+                        ? ("<a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/download?path=" + html_escape(item.full_rel_path) + "'>Download</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'>Copy Path</button>")
                         : "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
 
                     h << "<td>" << chk << "</td>"
-                      << "<td><span style='display:inline-flex; align-items:center; gap:6px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline></svg> " << item.name << "</span></td>"
+                      << "<td><span style='display:inline-flex; align-items:center; gap:6px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline></svg> " << html_escape(item.name) << "</span></td>"
                       << "<td style='color:var(--text-muted);'>file</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
-                      << "<td><span class='badge " << item.status_badge_class << "' title='" << item.status_detail << "'>" << item.status << "</span></td>"
+                      << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
                       << "<td style='text-align:right;'>" << act << "</td>";
                 }
                 h << "</tr>";
@@ -545,73 +591,36 @@ public:
           << "  if (!out) return;"
           << "  out.style.display = 'block';"
           << "  out.innerHTML = '<div style=\"background:#1f2328; color:#e6edf3; font-family:\\'JetBrains Mono\\', monospace; font-size:11px; line-height:1.6; padding:12px; border-radius:2px; max-height:360px; overflow-y:auto; border:1px solid #30363d; margin-top:8px; white-space:pre-wrap;\">' "
-          << "    + '[SLUG PQC PULSE] Performing Delta Dry-Run Sync...\\n' "
-          << "    + '> Remote Workspace:      pure-pqc://127.0.0.1:9443 (Suite: Modern Hybrid ML-KEM-768 / X25519)\\n' "
-          << "    + '> Local Destination:     ' + dest + '\\n' "
-          << "    + '> Scope Pattern:         ' + sc + '\\n' "
-          << "    + '> Prune Obsolete Files:  ' + (pr ? 'ENABLED' : 'DISABLED') + '\\n' "
-          << "    + '--------------------------------------------------------------------------------\\n' "
-          << "    + '[1/4] Handshake & Mutual Auth:  Authenticated via ML-KEM-768 (Latency: 0.8ms)\\n' "
-          << "    + '[2/4] Remote Manifest Fetch:    Received remote catalog (99 files, 44.2 MiB)\\n' "
-          << "    + '[3/4] FastCDC & BLAKE3 Delta:   Evaluating local tree vs remote cryptographic digests...\\n' "
-          << "    + '      --------------------------------------------------------------------------\\n' "
-          << "    + '      - OK (BLAKE3 Matched):    84 files (42.8 MiB) -> Cache Hit (0 bytes transferred)\\n' "
-          << "    + '        [HIT] assets/slug-icon.svg                     (4.2 KiB, blake3: a3f8...9b12)\\n' "
-          << "    + '        [HIT] assets/logo.png                          (48.6 KiB, blake3: 7c4e...881f)\\n' "
-          << "    + '        [HIT] include/slug/core.hpp                    (35.2 KiB, blake3: e110...aa76)\\n' "
-          << "    + '        [HIT] include/slug/crypto.hpp                  (21.4 KiB, blake3: 1a88...09de)\\n' "
-          << "    + '        [HIT] include/slug/policy.hpp                  (18.9 KiB, blake3: bc89...4501)\\n' "
-          << "    + '        [HIT] include/slug/storage.hpp                 (16.7 KiB, blake3: d7e2...5b8a)\\n' "
-          << "    + '        [HIT] include/slug/sync.hpp                    (24.3 KiB, blake3: 88fa...9902)\\n' "
-          << "    + '        [HIT] include/slug/ai.hpp                      (19.1 KiB, blake3: bb12...66c3)\\n' "
-          << "    + '        [HIT] src/crypto/kem.cpp                       (48.2 KiB, blake3: 63d1...ff0a)\\n' "
-          << "    + '        [HIT] src/crypto/sig.cpp                       (19.8 KiB, blake3: 4410...12e9)\\n' "
-          << "    + '        [HIT] src/crypto/hybrid_cipher.cpp            (36.4 KiB, blake3: ee09...2819)\\n' "
-          << "    + '        [HIT] src/crypto/blake3_wrapper.cpp            (14.5 KiB, blake3: 31c8...f022)\\n' "
-          << "    + '        [HIT] src/storage/cas.cpp                      (51.2 KiB, blake3: 5a9b...77f3)\\n' "
-          << "    + '        [HIT] src/storage/packfile.cpp                 (38.0 KiB, blake3: c881...4401)\\n' "
-          << "    + '        [HIT] src/policy/rule_engine.cpp               (28.7 KiB, blake3: 9b2d...1a4c)\\n' "
-          << "    + '        [HIT] src/policy/regex_scanner.cpp             (31.2 KiB, blake3: a4f1...892e)\\n' "
-          << "    + '        [HIT] src/ai/slug_guard.cpp                    (32.1 KiB, blake3: 8f90...33b1)\\n' "
-          << "    + '        [HIT] src/ai/stateful_audit.cpp                (22.5 KiB, blake3: d7e2...5b8a)\\n' "
-          << "    + '        [HIT] src/ai/embedding_engine.cpp              (44.8 KiB, blake3: 7c4e...881f)\\n' "
-          << "    + '        [HIT] src/bench/benchmark.cpp                  (42.1 KiB, blake3: a3f8...9b12)\\n' "
-          << "    + '        [HIT] tests/test_fastcdc.cpp                   (15.6 KiB, blake3: 110b...2c4a)\\n' "
-          << "    + '        [HIT] tests/test_pqc.cpp                       (18.9 KiB, blake3: e110...aa76)\\n' "
-          << "    + '        [HIT] tests/test_rules.cpp                     (14.2 KiB, blake3: bc89...4501)\\n' "
-          << "    + '        [HIT] tests/test_cas.cpp                       (12.8 KiB, blake3: 88fa...9902)\\n' "
-          << "    + '        [HIT] tests/test_bench.cpp                     (11.4 KiB, blake3: 4410...12e9)\\n' "
-          << "    + '        [HIT] docs/security-whitepaper.md              (54.2 KiB, blake3: ee09...2819)\\n' "
-          << "    + '        [HIT] docs/pqc-fips203-analysis.md             (46.1 KiB, blake3: bb12...66c3)\\n' "
-          << "    + '        [HIT] docs/cli-reference.md                    (33.8 KiB, blake3: 63d1...ff0a)\\n' "
-          << "    + '        ... [và 56 tệp khác đã khớp hoàn toàn mã băm BLAKE3, 0 bytes truyền tải]\\n' "
-          << "    + '      --------------------------------------------------------------------------\\n' "
-          << "    + '      - PULL (New / Modified):  14 files (1.4 MiB) across 32 FastCDC chunks:\\n' "
-          << "    + '        [PULL] src/main.cpp                            (18.4 KiB | 2 chunks: #01, #02)\\n' "
-          << "    + '        [PULL] src/net/web_assets.hpp                  (284.1 KiB | 8 chunks: #03..#10)\\n' "
-          << "    + '        [PULL] src/net/portal_service.cpp              (45.2 KiB | 3 chunks: #11..#13)\\n' "
-          << "    + '        [PULL] src/net/client.cpp                      (20.6 KiB | 2 chunks: #14, #15)\\n' "
-          << "    + '        [PULL] src/sync/delta.cpp                      (31.8 KiB | 2 chunks: #16, #17)\\n' "
-          << "    + '        [PULL] scripts/preview_web.py                  (79.6 KiB | 3 chunks: #18..#20)\\n' "
-          << "    + '        [PULL] scripts/update_portal_assets.py         (68.2 KiB | 2 chunks: #21, #22)\\n' "
-          << "    + '        [PULL] CMakeLists.txt                          (12.3 KiB | 1 chunk:  #23)\\n' "
-          << "    + '        [PULL] TUTORIAL.md                             (38.5 KiB | 2 chunks: #24, #25)\\n' "
-          << "    + '        [PULL] README.md                               (14.7 KiB | 1 chunk:  #26)\\n' "
-          << "    + '        [PULL] docs/architecture.md                    (24.0 KiB | 2 chunks: #27, #28)\\n' "
-          << "    + '        [PULL] config/slug.conf                        (2.1 KiB  | 1 chunk:  #29)\\n' "
-          << "    + '        [PULL] tests/test_e2e.cpp                      (19.4 KiB | 2 chunks: #30, #31)\\n' "
-          << "    + '        [PULL] package.json                            (1.2 KiB  | 1 chunk:  #32)\\n' "
-          << "    + '      --------------------------------------------------------------------------\\n' "
-          << "    + '      - PRUNE (Stale Local):    ' + (pr ? '2 stale files flagged for deletion:\\n        [DELETE] temp/old_cache.tmp\\n        [DELETE] build/legacy_test.o' : '0 files (prune disabled)') + '\\n' "
-          << "    + '[4/4] Bandwidth Optimization:   Saved 96.8% network transfer (42.8 MiB bypassed)\\n' "
-          << "    + '[SUMMARY] DRY-RUN COMPLETED SUCCESSFULLY. No changes made to disk.\\n' "
-          << "    + 'Run \\'slug pull\\' or click \\'Bắt Đầu Đồng Bộ Về Máy\\' to execute download.' "
-          << "    + '</div>';"
-          << "  setTimeout(() => {"
-          << "    const logBox = out.querySelector('div');"
-          << "    if (logBox) logBox.scrollTop = logBox.scrollHeight;"
-          << "    out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });"
-          << "  }, 60);"
+          << "    + '[SLUG DELTA SYNC] Đang phân tích kế hoạch đồng bộ và tính toán mã băm vi sai...\\n</div>';"
+          << "  fetch('/api/pull/dry-run')"
+          << "    .then(r => r.json())"
+          << "    .then(data => {"
+          << "      const newFiles = (data.new_files !== undefined) ? data.new_files : 0;"
+          << "      const newBytes = (data.new_bytes !== undefined) ? data.new_bytes : 0;"
+          << "      const cachedFiles = (data.cached_files !== undefined) ? data.cached_files : 0;"
+          << "      const cachedBytes = (data.cached_bytes !== undefined) ? data.cached_bytes : 0;"
+          << "      const savedPct = (data.bandwidth_saved_pct !== undefined) ? data.bandwidth_saved_pct : 100.0;"
+          << "      const ws = data.workspace || 'remote';"
+          << "      const bStr = (newBytes > 1048576) ? (newBytes/1048576).toFixed(2) + ' MiB' : (newBytes/1024).toFixed(1) + ' KiB';"
+          << "      const cStr = (cachedBytes > 1048576) ? (cachedBytes/1048576).toFixed(2) + ' MiB' : (cachedBytes/1024).toFixed(1) + ' KiB';"
+          << "      out.innerHTML = '<div style=\"background:#1f2328; color:#e6edf3; font-family:\\'JetBrains Mono\\', monospace; font-size:11px; line-height:1.6; padding:12px; border-radius:2px; max-height:360px; overflow-y:auto; border:1px solid #30363d; margin-top:8px; white-space:pre-wrap;\">' "
+          << "        + '[SLUG PQC PULSE] Kế Hoạch Đồng Bộ Vi Sai (Dry-Run)\\n' "
+          << "        + '> Không gian làm việc:   ' + ws + '\\n' "
+          << "        + '> Thư mục đích lưu:       ' + dest + '\\n' "
+          << "        + '> Phạm vi tệp (Scope):    ' + sc + '\\n' "
+          << "        + '> Tự động dọn (--prune):  ' + (pr ? 'BẬT' : 'TẮT') + '\\n' "
+          << "        + '--------------------------------------------------------------------------------\\n' "
+          << "        + 'Tệp mới hoặc sửa đổi:     ' + newFiles + ' tệp (' + bStr + ')\\n' "
+          << "        + 'Tệp khớp bộ nhớ đệm:      ' + cachedFiles + ' tệp (' + cStr + ')\\n' "
+          << "        + 'Băng thông mạng tiết kiệm:' + savedPct.toFixed(1) + '% (Dùng FastCDC & BLAKE3)\\n' "
+          << "        + '--------------------------------------------------------------------------------\\n' "
+          << "        + '[KẾT QUẢ] ĐÃ TÍNH TOÁN XONG. Chưa có thay đổi nào ghi vào đĩa.\\n' "
+          << "        + 'Bấm nút [Bắt Đầu Đồng Bộ Về Máy] để tải gói nén thư mục về.' "
+          << "        + '</div>';"
+          << "    })"
+          << "    .catch(err => {"
+          << "      out.innerHTML = '<div style=\"padding:10px; background:#ffebe9; color:#cf222e; font-size:12px; font-family:monospace;\">Lỗi phân tích kế hoạch: ' + err + '</div>';"
+          << "    });"
           << "}"
           << "function executeRealPullDirect() {"
           << "  const destInput = document.getElementById('pull-dest');"
@@ -628,12 +637,12 @@ public:
           << "  if (out) {"
           << "    out.style.display = 'block';"
           << "    out.innerHTML = '<div style=\"padding:12px; background:#dafbe1; border:1px solid rgba(26,127,55,0.4); border-radius:2px; font-size:11px; font-family:\\'JetBrains Mono\\', monospace; color:var(--success); line-height:1.6;\">' "
-          << "      + '<div style=\"font-weight:700; margin-bottom:4px; font-size:12px;\">Khởi tạo đồng bộ vi sai qua kênh Post-Quantum...</div>' "
-          << "      + '<div>Tiến trình: 14/14 tệp hoàn tất (1.4 MiB). Gói nén workspace (.zip) đang được tải xuống máy của bạn!</div>' "
+          << "      + '<div style=\"font-weight:700; margin-bottom:4px; font-size:12px;\">Khởi tạo tải dữ liệu qua kênh an toàn...</div>' "
+          << "      + '<div>Gói nén thư mục (.zip) đang được tạo và bắt đầu tải xuống máy của bạn!</div>' "
           << "      + '<div style=\"margin-top:8px; padding-top:8px; border-top:1px dashed rgba(26,127,55,0.3); color:#1f2328;\">' "
-          << "      + '<strong>Lưu ý kỹ thuật Web Sandbox:</strong> Do cơ chế bảo mật của trình duyệt web (không được tự ý ghi trực tiếp vào ổ đĩa), dữ liệu được tải về dạng file nén để bạn giải nén vào <code>' + dest + '</code>.<br>' "
-          << "      + 'Để đồng bộ trực tiếp từng tệp tự động ghi vào thư mục máy tính, bạn dùng lệnh CLI:<br>' "
-          << "      + '<code style=\"background:#f6f8fa; padding:2px 6px; border:1px solid #d0d7de; border-radius:2px; display:inline-block; margin-top:4px;\">slug pull lab-peer-local --dest \"' + dest + '\"</code>' "
+          << "      + '<strong>Lưu ý:</strong> Do hạn chế sandbox trình duyệt, bạn giải nén file tải về vào thư mục đích <code>' + dest + '</code>.<br>' "
+          << "      + 'Để đồng bộ tự động trực tiếp ghi từng tệp vào thư mục bằng CLI, bạn có thể dùng lệnh:<br>' "
+          << "      + '<code style=\"background:#f6f8fa; padding:2px 6px; border:1px solid #d0d7de; border-radius:2px; display:inline-block; margin-top:4px;\">slug pull &lt;station_id&gt; --dest \"' + dest + '\"</code>' "
           << "      + '</div>' "
           << "      + '</div>';"
           << "  }"
@@ -743,6 +752,8 @@ public:
           << ".table-search-input { background: #ffffff; border: 1px solid var(--border-primary); color: var(--text-main); padding: 4px 8px; border-radius: var(--radius-sharp); font-size: 11px; font-family: 'JetBrains Mono', monospace; }"
           << ".table-search-input:focus { border-color: var(--border-focus); outline: 2px solid var(--border-focus); outline-offset: -1px; }"
           << "</style><script>"
+          << "function esc(s) { if (s === null || s === undefined) return ''; return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;'); }"
+          << "function escAttr(s) { if (s === null || s === undefined) return ''; return String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\").replace(/\"/g, '&quot;'); }"
           << "let isBenchmarking = false;"
           << "function runLiveBenchmark() {"
           << "  if (isBenchmarking) return;"
@@ -874,9 +885,9 @@ public:
           << "      users.forEach(u => {"
           << "        let status = (u.expires_at === 0) ? '<span style=\"color:var(--success);\">Permanent (∞)</span>' :"
           << "                     (u.is_expired ? '<span style=\"color:var(--danger);\">Expired</span>' : '<span style=\"color:var(--success);\">Active (' + formatSec(u.remaining_sec, u.expires_at) + ')</span>');"
-          << "        html += '<tr><td><strong>' + u.username + '</strong></td><td><span class=\"role-tag\">' + u.role + '</span></td><td>' + status + '</td>'"
-          << "             + '<td><button class=\"btn-sec btn-sm\" onclick=\"openEditModal(\\'' + u.username + '\\', \\'' + u.role + '\\')\">Edit</button> '"
-          << "             + '<button class=\"btn-danger btn-sm\" onclick=\"deleteUser(\\'' + u.username + '\\')\">Delete</button></td></tr>';"
+          << "        html += '<tr><td><strong>' + esc(u.username) + '</strong></td><td><span class=\"role-tag\">' + esc(u.role) + '</span></td><td>' + status + '</td>'"
+          << "             + '<td><button class=\"btn-sec btn-sm\" onclick=\"openEditModal(\\'' + escAttr(u.username) + '\\', \\'' + escAttr(u.role) + '\\')\">Edit</button> '"
+          << "             + '<button class=\"btn-danger btn-sm\" onclick=\"deleteUser(\\'' + escAttr(u.username) + '\\')\">Delete</button></td></tr>';"
           << "      });"
           << "      tbody.innerHTML = html;"
           << "    });"
@@ -932,8 +943,8 @@ public:
           << "    let html = '';"
           << "    rules.forEach(r => {"
           << "      let actBadge = (r.action === 'ALLOW') ? '<span style=\"color:var(--success); font-weight:bold;\">ALLOW</span>' : '<span style=\"color:var(--danger); font-weight:bold;\">BLOCK</span>';"
-          << "      html += '<tr><td><code>' + r.id + '</code></td><td>' + actBadge + '</td><td><code>' + r.type + '</code></td><td><code>' + r.value + '</code></td>'"
-          << "           + '<td><button class=\"btn-danger btn-sm\" onclick=\"deleteRule(\\'' + r.id + '\\')\">Delete</button></td></tr>';"
+          << "      html += '<tr><td><code>' + esc(r.id) + '</code></td><td>' + actBadge + '</td><td><code>' + esc(r.type) + '</code></td><td><code>' + esc(r.value) + '</code></td>'"
+          << "           + '<td><button class=\"btn-danger btn-sm\" onclick=\"deleteRule(\\'' + escAttr(r.id) + '\\')\">Delete</button></td></tr>';"
           << "    });"
           << "    tbody.innerHTML = html;"
           << "  });"
@@ -998,11 +1009,11 @@ public:
           << "    let isAllowed = (e.status === 'USER_ALLOWED' || e.status === 'MANUAL_ALLOWED');"
           << "    let actBtn = isAllowed"
           << "      ? '<span style=\"color:var(--text-muted); font-size:11px;\">Whitelisted</span>'"
-          << "      : '<button class=\"btn btn-sm\" onclick=\"allowAuditFile(\\'' + e.file_path.replace(/\\\\/g, '\\\\\\\\') + '\\')\">Whitelist</button>';"
-          << "    html += '<tr><td><code style=\"word-break:break-all;\">' + e.file_path + '</code></td>'"
-          << "         + '<td><span style=\"color:' + stColor + '; font-weight:bold;\">' + e.status + '</span></td>'"
+          << "      : '<button class=\"btn btn-sm\" onclick=\"allowAuditFile(\\'' + escAttr(e.file_path) + '\\')\">Whitelist</button>';"
+          << "    html += '<tr><td><code style=\"word-break:break-all;\">' + esc(e.file_path) + '</code></td>'"
+          << "         + '<td><span style=\"color:' + stColor + '; font-weight:bold;\">' + esc(e.status) + '</span></td>'"
           << "         + '<td>' + (e.line_number > 0 ? 'L' + e.line_number : '-') + '</td>'"
-          << "         + '<td style=\"font-size:11px;\">' + (e.reason || '-') + '</td>'"
+          << "         + '<td style=\"font-size:11px;\">' + (esc(e.reason) || '-') + '</td>'"
           << "         + '<td>' + actBtn + '</td></tr>';"
           << "  }"
           << "  tbody.insertAdjacentHTML('beforeend', html);"
@@ -1069,10 +1080,10 @@ public:
             std::string status = (u.expires_at == 0) ? "<span style='color:var(--success);'>Permanent (∞)</span>" :
                                  (u.is_expired(now) ? "<span style='color:var(--danger);'>Expired</span>" :
                                  ("<span style='color:var(--success);'>Active (" + core::Utils::format_ttl((u.expires_at > now) ? (u.expires_at - now) : 0) + ")</span>"));
-            h << "<tr><td><strong>" << u.username << "</strong></td><td><span class='role-tag'>" << core::role_to_string(u.role) << "</span></td><td>"
+            h << "<tr><td><strong>" << html_escape(u.username) << "</strong></td><td><span class='role-tag'>" << core::role_to_string(u.role) << "</span></td><td>"
               << status
-              << "</td><td><button class='btn-sec btn-sm' onclick=\"openEditModal('" << u.username << "', '" << core::role_to_string(u.role) << "')\">Edit</button> "
-              << "<button class='btn-danger btn-sm' onclick=\"deleteUser('" << u.username << "')\">Delete</button></td></tr>";
+              << "</td><td><button class='btn-sec btn-sm' onclick=\"openEditModal('" << js_escape(u.username) << "', '" << core::role_to_string(u.role) << "')\">Edit</button> "
+              << "<button class='btn-danger btn-sm' onclick=\"deleteUser('" << js_escape(u.username) << "')\">Delete</button></td></tr>";
         }
         if (users.empty()) {
             h << "<tr><td colspan='4' style='color:var(--text-muted);'>No user accounts configured</td></tr>";
@@ -1116,9 +1127,9 @@ public:
             std::string active_str = (s.last_active_at == 0) ? "-" : (std::to_string(now > s.last_active_at ? (now - s.last_active_at) : 0) + "s ago");
 
             h << "<tr><td><strong>#" << s.session_id << "</strong></td>"
-              << "<td><code>" << s.identity << "</code></td>"
+              << "<td><code>" << html_escape(s.identity) << "</code></td>"
               << "<td>" << auth_badge << "</td>"
-              << "<td><code>" << s.remote_endpoint << "</code></td>"
+              << "<td><code>" << html_escape(s.remote_endpoint) << "</code></td>"
               << "<td><span class='role-tag'>" << core::role_to_string(s.role) << "</span></td>"
               << "<td>" << created_str << " / <span style='color:var(--text-accent);'>" << active_str << "</span></td>"
               << "<td>" << st_badge << "</td>"
@@ -1175,8 +1186,8 @@ public:
                 case policy::RuleType::REGEX: t_str = "regex"; break;
             }
             std::string act = (r.action == policy::RuleAction::ALLOW) ? "<span style='color:var(--success); font-weight:bold;'>ALLOW</span>" : "<span style='color:var(--danger); font-weight:bold;'>BLOCK</span>";
-            h << "<tr><td><code>" << r.id << "</code></td><td>" << act << "</td><td><code>" << t_str << "</code></td><td><code>" << r.value << "</code></td>"
-              << "<td><button class='btn-danger btn-sm' onclick=\"deleteRule('" << r.id << "')\">Delete</button></td></tr>";
+            h << "<tr><td><code>" << html_escape(r.id) << "</code></td><td>" << act << "</td><td><code>" << t_str << "</code></td><td><code>" << html_escape(r.value) << "</code></td>"
+              << "<td><button class='btn-danger btn-sm' onclick=\"deleteRule('" << js_escape(r.id) << "')\">Delete</button></td></tr>";
         }
         if (rules.empty()) {
             h << "<tr><td colspan='5' style='color:var(--text-muted);'>No custom rules configured</td></tr>";
@@ -1195,9 +1206,9 @@ public:
         for (const auto& ae : audit_entries) {
             std::string st_str = core::audit_status_to_string(ae.status);
             std::string st_color = (ae.status == core::AuditStatus::CLEAN || ae.status == core::AuditStatus::USER_ALLOWED) ? "var(--success)" : "var(--danger)";
-            h << "<tr><td><code style='word-break:break-all;'>" << ae.file_path << "</code></td><td><span style='color:" << st_color << "; font-weight:bold;'>" << st_str << "</span></td>"
-              << "<td>" << (ae.line_number > 0 ? ("L" + std::to_string(ae.line_number)) : "-") << "</td><td style='font-size:11px;'>" << ae.reason << "</td>"
-              << "<td>" << (ae.status != core::AuditStatus::USER_ALLOWED ? ("<button class='btn btn-sm' onclick=\"allowAuditFile('" + ae.file_path + "')\">Whitelist</button>") : "<span style='color:var(--text-muted); font-size:11px;'>Whitelisted</span>") << "</td></tr>";
+            h << "<tr><td><code style='word-break:break-all;'>" << html_escape(ae.file_path) << "</code></td><td><span style='color:" << st_color << "; font-weight:bold;'>" << st_str << "</span></td>"
+              << "<td>" << (ae.line_number > 0 ? ("L" + std::to_string(ae.line_number)) : "-") << "</td><td style='font-size:11px;'>" << html_escape(ae.reason) << "</td>"
+              << "<td>" << (ae.status != core::AuditStatus::USER_ALLOWED ? ("<button class='btn btn-sm' onclick=\"allowAuditFile('" + js_escape(ae.file_path) + "')\">Whitelist</button>") : "<span style='color:var(--text-muted); font-size:11px;'>Whitelisted</span>") << "</td></tr>";
         }
         if (audit_entries.empty()) {
             h << "<tr><td colspan='5' style='color:var(--text-muted); text-align:center; padding:14px;'>No quarantined or flagged files</td></tr>";
@@ -1212,7 +1223,7 @@ public:
           << "<div id='audit-logs-container' class='table-scroll-container' style='max-height:200px; padding:8px; background:#fcfcfc;'>";
         for (const auto& e : events) {
             std::string safe_text = "[" + e.action + "] " + e.actor + " " + e.path + " " + e.reason;
-            h << "<div class='log-entry' data-text='" << safe_text << "'>[" << e.action << "] <strong>" << e.actor << "</strong> &bull; <code>" << e.path << "</code> &bull; " << e.reason << "</div>";
+            h << "<div class='log-entry' data-text='" << html_escape(safe_text) << "'>[" << html_escape(e.action) << "] <strong>" << html_escape(e.actor) << "</strong> &bull; <code>" << html_escape(e.path) << "</code> &bull; " << html_escape(e.reason) << "</div>";
         }
         if (events.empty()) {
             h << "<div class='log-entry'>No audit events recorded yet.</div>";
@@ -1875,6 +1886,16 @@ const ICONS = {
   play: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`
 };
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 let currentRole = 'client';
 let clientAuthMode = 'otp';
 let hostedWorkspaces = [];
@@ -1925,24 +1946,26 @@ function loadHostedWorkspaces() {
           id: w.id || ('host-' + w.port),
           path: w.path || './',
           port: w.port,
-          suite: w.suite || '3',
-          suiteName: w.suite === 'classical' ? 'Mức 1: Classical Hardened (X25519 + Ed25519)' : (w.suite === 'modern' ? 'Mức 2: Modern Hybrid (ML-KEM-768 + X25519)' : 'Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng]'),
+          suiteName: (w.suite === 'classical' || w.suite === '1') ? 'Mức 1: Classical Hardened (X25519 + Ed25519 + SHA-256)' : ((w.suite === 'modern' || w.suite === '2') ? 'Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3)' : 'Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203/204]'),
           filterMode: w.filter_mode || 'protected',
           filterName: w.filter_mode === 'raw' ? 'Raw (Tắt bảo vệ)' : (w.filter_mode === 'strict' ? 'Strict Isolation' : 'Protected (Slug Rule + Regex + AI)'),
           otp_rw: w.otp_rw || '-',
           otp_r: w.otp_r || '-',
           otp_w: w.otp_w || '-',
           otp: w.otp || w.otp_rw || '-',
-          ttl: w.ttl || 0,
-          maxTtl: 30,
+          ttl: (w.ttl !== undefined) ? w.ttl : 60,
+          maxTtl: w.maxTtl || w.step_sec || 60,
+          step_sec: w.step_sec || 60,
+          cert_ttl: w.cert_ttl || 86400,
           role: 'rw',
           peers: w.peers || [],
           users: w.users || [],
-          auditStats: { clean: 0, quarantined: 0, excluded: 0 },
-          quarantinedFiles: [],
-          cleanFiles: [],
-          excludedFiles: [],
-          logs: []
+          auditStats: w.auditStats || { clean: 0, quarantined: 0, excluded: 0 },
+          quarantinedFiles: w.quarantinedFiles || [],
+          cleanFiles: w.cleanFiles || [],
+          excludedFiles: w.excludedFiles || [],
+          customRules: w.customRules || '',
+          logs: w.logs || []
         }));
         renderHostedWorkspaces();
         updateAuditWorkspaceDropdown();
@@ -1993,9 +2016,23 @@ function switchClientAuth(mode) {
 
 function submitClientConnect(e) {
   e.preventDefault();
-  const endpoint = (clientAuthMode === 'otp')
+  let endpoint = (clientAuthMode === 'otp')
     ? document.getElementById('client-endpoint').value.trim()
     : document.getElementById('client-endpoint-acc').value.trim();
+  let otpVal = (clientAuthMode === 'otp') ? (document.getElementById('client-otp')?.value.trim() || '') : '';
+
+  // Auto-extract OTP if user pasted an endpoint URL with ?otp=...
+  if (endpoint.includes('?')) {
+    const qParts = endpoint.split('?');
+    endpoint = qParts[0];
+    const params = new URLSearchParams(qParts[1]);
+    if (params.get('otp') && !otpVal) {
+      otpVal = params.get('otp');
+      const otpInp = document.getElementById('client-otp');
+      if (otpInp) otpInp.value = otpVal;
+    }
+  }
+
   const msgBox = document.getElementById('conn-msg');
   msgBox.innerHTML = '<span style="color:#0969da; display:inline-flex; align-items:center; gap:6px;">' + ICONS.refresh + ' Đang thiết lập kênh mật mã Hậu lượng tử NIST FIPS 203 (ML-KEM-1024)...</span>';
 
@@ -2003,7 +2040,7 @@ function submitClientConnect(e) {
     endpoint: endpoint,
     suite: 3,
     auth_mode: clientAuthMode,
-    otp: (clientAuthMode === 'otp') ? (document.getElementById('client-otp')?.value.trim() || '') : '',
+    otp: otpVal,
     username: (clientAuthMode === 'account') ? (document.getElementById('client-username')?.value.trim() || '') : '',
     password: (clientAuthMode === 'account') ? (document.getElementById('client-password')?.value || '') : ''
   };
@@ -2015,7 +2052,7 @@ function submitClientConnect(e) {
   }).then(r => r.json()).then(res => {
     if (res.status === 'ok') {
       msgBox.innerHTML = '<span style="color:#1a7f37; font-weight:bold; display:inline-flex; align-items:center; gap:6px;">' + ICONS.check + ' Xác thực thành công! Đang chuyển hướng tới Web Dropbox...</span>';
-      setTimeout(() => { window.location.href = res.url || '/drop'; }, 400);
+      setTimeout(() => { window.location.href = res.url || res.redirect || '/drop'; }, 400);
     } else {
       msgBox.innerHTML = '<span style="color:#cf222e; font-weight:bold;">Lỗi: ' + (res.message || 'Kết nối thất bại') + '</span>';
     }
@@ -2378,7 +2415,7 @@ function renderHostedWorkspaces() {
   }
 
   container.innerHTML = hostedWorkspaces.map(w => {
-    const percent = Math.max(0, Math.min(100, (w.ttl / (w.maxTtl || 30)) * 100));
+    const percent = Math.max(0, Math.min(100, (w.ttl / (w.maxTtl || w.step_sec || 60)) * 100));
     return `
       <div class="host-card" id="card-${w.id}">
         <div class="host-header">
@@ -2401,7 +2438,7 @@ function renderHostedWorkspaces() {
             <div>
               <div class="host-box-title">
                 <span>${ICONS.key} BỘ 3 MÃ OTP PHÂN QUYỀN</span>
-                <span style="color:#0969da; cursor:pointer; font-size:11px; display:inline-flex; align-items:center; gap:4px;" onclick="changeHostTtl('${w.id}')">${ICONS.clock} TTL: ${w.maxTtl || 30}s</span>
+                <span style="color:#0969da; cursor:pointer; font-size:11px; display:inline-flex; align-items:center; gap:4px;" onclick="changeHostTtl('${w.id}')">${ICONS.clock} Chu kỳ: ${w.maxTtl || w.step_sec || 60}s</span>
               </div>
               
               <div class="otp-3col-grid">
@@ -2453,15 +2490,15 @@ function renderHostedWorkspaces() {
             <div>
               <div class="host-box-title">
                 <span>${ICONS.shield} MỨC MẬT MÃ &amp; BỘ LỌC</span>
-                <span class="badge badge-pqc">${w.suite === '3' ? 'PQC NATIVE (FIPS 203)' : (w.suite === '2' ? 'HYBRID (ML-KEM+X25519)' : 'CLASSICAL (X25519)')}</span>
+                <span class="badge badge-pqc">${(w.suite === '3' || w.suite === 'pqc') ? 'PQC NATIVE (FIPS 203)' : ((w.suite === '2' || w.suite === 'modern') ? 'MODERN (BLAKE3 + X25519)' : 'CLASSICAL (X25519)')}</span>
               </div>
               
               <div style="margin-bottom:8px;">
                 <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CẤU HÌNH MẬT MÃ (CIPHER SUITE):</label>
                 <select class="input-select" style="width:100%; font-size:11px; padding:5px 8px; height:32px;" onchange="updateHostSuite('${w.id}', this.value)">
-                  <option value="3" ${w.suite === '3' ? 'selected' : ''}>Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87) [Khuyên dùng - NIST]</option>
-                  <option value="2" ${w.suite === '2' ? 'selected' : ''}>Mức 2: Modern Hybrid (ML-KEM-768 + X25519 + ChaCha20)</option>
-                  <option value="1" ${w.suite === '1' ? 'selected' : ''}>Mức 1: Classical Fast (X25519 + AES-256-GCM)</option>
+                  <option value="3" ${(w.suite === '3' || w.suite === 'pqc') ? 'selected' : ''}>Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [Khuyên dùng - NIST]</option>
+                  <option value="2" ${(w.suite === '2' || w.suite === 'modern') ? 'selected' : ''}>Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3 + XChaCha20)</option>
+                  <option value="1" ${(w.suite === '1' || w.suite === 'classical') ? 'selected' : ''}>Mức 1: Classical Hardened (X25519 + Ed25519 + SHA-256 + XChaCha20)</option>
                 </select>
               </div>
 
@@ -2587,14 +2624,14 @@ function renderHostedWorkspaces() {
               <tbody>
                 ${(w.peers && w.peers.length > 0) ? w.peers.map(p => `
                   <tr>
-                    <td><strong>${p.name}</strong> (${p.ip})</td>
-                    <td><span class="badge" style="background:#ddf4ff; color:#0969da;">${p.authType || 'TOTP [RW]'}</span></td>
-                    <td><span class="badge badge-pqc">${p.suite || 'ML-KEM-1024 + ML-DSA-87'}</span></td>
-                    <td>${p.connectedAt}</td>
-                    <td><code>${p.transferred}</code></td>
-                    <td><button class="btn-danger btn-xs" onclick="kickPeer('${w.id}', '${p.id}')">${ICONS.stop} Ngắt Kết Nối</button></td>
+                    <td><strong>${escapeHtml(p.name || p.identity || 'Peer')}</strong> (${escapeHtml(p.ip || p.remote_endpoint || 'LAN')})</td>
+                    <td><span class="badge" style="background:#ddf4ff; color:#0969da;">${escapeHtml(p.authType || p.auth_type || 'TOTP [RW]')}</span></td>
+                    <td><span class="badge badge-pqc">${escapeHtml(p.suite || w.suiteName || 'ML-KEM-768 + ML-DSA-65')}</span></td>
+                    <td>${escapeHtml(p.connectedAt || p.created_at || 'Vừa xong')}</td>
+                    <td><code>${escapeHtml(p.transferred || 'Active (Live)')}</code></td>
+                    <td><button class="btn-danger btn-xs" onclick="kickPeer('${w.id}', '${p.id || p.session_id}')">${ICONS.stop} Ngắt Kết Nối</button></td>
                   </tr>
-                `).join('') : '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:12px;">Chưa có peer nào kết nối.</td></tr>'}
+                `).join('') : '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Không có thiết bị khách (Peer) nào đang kết nối. (Chủ trạm Host Admin nằm ngoài danh sách này).</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -2943,8 +2980,8 @@ function updateHostSuite(hostId, newSuite) {
   const host = hostedWorkspaces.find(w => w.id === hostId);
   if (!host) return;
   
-  const suiteName = (newSuite === '3') ? 'Mức 3: Pure Post-Quantum (ML-KEM-1024 + ML-DSA-87)' :
-                   ((newSuite === '2') ? 'Mức 2: Modern Hybrid (ML-KEM-768 + X25519)' : 'Mức 1: Classical Fast (X25519 + AES-GCM)');
+  const suiteName = (newSuite === '3' || newSuite === 'pqc') ? 'Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65)' :
+                   ((newSuite === '2' || newSuite === 'modern') ? 'Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3)' : 'Mức 1: Classical Hardened (X25519 + Ed25519 + SHA-256)');
 
   if (!confirm(`Cảnh báo an ninh PQC:\nViệc đổi sang [${suiteName}] sẽ ngắt kết nối (reset) toàn bộ các phiên của peer hiện tại để tái đàm phán bằng khóa mật mã mới.\n\nBạn có chắc muốn chuyển mức?`)) {
     const sel = document.getElementById('suite-select-' + hostId);
@@ -5096,14 +5133,19 @@ window.onload = function() {
         for (const auto& c : conns) {
             std::string exp_str = (c.expires_at == 0) ? "Permanent (∞)"
                                   : (c.expires_at > now ? core::Utils::format_duration(c.expires_at - now) : "<span style='color:var(--danger);'>Expired</span>");
-            conns_rows += "<tr class='clickable-row' onclick='openSaved(\"" + c.id + "\")'><td><strong>" + c.id + "</strong></td>"
-                       + "<td><code>" + c.workspace + "</code></td>"
-                       + "<td><code>" + c.host + ":" + std::to_string(c.port) + "</code></td>"
+            std::string esc_id_html = html_escape(c.id);
+            std::string esc_id_js = js_escape(c.id);
+            std::string esc_ws_html = html_escape(c.workspace);
+            std::string esc_host_html = html_escape(c.host);
+
+            conns_rows += "<tr class='clickable-row' onclick='openSaved(\"" + esc_id_js + "\")'><td><strong>" + esc_id_html + "</strong></td>"
+                       + "<td><code>" + esc_ws_html + "</code></td>"
+                       + "<td><code>" + esc_host_html + ":" + std::to_string(c.port) + "</code></td>"
                        + "<td><span class='role-tag'>" + core::role_to_string(c.role) + "</span></td>"
                        + "<td>" + exp_str + "</td>"
-                       + "<td onclick='event.stopPropagation()'><button class='btn btn-xs' onclick='openSaved(\"" + c.id + "\")'>"
+                       + "<td onclick='event.stopPropagation()'><button class='btn btn-xs' onclick='openSaved(\"" + esc_id_js + "\")'>"
                        + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duyệt Thư Mục</button> "
-                       + "<button class='btn-danger btn-xs' onclick='removeSaved(\"" + c.id + "\")'>"
+                       + "<button class='btn-danger btn-xs' onclick='removeSaved(\"" + esc_id_js + "\")'>"
                        + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='3 6 5 6 21 6'></polyline><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'></path></svg> Xóa</button></td></tr>";
         }
         if (conns_rows.empty()) {

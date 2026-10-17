@@ -7,6 +7,17 @@ namespace slug::ai {
 
 using json = nlohmann::json;
 
+static std::string normalize_path_key(const std::string& p) {
+    std::string s = p;
+    for (auto& c : s) {
+        if (c == '\\') c = '/';
+    }
+    while (s.rfind("./", 0) == 0) {
+        s = s.substr(2);
+    }
+    return s;
+}
+
 StatefulAuditIndex::StatefulAuditIndex(std::filesystem::path index_file)
     : index_file_(std::move(index_file)) {
     if (!index_file_.empty()) {
@@ -40,7 +51,9 @@ bool StatefulAuditIndex::load() {
                 e.decision_reason = item.value("decision_reason", "");
 
                 if (!e.file_path.empty()) {
-                    entries_[e.file_path] = e;
+                    std::string key = normalize_path_key(e.file_path);
+                    e.file_path = key;
+                    entries_[key] = e;
                 }
             }
         }
@@ -74,7 +87,7 @@ bool StatefulAuditIndex::save() const {
 
 core::AuditStatus StatefulAuditIndex::check_cached_status(const std::string& file_path, const std::string& current_blake3_hash) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = entries_.find(file_path);
+    auto it = entries_.find(normalize_path_key(file_path));
     if (it == entries_.end()) {
         return core::AuditStatus::UNKNOWN;
     }
@@ -92,7 +105,10 @@ core::AuditStatus StatefulAuditIndex::check_cached_status(const std::string& fil
 void StatefulAuditIndex::update_entry(const AuditIndexEntry& entry) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        entries_[entry.file_path] = entry;
+        std::string key = normalize_path_key(entry.file_path);
+        auto copy = entry;
+        copy.file_path = key;
+        entries_[key] = copy;
     }
     save();
 }
@@ -100,19 +116,20 @@ void StatefulAuditIndex::update_entry(const AuditIndexEntry& entry) {
 bool StatefulAuditIndex::allow_file(const std::string& file_path, const std::string& reason, const std::string& actor) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto it = entries_.find(file_path);
+        std::string key = normalize_path_key(file_path);
+        auto it = entries_.find(key);
         if (it != entries_.end()) {
             it->second.status = core::AuditStatus::USER_ALLOWED;
             it->second.decision_actor = actor;
             it->second.decision_reason = reason;
         } else {
             AuditIndexEntry e;
-            e.file_path = file_path;
+            e.file_path = key;
             e.status = core::AuditStatus::USER_ALLOWED;
             e.decision_actor = actor;
             e.decision_reason = reason;
             e.scanned_at = core::Utils::current_timestamp();
-            entries_[file_path] = e;
+            entries_[key] = e;
         }
     }
     return save();
@@ -121,7 +138,8 @@ bool StatefulAuditIndex::allow_file(const std::string& file_path, const std::str
 bool StatefulAuditIndex::remove_entry(const std::string& file_path) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto it = entries_.find(file_path);
+        std::string key = normalize_path_key(file_path);
+        auto it = entries_.find(key);
         if (it == entries_.end()) return false;
         entries_.erase(it);
     }
@@ -130,14 +148,14 @@ bool StatefulAuditIndex::remove_entry(const std::string& file_path) {
 
 std::optional<AuditIndexEntry> StatefulAuditIndex::get_entry(const std::string& file_path) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = entries_.find(file_path);
+    auto it = entries_.find(normalize_path_key(file_path));
     if (it != entries_.end()) return it->second;
     return std::nullopt;
 }
 
 bool StatefulAuditIndex::is_flagged(const std::string& file_path) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = entries_.find(file_path);
+    auto it = entries_.find(normalize_path_key(file_path));
     if (it == entries_.end()) return false;
     return (it->second.status == core::AuditStatus::AI_FLAGGED || it->second.status == core::AuditStatus::RULE_BLOCKED);
 }

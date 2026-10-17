@@ -80,6 +80,7 @@ public:
 
     void set_web_server(class WebServer* ws) { web_server_ = ws; }
 
+    sync::WorkspaceManifest get_or_build_manifest();
     std::string get_or_build_manifest_json();
     void invalidate_manifest_cache();
 

@@ -399,7 +399,12 @@ bool SlugClient::pull(const fs::path& local_target_dir,
     for (const auto& delta : plan.file_deltas) {
         if (delta.is_unchanged) continue;
 
-        fs::path dest = local_target_dir / delta.relative_path;
+        auto safe_dest = platform::PathUtils::resolve_safe_path(local_target_dir, delta.relative_path);
+        if (!safe_dest) {
+            log("Security Warning: Remote path '" + delta.relative_path + "' attempted path traversal. Skipped!");
+            continue;
+        }
+        fs::path dest = *safe_dest;
         platform::PathUtils::ensure_directory(dest.parent_path());
 
         // Read existing file if modifying
@@ -447,9 +452,10 @@ bool SlugClient::pull(const fs::path& local_target_dir,
     // Prune if requested
     if (options.prune) {
         for (const auto& p : plan.files_to_prune) {
-            fs::path dead_file = local_target_dir / p;
+            auto safe_prune = platform::PathUtils::resolve_safe_path(local_target_dir, p);
+            if (!safe_prune) continue;
             std::error_code ec;
-            fs::remove(dead_file, ec);
+            fs::remove(*safe_prune, ec);
             log("Pruned: " + p);
         }
     }
@@ -519,8 +525,15 @@ bool SlugClient::get_file(const std::string& remote_path,
     }
 
     fs::path final_dest = local_dest;
-    if (fs::is_directory(final_dest)) {
-        final_dest = final_dest / fs::path(remote_path).filename();
+    if (final_dest.empty()) {
+        final_dest = fs::path(norm_remote).filename();
+    } else if (fs::is_directory(final_dest)) {
+        final_dest = final_dest / fs::path(norm_remote).filename();
+    }
+
+    if (!platform::PathUtils::is_valid_portable_path(final_dest.filename().string())) {
+        log("Error: Invalid or reserved filename in destination: " + final_dest.filename().string());
+        return false;
     }
     platform::PathUtils::ensure_directory(final_dest.parent_path());
 

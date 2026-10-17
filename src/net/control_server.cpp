@@ -97,9 +97,28 @@ std::optional<SessionState> ControlServer::find_session_by_ticket(const std::str
 
 std::string ControlServer::create_host_admin_ticket(uint64_t ttl_sec) {
     std::lock_guard<std::mutex> lock(session_mutex_);
+    uint64_t now = core::Utils::current_timestamp();
+
+    // Prune expired sessions to prevent unbounded memory growth
+    for (auto it = sessions_.begin(); it != sessions_.end(); ) {
+        if (it->second.expires_at > 0 && it->second.expires_at < now) {
+            it = sessions_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Reuse existing active host_admin session to avoid accumulating duplicate admin sessions
+    for (auto& [sid, ss] : sessions_) {
+        if (ss.identity == "host_admin" && !ss.is_revoked && (ss.expires_at == 0 || ss.expires_at > now)) {
+            ss.last_active_at = now;
+            if (ttl_sec > 0) ss.expires_at = now + ttl_sec;
+            return ss.web_ticket;
+        }
+    }
+
     uint32_t sid = next_session_id_++;
     std::string ticket = core::Utils::to_hex(core::Utils::random_bytes(24));
-    uint64_t now = core::Utils::current_timestamp();
     SessionState ss;
     ss.session_id = sid;
     ss.role = core::Role::READ_WRITE;
@@ -118,8 +137,8 @@ std::string ControlServer::create_host_admin_ticket(uint64_t ttl_sec) {
 std::vector<SessionState> ControlServer::list_sessions() const {
     std::lock_guard<std::mutex> lock(session_mutex_);
     std::vector<SessionState> result;
-    result.reserve(sessions_.size());
     for (const auto& [id, s] : sessions_) {
+        if (s.identity == "host_admin" || s.auth_type == "Host Admin") continue;
         result.push_back(s);
     }
     std::sort(result.begin(), result.end(), [](const SessionState& a, const SessionState& b) {
@@ -218,14 +237,13 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 break;
             }
 
-            // Check if incoming connection is an HTTP request (Loopback only!)
+            // Check if incoming connection is an HTTP request (Web Server GUI / API)
             bool is_http = (hdr[0] == 'G' && hdr[1] == 'E' && hdr[2] == 'T' && hdr[3] == ' ') ||
-                           (hdr[0] == 'H' && hdr[1] == 'E' && hdr[2] == 'A' && hdr[3] == 'D') ||
+                           (hdr[0] == 'H' && hdr[1] == 'E' && hdr[2] == 'A' && hdr[3] == ' ') ||
                            (hdr[0] == 'P' && hdr[1] == 'O' && hdr[2] == 'S' && hdr[3] == 'T');
 
             if (is_http) {
-                bool is_loopback = (client.peer_endpoint().ip == "127.0.0.1" || client.peer_endpoint().ip == "::1");
-                if (is_loopback && web_server_) {
+                if (web_server_) {
                     web_server_->handle_http_request(client, std::span<const uint8_t, 4>(hdr, 4));
                 }
                 break;
@@ -543,6 +561,21 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             send_packet(err);
         }
     }
+}
+
+sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
+    std::lock_guard<std::mutex> lock(manifest_mutex_);
+    uint64_t now = core::Utils::current_timestamp();
+    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 10)) {
+        auto m = sync::WorkspaceManifest::from_json(cached_manifest_json_);
+        if (m) return *m;
+    }
+
+    auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_);
+    cached_manifest_json_ = manifest.to_json();
+    manifest_cached_at_ = now;
+    manifest_dirty_ = false;
+    return manifest;
 }
 
 std::string ControlServer::get_or_build_manifest_json() {

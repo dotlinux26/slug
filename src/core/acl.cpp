@@ -5,6 +5,9 @@
 #include "third_party/json/json.hpp"
 #include <fstream>
 
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+
 namespace slug::core {
 
 using json = nlohmann::json;
@@ -22,7 +25,57 @@ bool UserAccount::has_permission(Role required) const {
 }
 
 std::string AclManager::hash_password(const std::string& password) {
-    return crypto::Sha256::hash_hex(password);
+    constexpr int kIterations = 100000;
+    constexpr int kSaltLen = 16;
+    constexpr int kKeyLen = 32;
+
+    std::vector<uint8_t> salt(kSaltLen);
+    if (RAND_bytes(salt.data(), kSaltLen) != 1) {
+        auto rb = Utils::random_bytes(kSaltLen);
+        std::memcpy(salt.data(), rb.data(), kSaltLen);
+    }
+
+    std::vector<uint8_t> derived_key(kKeyLen);
+    PKCS5_PBKDF2_HMAC(
+        password.data(), static_cast<int>(password.size()),
+        salt.data(), static_cast<int>(salt.size()),
+        kIterations, EVP_sha256(),
+        kKeyLen, derived_key.data()
+    );
+
+    std::string salt_hex = Utils::to_hex(salt);
+    std::string key_hex = Utils::to_hex(derived_key);
+    return "$pbkdf2$" + std::to_string(kIterations) + "$" + salt_hex + "$" + key_hex;
+}
+
+bool AclManager::verify_password(const std::string& password, const std::string& stored_hash) {
+    if (stored_hash.rfind("$pbkdf2$", 0) == 0) {
+        auto parts = Utils::split(stored_hash, '$');
+        if (parts.size() >= 5) {
+            try {
+                int iterations = std::stoi(parts[2]);
+                std::string salt_hex = parts[3];
+                std::string expected_key_hex = parts[4];
+                auto salt = Utils::from_hex(salt_hex);
+                int key_len = static_cast<int>(expected_key_hex.size() / 2);
+                if (key_len > 0) {
+                    std::vector<uint8_t> derived_key(key_len);
+                    PKCS5_PBKDF2_HMAC(
+                        password.data(), static_cast<int>(password.size()),
+                        salt.data(), static_cast<int>(salt.size()),
+                        iterations, EVP_sha256(),
+                        key_len, derived_key.data()
+                    );
+                    std::string derived_key_hex = Utils::to_hex(derived_key);
+                    return Utils::constant_time_compare(derived_key_hex, expected_key_hex);
+                }
+            } catch (...) {}
+        }
+    }
+
+    // Backward compatibility: SHA-256 legacy hash check
+    std::string legacy_hash = crypto::Sha256::hash_hex(password);
+    return Utils::constant_time_compare(legacy_hash, stored_hash);
 }
 
 AclManager::AclManager(std::filesystem::path storage_path)
@@ -165,9 +218,8 @@ bool AclManager::authenticate(const std::string& username, const std::string& pa
     if (acc.is_expired()) return false;
     if (!acc.has_permission(required_role)) return false;
 
-    // Verify password hash
-    std::string h = hash_password(password);
-    return Utils::constant_time_compare(h, acc.password_hash);
+    // Verify password hash (PBKDF2 with legacy SHA-256 fallback)
+    return verify_password(password, acc.password_hash);
 }
 
 } // namespace slug::core

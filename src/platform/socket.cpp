@@ -100,23 +100,72 @@ bool TcpSocket::connect(const std::string& host, uint16_t port, int timeout_ms) 
         return false;
     }
 
-    SocketHandle s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (s == kInvalidSocket) {
-        freeaddrinfo(res);
-        return false;
-    }
+    SocketHandle s = kInvalidSocket;
+    for (struct addrinfo* cur = res; cur != nullptr; cur = cur->ai_next) {
+        s = socket(cur->ai_family, cur->ai_socktype, cur->ai_protocol);
+        if (s == kInvalidSocket) continue;
 
-    if (timeout_ms > 0) {
-        SocketUtils::set_timeouts(s, timeout_ms);
-    }
+        if (timeout_ms > 0) {
+            SocketUtils::set_nonblocking(s, true);
+        }
 
-    if (::connect(s, res->ai_addr, static_cast<int>(res->ai_addrlen)) != 0) {
+        int conn_res = ::connect(s, cur->ai_addr, static_cast<int>(cur->ai_addrlen));
+        bool connected = false;
+
+        if (conn_res == 0) {
+            connected = true;
+        } else if (timeout_ms > 0) {
+#if defined(SLUG_PLATFORM_WINDOWS)
+            int err = WSAGetLastError();
+            bool in_progress = (err == WSAEWOULDBLOCK || err == WSAEINPROGRESS);
+#else
+            int err = errno;
+            bool in_progress = (err == EINPROGRESS);
+#endif
+            if (in_progress) {
+                fd_set write_fds, except_fds;
+                FD_ZERO(&write_fds);
+                FD_ZERO(&except_fds);
+                FD_SET(s, &write_fds);
+                FD_SET(s, &except_fds);
+
+                struct timeval tv{};
+                tv.tv_sec = timeout_ms / 1000;
+                tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+                int sel_res = select(static_cast<int>(s + 1), nullptr, &write_fds, &except_fds, &tv);
+                if (sel_res > 0 && FD_ISSET(s, &write_fds) && !FD_ISSET(s, &except_fds)) {
+                    int so_error = 0;
+#if defined(SLUG_PLATFORM_WINDOWS)
+                    int len = sizeof(so_error);
+                    getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so_error), &len);
+#else
+                    socklen_t len = sizeof(so_error);
+                    getsockopt(s, SOL_SOCKET, SO_ERROR, &so_error, &len);
+#endif
+                    if (so_error == 0) {
+                        connected = true;
+                    }
+                }
+            }
+        }
+
+        if (timeout_ms > 0) {
+            SocketUtils::set_nonblocking(s, false);
+            SocketUtils::set_timeouts(s, timeout_ms);
+        }
+
+        if (connected) {
+            break;
+        }
+
         SocketUtils::close_socket(s);
-        freeaddrinfo(res);
-        return false;
+        s = kInvalidSocket;
     }
 
     freeaddrinfo(res);
+    if (s == kInvalidSocket) return false;
+
     handle_ = s;
     peer_.ip = host;
     peer_.port = port;

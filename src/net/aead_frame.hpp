@@ -100,7 +100,7 @@ public:
             return std::nullopt; // Replay packet dropped!
         }
 
-        if (cipher_len < crypto::XChaCha20Poly1305::kTagSize || cipher_len > 100 * 1024 * 1024) {
+        if (cipher_len < crypto::XChaCha20Poly1305::kTagSize || cipher_len > 16 * 1024 * 1024) {
             return std::nullopt;
         }
 

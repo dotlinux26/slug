@@ -26,14 +26,10 @@ WorkspaceManager& WorkspaceManager::instance() {
 }
 
 fs::path WorkspaceManager::registry_file_path() {
-    const char* home = std::getenv("HOME");
-    if (!home) home = std::getenv("USERPROFILE");
-    if (home) {
-        fs::path p = fs::path(home) / ".slug" / "registry.json";
-        platform::PathUtils::ensure_directory(p.parent_path());
-        return p;
-    }
-    return fs::temp_directory_path() / ".slug_registry.json";
+    fs::path base = platform::PathUtils::get_user_home();
+    fs::path p = base / ".slug" / "registry.json";
+    platform::PathUtils::ensure_directory(p.parent_path());
+    return p;
 }
 
 static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p, bool auto_prune_dead = true) {

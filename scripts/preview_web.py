@@ -165,35 +165,160 @@ SVG_ICONS = {
     "play": '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>'
 }
 
-USER_ACCOUNTS = [
-    {
-        "username": "admin",
-        "role": "rw",
-        "roleName": "Toàn Quyền (Đọc & Ghi)",
-        "ttl": 0,
-        "status": "Permanent (∞)",
-        "createdAt": "16/10/2026 22:00",
-        "revoked": False
-    },
-    {
-        "username": "colleague_bob",
-        "role": "r",
-        "roleName": "Chỉ Đọc (Tải Về)",
-        "ttl": 6300,
-        "status": "Còn 1h 45m",
-        "createdAt": "16/10/2026 22:10",
-        "revoked": False
-    },
-    {
-        "username": "student_alice",
-        "role": "w",
-        "roleName": "Hộp Thư Nộp Bài (Upload)",
-        "ttl": 19200,
-        "status": "Còn 5h 20m",
-        "createdAt": "16/10/2026 22:25",
-        "revoked": False
-    }
-]
+def load_user_accounts():
+    acl_path = os.path.join(BASE_DIR, ".slug", "acl.db")
+    if not os.path.exists(acl_path):
+        return []
+    try:
+        with open(acl_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            users = data.get("users", [])
+            out = []
+            now = int(time.time())
+            role_names = {
+                "r": "Chỉ Đọc (Tải Về)",
+                "w": "Hộp Thư Nộp Bài (Upload)",
+                "rw": "Toàn Quyền (Đọc & Ghi)"
+            }
+            for u in users:
+                role = u.get("role", "r")
+                exp = u.get("expires_at", 0)
+                if exp == 0:
+                    status_str = "Permanent (∞)"
+                elif exp > now:
+                    rem = exp - now
+                    hrs = rem // 3600
+                    mins = (rem % 3600) // 60
+                    status_str = f"Còn {hrs}h {mins}m"
+                else:
+                    status_str = "Đã hết hạn"
+                
+                c_ts = u.get("created_at", 0)
+                c_str = datetime.datetime.fromtimestamp(c_ts).strftime("%d/%m/%Y %H:%M") if c_ts else "Mặc định"
+                out.append({
+                    "username": u.get("username", ""),
+                    "role": role,
+                    "roleName": role_names.get(role, role),
+                    "ttl": max(0, exp - now) if exp else 0,
+                    "status": status_str,
+                    "createdAt": c_str,
+                    "revoked": u.get("revoked", False)
+                })
+            return out
+    except Exception:
+        return []
+
+USER_ACCOUNTS = load_user_accounts()
+
+def save_user_accounts():
+    slug_dir = os.path.join(BASE_DIR, ".slug")
+    os.makedirs(slug_dir, exist_ok=True)
+    acl_path = os.path.join(slug_dir, "acl.db")
+    users = []
+    now = int(time.time())
+    for u in USER_ACCOUNTS:
+        users.append({
+            "username": u.get("username", ""),
+            "password_hash": u.get("password_hash", ""),
+            "role": u.get("role", "r"),
+            "created_at": now,
+            "expires_at": (now + u.get("ttl", 0)) if u.get("ttl", 0) > 0 else 0,
+            "revoked": u.get("revoked", False)
+        })
+    try:
+        with open(acl_path, "w", encoding="utf-8") as f:
+            json.dump({"users": users}, f, indent=2)
+    except Exception:
+        pass
+
+def calculate_shannon_entropy(data_bytes):
+    if not data_bytes:
+        return 0.0
+    import math
+    freq = {}
+    for b in data_bytes:
+        freq[b] = freq.get(b, 0) + 1
+    total = len(data_bytes)
+    ent = 0.0
+    for count in freq.values():
+        p = count / total
+        ent -= p * math.log2(p)
+    return round(ent, 2)
+
+def scan_workspace_real(target_dir):
+    if not os.path.isdir(target_dir):
+        return {"clean": 0, "quarantined": 0, "excluded": 0}, [], [], []
+    
+    clean_files = []
+    quarantined_files = []
+    excluded_files = []
+
+    clean_count = 0
+    quarantined_count = 0
+    excluded_count = 0
+
+    EXCLUDE_DIRS = {'.git', '.vs', 'build', 'target', 'node_modules', '__pycache__', '.slug'}
+
+    for root, dirs, files in os.walk(target_dir):
+        rel_root = os.path.relpath(root, target_dir)
+        parts = rel_root.replace('\\', '/').split('/')
+        if any(p in EXCLUDE_DIRS for p in parts if p != '.'):
+            excluded_count += len(files)
+            continue
+        
+        skip_dirs = [d for d in dirs if d in EXCLUDE_DIRS]
+        for sd in skip_dirs:
+            dirs.remove(sd)
+            excluded_count += 1
+            if len(excluded_files) < 10:
+                excluded_files.append({"name": sd + "/", "size": "-", "rule": f"{sd}/ is excluded", "type": "Directory"})
+
+        for f in files:
+            full_path = os.path.join(root, f)
+            rel_path = os.path.relpath(full_path, target_dir).replace('\\', '/')
+            st = get_file_status(f)
+            try:
+                sz = os.path.getsize(full_path)
+                sz_str = format_size(sz)
+            except Exception:
+                sz = 0
+                sz_str = "0 B"
+
+            if st == 'QUARANTINED':
+                quarantined_count += 1
+                if len(quarantined_files) < 15:
+                    quarantined_files.append({
+                        "name": rel_path,
+                        "size": sz_str,
+                        "tiers": ["Slug Regex", "Slug Guard"],
+                        "reason": "Phát hiện tệp nhạy cảm hoặc bí mật hệ thống",
+                        "unquarantined": f in UNQUARANTINED_FILES
+                    })
+            elif st == 'EXCLUDED':
+                excluded_count += 1
+                if len(excluded_files) < 15:
+                    excluded_files.append({
+                        "name": rel_path,
+                        "size": sz_str,
+                        "rule": "Matched exclude filter",
+                        "type": "File"
+                    })
+            else:
+                clean_count += 1
+                if len(clean_files) < 15:
+                    clean_files.append({
+                        "name": rel_path,
+                        "size": sz_str,
+                        "status": "Clean",
+                        "note": "Verified safe"
+                    })
+
+    return {
+        "clean": clean_count,
+        "quarantined": quarantined_count,
+        "excluded": excluded_count
+    }, clean_files, quarantined_files, excluded_files
+
 
 def format_size(size_bytes):
     if size_bytes < 1024:
@@ -245,18 +370,6 @@ def get_env_vault_list():
                                 })
                     except Exception:
                         pass
-    if not entries:
-        entries = [
-            {
-                "workspace_path": BASE_DIR,
-                "file_path": os.path.normpath(os.path.join(BASE_DIR, ".env")),
-                "timestamp_str": "16/10/2026 22:30:15",
-                "size_bytes": 380,
-                "blake3": "a7f92b0c1e8d...",
-                "filename": "env_20261016_223015_v1.bak",
-                "status": "ĐÃ NIÊM PHONG (.env.pqc)"
-            }
-        ]
     return entries
 
 def measure_disk_io(quick=True):
@@ -410,24 +523,49 @@ def get_portal_html():
 
     raw_html = content[html_start:html_end]
 
-    saved_conns_rows = f"""
-    <tr class='clickable-row' onclick="window.location.href='/drop'">
-      <td><strong>lab-peer-local</strong></td>
-      <td><code>Thư mục hiện tại ({os.path.basename(BASE_DIR)})</code></td>
-      <td><code>127.0.0.1:9443</code></td>
-      <td><span class='role-tag'>RW</span></td>
-      <td>Permanent (∞)</td>
-      <td onclick='event.stopPropagation()'>
-        <button class='btn btn-xs' onclick="window.location.href='/drop'">{SVG_ICONS['folder']} Duyệt Thư Mục</button>
-        <button class='btn-danger btn-xs' onclick="showToast('Đã xóa trạm lưu khỏi danh bạ!')">{SVG_ICONS['trash']} Xóa</button>
-      </td>
-    </tr>
-    """
+    home_dir = os.path.expanduser("~")
+    conn_file = os.path.join(home_dir, ".slug", "connections.json")
+    saved_conns = []
+    if os.path.exists(conn_file):
+        try:
+            with open(conn_file, "r", encoding="utf-8") as f:
+                saved_conns = json.load(f)
+        except Exception:
+            saved_conns = []
+
+    rows_list = []
+    now = int(time.time())
+    for c in saved_conns:
+        cid = c.get("id", "")
+        cws = c.get("workspace", "")
+        chost = c.get("host", "127.0.0.1")
+        cport = c.get("port", 9443)
+        crole = c.get("role", "r").upper()
+        exp = c.get("expires_at", 0)
+        exp_str = "Permanent (∞)" if exp == 0 else (f"Còn {max(0, exp - now)//3600}h {(max(0, exp - now)%3600)//60}m" if exp > now else "<span style='color:var(--danger);'>Expired</span>")
+        rows_list.append(f"""
+        <tr class='clickable-row' onclick="window.location.href='/drop'">
+          <td><strong>{cid}</strong></td>
+          <td><code>{cws}</code></td>
+          <td><code>{chost}:{cport}</code></td>
+          <td><span class='role-tag'>{crole}</span></td>
+          <td>{exp_str}</td>
+          <td onclick='event.stopPropagation()'>
+            <button class='btn btn-xs' onclick="window.location.href='/drop'">{SVG_ICONS['folder']} Duyệt Thư Mục</button>
+            <button class='btn-danger btn-xs' onclick="deleteConn('{cid}')">{SVG_ICONS['trash']} Xóa</button>
+          </td>
+        </tr>
+        """)
+
+    if not rows_list:
+        saved_conns_rows = "<tr><td colspan='6' style='text-align:center; color:var(--text-muted); padding:18px;'>Chưa có trạm lưu nào. Điền IP và mã OTP vào biểu mẫu phía trên để kết nối ngay.</td></tr>"
+    else:
+        saved_conns_rows = "\n".join(rows_list)
 
     rendered = raw_html.replace("{{PORTAL_PORT}}", str(PORT))
     rendered = rendered.replace("{{LAN_IP}}", LAN_IP)
     rendered = rendered.replace("{{SAVED_CONNS_ROWS}}", saved_conns_rows.strip())
-    rendered = rendered.replace("{{SAVED_CONNS_COUNT}}", "1")
+    rendered = rendered.replace("{{SAVED_CONNS_COUNT}}", str(len(saved_conns)))
 
     # Replace any literal ${ICONS.xxx} in HTML before serving
     for k, v in SVG_ICONS.items():
@@ -839,76 +977,37 @@ function submitPullPlan(e) {{
 
   out.style.display = 'block';
   out.innerHTML = `<div style="background:#1f2328; color:#e6edf3; font-family:'JetBrains Mono', monospace; font-size:11px; line-height:1.6; padding:12px; border-radius:2px; max-height:360px; overflow-y:auto; border:1px solid #30363d; margin-top:8px; white-space:pre-wrap;">`
-    + `[SLUG PQC PULSE] Performing Delta Dry-Run Sync...\n`
-    + `> Remote Workspace:      pure-pqc://127.0.0.1:9443 (Suite: Modern Hybrid ML-KEM-768 / X25519)\n`
-    + `> Local Destination:     ` + dest + `\n`
-    + `> Scope Pattern:         ` + scope + `\n`
-    + `> Prune Obsolete Files:  ` + (prune ? 'ENABLED' : 'DISABLED') + `\n`
-    + `--------------------------------------------------------------------------------\n`
-    + `[1/4] Handshake & Mutual Auth:  Authenticated via ML-KEM-768 (Latency: 0.8ms)\n`
-    + `[2/4] Remote Manifest Fetch:    Received remote catalog (99 files, 44.2 MiB)\n`
-    + `[3/4] FastCDC & BLAKE3 Delta:   Evaluating local tree vs remote cryptographic digests...\n`
-    + `      --------------------------------------------------------------------------\n`
-    + `      - OK (BLAKE3 Matched):    84 files (42.8 MiB) -> Cache Hit (0 bytes transferred)\n`
-    + `        [HIT] assets/slug-icon.svg                     (4.2 KiB, blake3: a3f8...9b12)\n`
-    + `        [HIT] assets/logo.png                          (48.6 KiB, blake3: 7c4e...881f)\n`
-    + `        [HIT] include/slug/core.hpp                    (35.2 KiB, blake3: e110...aa76)\n`
-    + `        [HIT] include/slug/crypto.hpp                  (21.4 KiB, blake3: 1a88...09de)\n`
-    + `        [HIT] include/slug/policy.hpp                  (18.9 KiB, blake3: bc89...4501)\n`
-    + `        [HIT] include/slug/storage.hpp                 (16.7 KiB, blake3: d7e2...5b8a)\n`
-    + `        [HIT] include/slug/sync.hpp                    (24.3 KiB, blake3: 88fa...9902)\n`
-    + `        [HIT] include/slug/ai.hpp                      (19.1 KiB, blake3: bb12...66c3)\n`
-    + `        [HIT] src/crypto/kem.cpp                       (48.2 KiB, blake3: 63d1...ff0a)\n`
-    + `        [HIT] src/crypto/sig.cpp                       (19.8 KiB, blake3: 4410...12e9)\n`
-    + `        [HIT] src/crypto/hybrid_cipher.cpp            (36.4 KiB, blake3: ee09...2819)\n`
-    + `        [HIT] src/crypto/blake3_wrapper.cpp            (14.5 KiB, blake3: 31c8...f022)\n`
-    + `        [HIT] src/storage/cas.cpp                      (51.2 KiB, blake3: 5a9b...77f3)\n`
-    + `        [HIT] src/storage/packfile.cpp                 (38.0 KiB, blake3: c881...4401)\n`
-    + `        [HIT] src/policy/rule_engine.cpp               (28.7 KiB, blake3: 9b2d...1a4c)\n`
-    + `        [HIT] src/policy/regex_scanner.cpp             (31.2 KiB, blake3: a4f1...892e)\n`
-    + `        [HIT] src/ai/slug_guard.cpp                    (32.1 KiB, blake3: 8f90...33b1)\n`
-    + `        [HIT] src/ai/stateful_audit.cpp                (22.5 KiB, blake3: d7e2...5b8a)\n`
-    + `        [HIT] src/ai/embedding_engine.cpp              (44.8 KiB, blake3: 7c4e...881f)\n`
-    + `        [HIT] src/bench/benchmark.cpp                  (42.1 KiB, blake3: a3f8...9b12)\n`
-    + `        [HIT] tests/test_fastcdc.cpp                   (15.6 KiB, blake3: 110b...2c4a)\n`
-    + `        [HIT] tests/test_pqc.cpp                       (18.9 KiB, blake3: e110...aa76)\n`
-    + `        [HIT] tests/test_rules.cpp                     (14.2 KiB, blake3: bc89...4501)\n`
-    + `        [HIT] tests/test_cas.cpp                       (12.8 KiB, blake3: 88fa...9902)\n`
-    + `        [HIT] tests/test_bench.cpp                     (11.4 KiB, blake3: 4410...12e9)\n`
-    + `        [HIT] docs/security-whitepaper.md              (54.2 KiB, blake3: ee09...2819)\n`
-    + `        [HIT] docs/pqc-fips203-analysis.md             (46.1 KiB, blake3: bb12...66c3)\n`
-    + `        [HIT] docs/cli-reference.md                    (33.8 KiB, blake3: 63d1...ff0a)\n`
-    + `        ... [và 56 tệp khác đã khớp hoàn toàn mã băm BLAKE3, 0 bytes truyền tải]\n`
-    + `      --------------------------------------------------------------------------\n`
-    + `      - PULL (New / Modified):  14 files (1.4 MiB) across 32 FastCDC chunks:\n`
-    + `        [PULL] src/main.cpp                            (18.4 KiB | 2 chunks: #01, #02)\n`
-    + `        [PULL] src/net/web_assets.hpp                  (284.1 KiB | 8 chunks: #03..#10)\n`
-    + `        [PULL] src/net/portal_service.cpp              (45.2 KiB | 3 chunks: #11..#13)\n`
-    + `        [PULL] src/net/client.cpp                      (20.6 KiB | 2 chunks: #14, #15)\n`
-    + `        [PULL] src/sync/delta.cpp                      (31.8 KiB | 2 chunks: #16, #17)\n`
-    + `        [PULL] scripts/preview_web.py                  (79.6 KiB | 3 chunks: #18..#20)\n`
-    + `        [PULL] scripts/update_portal_assets.py         (68.2 KiB | 2 chunks: #21, #22)\n`
-    + `        [PULL] CMakeLists.txt                          (12.3 KiB | 1 chunk:  #23)\n`
-    + `        [PULL] TUTORIAL.md                             (38.5 KiB | 2 chunks: #24, #25)\n`
-    + `        [PULL] README.md                               (14.7 KiB | 1 chunk:  #26)\n`
-    + `        [PULL] docs/architecture.md                    (24.0 KiB | 2 chunks: #27, #28)\n`
-    + `        [PULL] config/slug.conf                        (2.1 KiB  | 1 chunk:  #29)\n`
-    + `        [PULL] tests/test_e2e.cpp                      (19.4 KiB | 2 chunks: #30, #31)\n`
-    + `        [PULL] package.json                            (1.2 KiB  | 1 chunk:  #32)\n`
-    + `      --------------------------------------------------------------------------\n`
-    + `      - PRUNE (Stale Local):    ` + (prune ? '2 stale files flagged for deletion:\\n        [DELETE] temp/old_cache.tmp\\n        [DELETE] build/legacy_test.o' : '0 files (prune disabled)') + `\n`
-    + `[4/4] Bandwidth Optimization:   Saved 96.8% network transfer (42.8 MiB bypassed)\n`
-    + `--------------------------------------------------------------------------------\n`
-    + `[SUMMARY] DRY-RUN COMPLETED SUCCESSFULLY. No changes made to disk.\n`
-    + `Run 'slug pull' or click 'Bắt Đầu Đồng Bộ Về Máy' to execute download.`
-    + `</div>`;
-  setTimeout(() => {{
-    const logBox = out.querySelector('div');
-    if (logBox) {{
-      logBox.scrollTop = logBox.scrollHeight;
-    }}
-    out.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
-  }}, 60);
+    + `[SLUG DELTA SYNC] Đang phân tích kế hoạch đồng bộ và tính toán vi sai...\n</div>`;
+
+  fetch('/api/pull/dry-run')
+    .then(r => r.json())
+    .then(data => {{
+      const newFiles = (data.new_files !== undefined) ? data.new_files : 0;
+      const newBytes = (data.new_bytes !== undefined) ? data.new_bytes : 0;
+      const cachedFiles = (data.cached_files !== undefined) ? data.cached_files : 0;
+      const cachedBytes = (data.cached_bytes !== undefined) ? data.cached_bytes : 0;
+      const savedPct = (data.bandwidth_saved_pct !== undefined) ? data.bandwidth_saved_pct : 100.0;
+      const ws = data.workspace || 'remote';
+      const bStr = (newBytes > 1048576) ? (newBytes/1048576).toFixed(2) + ' MiB' : (newBytes/1024).toFixed(1) + ' KiB';
+      const cStr = (cachedBytes > 1048576) ? (cachedBytes/1048576).toFixed(2) + ' MiB' : (cachedBytes/1024).toFixed(1) + ' KiB';
+      out.innerHTML = `<div style="background:#1f2328; color:#e6edf3; font-family:'JetBrains Mono', monospace; font-size:11px; line-height:1.6; padding:12px; border-radius:2px; max-height:360px; overflow-y:auto; border:1px solid #30363d; margin-top:8px; white-space:pre-wrap;">`
+        + `[SLUG PQC PULSE] Kế Hoạch Đồng Bộ Vi Sai (Dry-Run)\n`
+        + `> Không gian làm việc:   ` + ws + `\n`
+        + `> Thư mục đích lưu:       ` + dest + `\n`
+        + `> Phạm vi tệp (Scope):    ` + scope + `\n`
+        + `> Tự động dọn (--prune):  ` + (prune ? 'BẬT' : 'TẮT') + `\n`
+        + `--------------------------------------------------------------------------------\n`
+        + `Tệp mới hoặc sửa đổi:     ` + newFiles + ` tệp (` + bStr + `)\n`
+        + `Tệp khớp bộ nhớ đệm:      ` + cachedFiles + ` tệp (` + cStr + `)\n`
+        + `Băng thông mạng tiết kiệm:` + savedPct.toFixed(1) + `% (Dùng FastCDC & BLAKE3)\n`
+        + `--------------------------------------------------------------------------------\n`
+        + `[KẾT QUẢ] ĐÃ TÍNH TOÁN XONG. Chưa có thay đổi nào ghi vào đĩa.\n`
+        + `Bấm nút [Bắt Đầu Đồng Bộ Về Máy] để tải gói nén thư mục về.`
+        + `</div>`;
+    }})
+    .catch(err => {{
+      out.innerHTML = `<div style="padding:10px; background:#ffebe9; color:#cf222e; font-size:12px; font-family:monospace;">Lỗi phân tích kế hoạch: ` + err + `</div>`;
+    }});
 }}
 
 function executeRealPull() {{
@@ -932,12 +1031,12 @@ function executeRealPull() {{
   if (out) {{
     out.style.display = 'block';
     out.innerHTML = `<div style="padding:12px; background:#dafbe1; border:1px solid rgba(26,127,55,0.4); border-radius: 2px; font-size:11px; font-family:'JetBrains Mono', monospace; color:var(--success); line-height:1.6;">
-      <div style="font-weight:700; margin-bottom:4px; font-size:12px;">{SVG_ICONS['check']} Khởi tạo đồng bộ vi sai qua kênh Post-Quantum...</div>
-      <div>Tiến trình: 14/14 tệp hoàn tất (1.4 MiB). Gói nén workspace (.zip) đang được tải xuống máy của bạn!</div>
+      <div style="font-weight:700; margin-bottom:4px; font-size:12px;">{SVG_ICONS['check']} Khởi tạo tải dữ liệu qua kênh an toàn...</div>
+      <div>Gói nén thư mục (.zip) đang được tạo và bắt đầu tải xuống máy của bạn!</div>
       <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(26,127,55,0.3); color:#1f2328;">
-        <strong>Lưu ý kỹ thuật Web Sandbox:</strong> Do cơ chế bảo mật của trình duyệt web (không được tự ý ghi trực tiếp vào ổ đĩa), dữ liệu được tải về dạng file nén để bạn giải nén vào <code>` + dest + `</code>.<br>
+        <strong>Lưu ý:</strong> Do cơ chế bảo mật sandbox của trình duyệt web, bạn giải nén file tải về vào thư mục đích <code>` + dest + `</code>.<br>
         Để đồng bộ trực tiếp từng tệp tự động ghi vào thư mục máy tính, bạn dùng lệnh CLI:<br>
-        <code style="background:#f6f8fa; padding:2px 6px; border:1px solid #d0d7de; border-radius:2px; display:inline-block; margin-top:4px;">slug pull lab-peer-local --dest "` + dest + `"</code>
+        <code style="background:#f6f8fa; padding:2px 6px; border:1px solid #d0d7de; border-radius:2px; display:inline-block; margin-top:4px;">slug pull &lt;station_id&gt; --dest "` + dest + `"</code>
       </div>
     </div>`;
   }}
@@ -1376,53 +1475,57 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 }).encode("utf-8"))
                 return
 
-            clean_count = 24 + (1 if ".env" in UNQUARANTINED_FILES else 0)
-            quarantined_count = 0 if ".env" in UNQUARANTINED_FILES else 1
+            scan_target = os.path.abspath(os.path.join(BASE_DIR, target_path)) if target_path else BASE_DIR
+            if not os.path.isdir(scan_target):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "ok",
+                    "path": target_path,
+                    "stats": {"clean": 0, "quarantined": 0, "excluded": 0},
+                    "clean_files": [],
+                    "quarantined_files": [],
+                    "excluded_files": []
+                }).encode("utf-8"))
+                return
+
+            stats, clean_files, quarantined_files, excluded_files = scan_workspace_real(scan_target)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({
                 "status": "ok",
-                "workspace": target_path,
-                "stats": {
-                    "clean": clean_count,
-                    "quarantined": quarantined_count,
-                    "excluded": 842
-                },
-                "quarantined_files": [
-                    {
-                        "name": ".env",
-                        "size": "380 B",
-                        "tiers": ["Slug Regex", "Slug AI"],
-                        "reason": "Phát hiện JWT_SECRET, DATABASE_URL, API_KEY (Entropy: 4.82)",
-                        "unquarantined": ".env" in UNQUARANTINED_FILES
-                    }
-                ],
-                "clean_files": [
-                    { "name": "src/main.cpp", "size": "146 KB", "status": "Clean", "note": "C++ Source, Entropy 3.82" },
-                    { "name": "CMakeLists.txt", "size": "1.4 KB", "status": "Clean", "note": "Build Config, 0 secrets" },
-                    { "name": "README.md", "size": "5.2 KB", "status": "Clean", "note": "Markdown Documentation" },
-                    { "name": "src/net/web_assets.hpp", "size": "240 KB", "status": "Clean", "note": "Web Portal Assets" }
-                ],
-                "excluded_files": [
-                    { "name": "build/", "size": "48.2 MB", "rule": "build/ in .slugignore", "type": "Directory" },
-                    { "name": "target/", "size": "12.5 MB", "rule": "target/ in .slugignore", "type": "Directory" },
-                    { "name": "node_modules/", "size": "142 MB", "rule": "node_modules/ in .slugignore", "type": "Directory" }
-                ]
+                "workspace": target_path or os.path.basename(scan_target),
+                "stats": stats,
+                "quarantined_files": quarantined_files,
+                "clean_files": clean_files,
+                "excluded_files": excluded_files
             }).encode("utf-8"))
             return
 
         if path == "/api/pull/dry-run":
+            stats, clean_files, _, _ = scan_workspace_real(BASE_DIR)
+            total_clean = stats.get("clean", 0)
+            cached_bytes = 0
+            for f in clean_files:
+                fp = os.path.join(BASE_DIR, f["name"])
+                if os.path.isfile(fp):
+                    try:
+                        cached_bytes += os.path.getsize(fp)
+                    except Exception:
+                        pass
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({
                 "status": "ok",
-                "new_files": 14,
-                "new_bytes": 1468006,
-                "cached_files": 84,
-                "cached_bytes": 44879052,
-                "bandwidth_saved_pct": 96.8
+                "workspace": os.path.basename(BASE_DIR),
+                "new_files": 0,
+                "new_bytes": 0,
+                "cached_files": total_clean,
+                "cached_bytes": cached_bytes,
+                "bandwidth_saved_pct": 100.0
             }).encode("utf-8"))
             return
         if path == "/api/env/list":
@@ -1570,6 +1673,7 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             else:
                 UNQUARANTINED_FILES.add(fname)
                 is_unquarantined = True
+            stats, _, _, _ = scan_workspace_real(BASE_DIR)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1577,35 +1681,51 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 "status": "ok",
                 "file": fname,
                 "unquarantined": is_unquarantined,
-                "clean": 24 + (1 if ".env" in UNQUARANTINED_FILES else 0),
-                "quarantined": 0 if ".env" in UNQUARANTINED_FILES else 1
+                "clean": stats["clean"],
+                "quarantined": stats["quarantined"]
             }).encode("utf-8"))
             return
 
         if path == "/api/audit/scan-file":
             fpath = req_data.get("path", "src/main.cpp")
+            file_full = os.path.normpath(os.path.join(BASE_DIR, fpath)) if not os.path.isabs(fpath) else fpath
+            entropy = 0.0
+            verdict = "CLEAN"
+            msg = f"Tệp '{fpath}' sạch, không phát hiện bí mật hay khóa API."
+            if os.path.isfile(file_full):
+                try:
+                    with open(file_full, "rb") as f:
+                        data = f.read(65536)
+                    entropy = calculate_shannon_entropy(data)
+                except Exception:
+                    entropy = 0.0
+            st = get_file_status(os.path.basename(fpath))
+            if st == 'QUARANTINED':
+                verdict = "QUARANTINED"
+                msg = f"Tệp '{fpath}' bị cách ly do nghi vấn chứa bí mật."
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({
                 "status": "ok",
                 "file": fpath,
-                "entropy": 3.82,
-                "verdict": "CLEAN",
-                "message": f"File '{fpath}' is clean. No secrets or credentials detected."
+                "entropy": entropy,
+                "verdict": verdict,
+                "message": msg
             }).encode("utf-8"))
             return
 
         if path == "/api/audit/rescan":
+            stats, _, _, _ = scan_workspace_real(BASE_DIR)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({
                 "status": "ok",
-                "clean": 24 + (1 if ".env" in UNQUARANTINED_FILES else 0),
-                "quarantined": 0 if ".env" in UNQUARANTINED_FILES else 1,
-                "excluded": 842,
-                "message": "Workspace rescan completed successfully."
+                "clean": stats["clean"],
+                "quarantined": stats["quarantined"],
+                "excluded": stats["excluded"],
+                "message": "Đã quét lại toàn bộ workspace thành công!"
             }).encode("utf-8"))
             return
         if path == "/api/config/ai":
@@ -1744,96 +1864,6 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b'{"status":"ok","message":"Stealth shortcut created"}')
             return
 
-        
-        if path == "/api/host/suite":
-            suite = req_data.get("suite", "2")
-            host_id = req_data.get("host_id", "")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "message": f"Cipher Suite updated to Level {suite}. All active peer sessions terminated for re-keying.",
-                "suite": suite
-            }).encode("utf-8"))
-            return
-
-        if path == "/api/host/filter":
-            filter_mode = req_data.get("filter", "protected")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "message": f"Slug Guard filter mode updated to {filter_mode}.",
-                "filter": filter_mode
-            }).encode("utf-8"))
-            return
-
-        if path == "/api/audit/toggle-unquarantine":
-            fname = req_data.get("file", ".env")
-            if fname in UNQUARANTINED_FILES:
-                UNQUARANTINED_FILES.remove(fname)
-                is_unquarantined = False
-            else:
-                UNQUARANTINED_FILES.add(fname)
-                is_unquarantined = True
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "file": fname,
-                "unquarantined": is_unquarantined,
-                "clean": 24 + (1 if ".env" in UNQUARANTINED_FILES else 0),
-                "quarantined": 0 if ".env" in UNQUARANTINED_FILES else 1
-            }).encode("utf-8"))
-            return
-
-        if path == "/api/audit/scan-file":
-            fpath = req_data.get("path", "src/main.cpp")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "file": fpath,
-                "entropy": 3.82,
-                "verdict": "CLEAN",
-                "message": f"Tệp {fpath} sạch, không phát hiện bí mật hay khóa API."
-            }).encode("utf-8"))
-            return
-
-        if path == "/api/audit/rescan":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "clean": 24 + (1 if ".env" in UNQUARANTINED_FILES else 0),
-                "quarantined": 0 if ".env" in UNQUARANTINED_FILES else 1,
-                "excluded": 842,
-                "message": "Đã quét lại toàn bộ workspace thành công!"
-            }).encode("utf-8"))
-            return
-        if path == "/api/config/ai":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"status":"ok","message":"AI configuration saved"}')
-            return
-
-        if path == "/api/ai/test":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "latency": 8,
-                "message": "AI engine endpoint reachable"
-            }).encode("utf-8"))
-            return
-
         if path == "/api/host/unquarantine":
             fname = req_data.get('filename')
             if fname in UNQUARANTINED_FILES:
@@ -1848,6 +1878,7 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/users/add":
             USER_ACCOUNTS.insert(0, req_data)
+            save_user_accounts()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1860,6 +1891,7 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 if u.get('username') == uname:
                     u['role'] = req_data.get('role', u['role'])
                     u['ttl'] = req_data.get('ttl', u['ttl'])
+            save_user_accounts()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1869,6 +1901,7 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/users/delete":
             uname = req_data.get('username')
             USER_ACCOUNTS = [u for u in USER_ACCOUNTS if u.get('username') != uname]
+            save_user_accounts()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

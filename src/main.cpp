@@ -105,6 +105,7 @@ static bool is_terminal_interactive() {
 }
 #elif defined(SLUG_PLATFORM_WINDOWS)
 #include <iphlpapi.h>
+#include <shellapi.h>
 static std::string read_hidden_password(const std::string& prompt) {
     std::cout << prompt << std::flush;
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
@@ -190,14 +191,15 @@ static bool is_terminal_interactive() {
 #endif
 
 static void open_browser(const std::string& url) {
-#if defined(__APPLE__)
+#if defined(SLUG_PLATFORM_WINDOWS)
+    ShellExecuteA(NULL, "open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
+#elif defined(__APPLE__)
     std::string cmd = "open \"" + url + "\" &";
-#elif defined(_WIN32)
-    std::string cmd = "start \"\" \"" + url + "\"";
+    [[maybe_unused]] int r = std::system(cmd.c_str());
 #else
     std::string cmd = "xdg-open \"" + url + "\" >/dev/null 2>&1 &";
-#endif
     [[maybe_unused]] int r = std::system(cmd.c_str());
+#endif
 }
 
 static std::string get_current_executable_path() {
@@ -726,15 +728,25 @@ int cmd_shortcut(int, char*[]) {
     }
     std::string icon_loc = std::filesystem::exists(ico_dest, ec) ? (ico_dest.string() + ",0") : (exe + ",0");
 
+    auto escape_ps = [](const std::string& in) {
+        std::string out;
+        for (char c : in) {
+            if (c == '\\') out += "\\\\";
+            else if (c == '"') out += "\\\"";
+            else out += c;
+        }
+        return out;
+    };
+
     std::string ps = "powershell -NoProfile -NonInteractive -Command \""
                      "$ws = New-Object -ComObject WScript.Shell; "
                      "$desktop = [Environment]::GetFolderPath('Desktop'); "
-                     "$sc = $ws.CreateShortcut(\\\"$desktop\\Slug Workspace.lnk\\\"); "
+                     "$sc = $ws.CreateShortcut(\\\"$desktop\\\\Slug Workspace.lnk\\\"); "
                      "$sc.TargetPath = \\\"wscript.exe\\\"; "
-                     "$sc.Arguments = \\\"\"" + vbs_path.string() + "\"\\\"; "
-                     "$sc.WorkingDirectory = \\\"" + slug_dir.string() + "\\\"; "
+                     "$sc.Arguments = \\\"\\\"\"" + escape_ps(vbs_path.string()) + "\"\\\"\\\"; "
+                     "$sc.WorkingDirectory = \\\"" + escape_ps(slug_dir.string()) + "\\\"; "
                      "$sc.Description = \\\"Slug Post-Quantum Workspace Viewing Engine (Stealth Launcher)\\\"; "
-                     "$sc.IconLocation = \\\"" + icon_loc + "\\\"; "
+                     "$sc.IconLocation = \\\"" + escape_ps(icon_loc) + "\\\"; "
                      "$sc.Save()\"";
     int r = std::system(ps.c_str());
     if (r == 0) {
@@ -2852,6 +2864,37 @@ int cmd_portal(int argc, char* argv[]) {
                     std::string pass = j.value("password", "");
                     bool save = j.value("save", true);
                     std::string id = j.value("id", "");
+                    std::string ep = j.value("endpoint", "");
+
+                    // Robustly parse endpoint if passed (e.g. "127.0.0.1:9444", "192.168.1.5:9443?otp=12345678")
+                    if (!ep.empty()) {
+                        if (ep.starts_with("http://")) ep = ep.substr(7);
+                        else if (ep.starts_with("https://")) ep = ep.substr(8);
+                        else if (ep.starts_with("slug://")) ep = ep.substr(7);
+
+                        size_t qpos = ep.find('?');
+                        if (qpos != std::string::npos) {
+                            std::string qstr = ep.substr(qpos + 1);
+                            ep = ep.substr(0, qpos);
+                            size_t opos = qstr.find("otp=");
+                            if (opos != std::string::npos && token.empty()) {
+                                token = qstr.substr(opos + 4);
+                                size_t amp = token.find('&');
+                                if (amp != std::string::npos) token = token.substr(0, amp);
+                            }
+                        }
+
+                        size_t cpos = ep.rfind(':');
+                        if (cpos != std::string::npos) {
+                            host = ep.substr(0, cpos);
+                            try {
+                                port = static_cast<uint16_t>(std::stoi(ep.substr(cpos + 1)));
+                            } catch (...) {}
+                        } else if (!ep.empty()) {
+                            host = ep;
+                        }
+                    }
+                    if (host == "localhost") host = "127.0.0.1";
 
                     core::SuiteID suite = core::suite_from_string(suite_str);
                     auto client = std::make_unique<net::SlugClient>(host, port, suite);
@@ -2878,6 +2921,7 @@ int cmd_portal(int argc, char* argv[]) {
                             core::ConnectionManager::instance().add_connection(ci);
                         }
 
+                        std::string ticket = client->session_ticket();
                         {
                             std::lock_guard<std::mutex> lk(g_portal.mtx);
                             g_portal.client = std::move(client);
@@ -2889,7 +2933,9 @@ int cmd_portal(int argc, char* argv[]) {
 
                         nlohmann::json res;
                         res["status"] = "ok";
-                        res["redirect"] = "/drop";
+                        res["ticket"] = ticket;
+                        res["url"] = ticket.empty() ? "/drop" : ("/drop?ticket=" + ticket);
+                        res["redirect"] = res["url"];
                         send_portal_http(sock, 200, "OK", "application/json", res.dump());
                     } else {
                         nlohmann::json res;
@@ -3161,16 +3207,76 @@ int cmd_portal(int argc, char* argv[]) {
                         item["otp_r"] = st.value("totp_r", "");
                         item["otp_w"] = st.value("totp_w", "");
                         item["otp"] = item["otp_rw"];
-                        item["ttl"] = st.value("totp_remaining_sec", 30);
-                        item["peers"] = st.value("sessions", nlohmann::json::array());
+                        uint32_t step = st.value("totp_step_sec", 60);
+                        item["step_sec"] = step;
+                        item["maxTtl"] = step;
+                        item["ttl"] = st.value("totp_remaining_sec", step);
+                        item["cert_ttl"] = st.value("ttl_seconds", 86400);
+
+                        // Filter sessions: ensure host_admin is completely excluded from peers
+                        nlohmann::json peers_arr = nlohmann::json::array();
+                        if (st.contains("sessions") && st["sessions"].is_array()) {
+                            for (const auto& s : st["sessions"]) {
+                                std::string ident = s.value("identity", s.value("name", ""));
+                                std::string atype = s.value("auth_type", "");
+                                if (ident == "host_admin" || atype == "Host Admin") continue;
+                                nlohmann::json p = s;
+                                p["id"] = s.contains("id") ? s["id"].get<std::string>() : std::to_string(s.value("session_id", 0U));
+                                p["name"] = ident;
+                                p["ip"] = s.value("remote_endpoint", s.value("ip", ""));
+                                p["authType"] = s.value("authType", atype + " [" + s.value("role", "rw") + "]");
+                                p["connectedAt"] = s.value("connectedAt", core::Utils::format_timestamp(s.value("created_at", 0ULL)));
+                                p["transferred"] = s.value("transferred", "Active (Live)");
+                                peers_arr.push_back(p);
+                            }
+                        }
+                        item["peers"] = peers_arr;
                     } else {
                         item["otp_rw"] = "-";
                         item["otp_r"] = "-";
                         item["otp_w"] = "-";
                         item["otp"] = "-";
                         item["ttl"] = 0;
+                        item["maxTtl"] = 60;
+                        item["step_sec"] = 60;
                         item["peers"] = nlohmann::json::array();
                     }
+
+                    // Attach real audit data, quarantined files, and rules for this workspace
+                    auto audit_data = perform_real_workspace_audit(w.path);
+                    item["auditStats"] = audit_data.value("stats", nlohmann::json{{"clean", 0}, {"quarantined", 0}, {"excluded", 0}});
+                    item["quarantinedFiles"] = audit_data.value("quarantined_files", nlohmann::json::array());
+                    item["cleanFiles"] = audit_data.value("clean_files", nlohmann::json::array());
+                    item["excludedFiles"] = audit_data.value("excluded_files", nlohmann::json::array());
+
+                    // Read custom rules if rules.conf or .slugignore exists
+                    std::filesystem::path rules_file = w.path / "rules.conf";
+                    if (!std::filesystem::exists(rules_file)) rules_file = w.path / ".slugignore";
+                    if (std::filesystem::exists(rules_file)) {
+                        std::ifstream rf(rules_file);
+                        if (rf.is_open()) {
+                            std::string content((std::istreambuf_iterator<char>(rf)), std::istreambuf_iterator<char>());
+                            item["customRules"] = content;
+                        }
+                    }
+
+                    // Read audit log if exists
+                    std::filesystem::path log_file = w.path / ".slug" / "audit.log";
+                    nlohmann::json log_arr = nlohmann::json::array();
+                    if (std::filesystem::exists(log_file)) {
+                        std::ifstream lf(log_file);
+                        std::string line;
+                        std::vector<std::string> lines;
+                        while (std::getline(lf, line)) {
+                            if (!line.empty()) lines.push_back(line);
+                        }
+                        size_t start = lines.size() > 20 ? (lines.size() - 20) : 0;
+                        for (size_t li = lines.size(); li > start; --li) {
+                            log_arr.push_back(lines[li - 1]);
+                        }
+                    }
+                    item["logs"] = log_arr;
+
                     arr.push_back(item);
                 }
                 nlohmann::json res;
@@ -3457,6 +3563,21 @@ int cmd_portal(int argc, char* argv[]) {
                             res["workspace"] = st.value("workspace", "remote");
                         } catch (...) {}
                     }
+
+                    auto manifest_opt = g_portal.client->fetch_manifest();
+                    if (manifest_opt) {
+                        sync::DeltaSyncOptions options;
+                        auto plan = sync::DeltaCalculator::compute_plan(*manifest_opt, std::filesystem::current_path(), options);
+                        uint64_t total_bytes = plan.bytes_to_transfer + plan.bytes_saved;
+                        double saved_pct = (total_bytes > 0) ? (static_cast<double>(plan.bytes_saved) * 100.0 / static_cast<double>(total_bytes)) : 100.0;
+                        res["new_files"] = plan.count_new + plan.count_modified;
+                        res["new_bytes"] = plan.bytes_to_transfer;
+                        res["cached_files"] = plan.count_unchanged;
+                        res["cached_bytes"] = plan.bytes_saved;
+                        res["bandwidth_saved_pct"] = saved_pct;
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                        return;
+                    }
                 }
                 res["new_files"] = 0;
                 res["new_bytes"] = 0;
@@ -3479,6 +3600,17 @@ int cmd_portal(int argc, char* argv[]) {
                     if (dest.empty()) {
                         dest = "./" + std::filesystem::path(fpath).filename().string();
                     }
+
+                    // Path Traversal Security Check
+                    std::error_code ec;
+                    std::filesystem::path cwd = std::filesystem::current_path(ec);
+                    auto safe_dest = slug::platform::PathUtils::resolve_safe_path(cwd, dest);
+                    if (!safe_dest.has_value()) {
+                        send_portal_http(sock, 403, "Forbidden", "application/json", "{\"status\":\"error\",\"message\":\"Path Traversal blocked: Destination path outside current directory or invalid filename.\"}");
+                        return;
+                    }
+                    dest = safe_dest->string();
+
                     std::lock_guard<std::mutex> lk(g_portal.mtx);
                     if (!g_portal.client || !g_portal.client->is_connected()) {
                         send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối tới trạm phát nào. Hãy kết nối ở Tab 1 trước.\"}");
@@ -3499,9 +3631,58 @@ int cmd_portal(int argc, char* argv[]) {
 
             if (path == "/api/ai/test" && method == "POST") {
                 nlohmann::json res;
-                res["status"] = "ok";
-                res["message"] = "AI engine endpoint reachable";
-                res["latency"] = 12;
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string provider = j.value("provider", "local_heuristic");
+                    std::string endpoint = j.value("endpoint", "");
+                    std::string model = j.value("model", "llama3");
+
+                    if (provider == "local_heuristic") {
+                        res["status"] = "ok";
+                        res["message"] = "Local Heuristic & Entropy Engine active (100% offline, zero latency)";
+                        res["latency"] = 0;
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                        return;
+                    }
+
+                    // For network-based providers (ollama / openai), test real socket reachability and measure latency
+                    std::string host = "127.0.0.1";
+                    uint16_t port = 11434;
+                    if (!endpoint.empty()) {
+                        std::string clean_ep = endpoint;
+                        if (clean_ep.starts_with("http://")) clean_ep = clean_ep.substr(7);
+                        else if (clean_ep.starts_with("https://")) clean_ep = clean_ep.substr(8);
+                        size_t slash = clean_ep.find('/');
+                        if (slash != std::string::npos) clean_ep = clean_ep.substr(0, slash);
+                        size_t col = clean_ep.find(':');
+                        if (col != std::string::npos) {
+                            host = clean_ep.substr(0, col);
+                            try { port = static_cast<uint16_t>(std::stoi(clean_ep.substr(col + 1))); } catch (...) {}
+                        } else {
+                            host = clean_ep;
+                            port = (endpoint.starts_with("https://")) ? 443 : 80;
+                        }
+                    }
+
+                    auto start = std::chrono::high_resolution_clock::now();
+                    platform::TcpSocket test_sock;
+                    bool ok = test_sock.connect_with_timeout(host, port, 2000);
+                    auto stop = std::chrono::high_resolution_clock::now();
+                    int latency_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count());
+
+                    if (ok) {
+                        res["status"] = "ok";
+                        res["message"] = "Connected successfully to " + host + ":" + std::to_string(port);
+                        res["latency"] = (latency_ms > 0) ? latency_ms : 1;
+                    } else {
+                        res["status"] = "error";
+                        res["message"] = "Cannot reach AI endpoint at " + host + ":" + std::to_string(port) + " (Connection refused or timed out)";
+                        res["latency"] = 0;
+                    }
+                } catch (const std::exception& e) {
+                    res["status"] = "error";
+                    res["message"] = std::string(e.what());
+                }
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 return;
             }
@@ -3511,7 +3692,18 @@ int cmd_portal(int argc, char* argv[]) {
                     auto j = nlohmann::json::parse(body);
                     std::string sample = j.value("sample", "");
                     std::string provider_str = j.value("provider", "local_heuristic");
-                    ai::AiScanner scanner(ai::AiScanner::ProviderType::LOCAL_HEURISTIC);
+                    std::string endpoint = j.value("endpoint", "");
+                    std::string model = j.value("model", "qwen2.5-coder:7b");
+
+                    ai::AiScanner::ProviderType ptype = ai::AiScanner::ProviderType::LOCAL_HEURISTIC;
+                    if (provider_str == "ollama" || provider_str == "local_ollama") {
+                        ptype = ai::AiScanner::ProviderType::LOCAL_OLLAMA;
+                        if (endpoint.empty()) endpoint = "http://127.0.0.1:11434";
+                    } else if (provider_str == "cloud_api" || provider_str == "cloud") {
+                        ptype = ai::AiScanner::ProviderType::CLOUD_API;
+                    }
+
+                    ai::AiScanner scanner(ptype, endpoint, model);
                     auto finding = scanner.scan_content("test_sample.ts", sample, true);
                     double ent = compute_shannon_entropy(sample);
                     std::ostringstream ss;
@@ -3521,7 +3713,7 @@ int cmd_portal(int argc, char* argv[]) {
                     res["entropy"] = ss.str();
                     res["verdict"] = finding.has_secret ? "BLOCKED" : "CLEAN";
                     res["message"] = finding.has_secret ? finding.reason : "Tệp sạch, không phát hiện rò rỉ secret";
-                    res["model"] = j.value("model", "built-in");
+                    res["model"] = model;
                     res["provider"] = provider_str;
                     send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 } catch (...) {

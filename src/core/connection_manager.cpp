@@ -21,18 +21,14 @@ ConnectionManager& ConnectionManager::instance() {
 }
 
 fs::path ConnectionManager::connections_file_path() {
-    const char* home = std::getenv("HOME");
-    if (!home) home = std::getenv("USERPROFILE");
-    fs::path base = home ? fs::path(home) : fs::temp_directory_path();
+    fs::path base = platform::PathUtils::get_user_home();
     fs::path p = base / ".slug" / "connections.json";
     platform::PathUtils::ensure_directory(p.parent_path());
     return p;
 }
 
 fs::path ConnectionManager::active_context_file_path() {
-    const char* home = std::getenv("HOME");
-    if (!home) home = std::getenv("USERPROFILE");
-    fs::path base = home ? fs::path(home) : fs::temp_directory_path();
+    fs::path base = platform::PathUtils::get_user_home();
     fs::path p = base / ".slug" / "active_context.txt";
     platform::PathUtils::ensure_directory(p.parent_path());
     return p;

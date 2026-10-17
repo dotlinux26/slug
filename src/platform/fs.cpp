@@ -1,8 +1,10 @@
 #include "src/platform/fs.hpp"
+#include "src/platform/platform.hpp"
 #include <fstream>
 #include <algorithm>
 #include <system_error>
 #include <random>
+#include <set>
 
 namespace slug::platform {
 
@@ -36,6 +38,12 @@ bool PathUtils::is_internal_slug_path(const fs::path& path) {
 
 bool PathUtils::is_valid_portable_path(const std::string& path_str) {
     const std::string forbidden_chars = "<>:\"|?*";
+    static const std::set<std::string> dos_devices = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+
     fs::path p(path_str);
     for (const auto& comp : p) {
         std::string s = comp.string();
@@ -44,6 +52,15 @@ bool PathUtils::is_valid_portable_path(const std::string& path_str) {
             if (forbidden_chars.find(c) != std::string::npos || static_cast<unsigned char>(c) < 32) {
                 return false;
             }
+        }
+
+        // Reject Windows DOS reserved device names (CON, NUL, COM1, AUX, etc.)
+        std::string stem = comp.stem().string();
+        for (char& c : stem) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (dos_devices.find(stem) != dos_devices.end()) {
+            return false;
         }
     }
     return true;
@@ -91,6 +108,11 @@ std::optional<fs::path> PathUtils::resolve_safe_path(const fs::path& root_dir, c
 }
 
 std::optional<std::vector<uint8_t>> PathUtils::read_binary_file(const fs::path& path, size_t max_bytes) {
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) {
+        return std::nullopt;
+    }
+
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) return std::nullopt;
 
@@ -120,8 +142,8 @@ bool PathUtils::ensure_directory(const fs::path& path) {
 bool PathUtils::write_binary_file_atomic(const fs::path& path, std::span<const uint8_t> data) {
     ensure_directory(path.parent_path());
 
-    // Generate random temp name in the same directory
-    static thread_local std::mt19937_64 rng(1337);
+    // Generate random temp name in the same directory using unpredictable seed
+    static thread_local std::mt19937_64 rng(std::random_device{}());
     fs::path temp_path = path;
     temp_path += ".tmp." + std::to_string(rng());
 
@@ -138,15 +160,19 @@ bool PathUtils::write_binary_file_atomic(const fs::path& path, std::span<const u
 
     std::error_code ec;
 #if defined(SLUG_PLATFORM_WINDOWS)
-    // Windows atomic rename requires target removal first or MoveFileEx
-    fs::remove(path, ec);
-#endif
+    if (!MoveFileExW(temp_path.wstring().c_str(), path.wstring().c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        fs::remove(temp_path, ec);
+        return false;
+    }
+    return true;
+#else
     fs::rename(temp_path, path, ec);
     if (ec) {
         fs::remove(temp_path, ec);
         return false;
     }
     return true;
+#endif
 }
 
 bool PathUtils::write_text_file_atomic(const fs::path& path, const std::string& content) {

@@ -59,6 +59,7 @@ public:
     FileLockGuard& operator=(const FileLockGuard&) = delete;
 private:
     int fd_{-1};
+    void* handle_{nullptr};
 };
 
 } // namespace slug::core

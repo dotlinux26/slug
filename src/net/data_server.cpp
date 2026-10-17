@@ -78,14 +78,15 @@ void DataServer::run_receive_loop() {
         UdpPacketHeader hdr;
         std::memcpy(&hdr, buffer.data(), sizeof(hdr));
 
-        // 64-bit Anti-Replay check before calling decryption
+        // 64-bit Anti-Replay pre-check: drop replayed or expired packets immediately
         if (!sliding_window_.check(hdr.packet_seq_num)) {
-            // Replay detected or packet too old: drop immediately!
             continue;
         }
 
-        // Window update occurs after authenticating AEAD packet
-        sliding_window_.update(hdr.packet_seq_num);
+        // Cryptographic Security Note:
+        // Anti-replay window is updated ONLY AFTER authenticating the AEAD Poly1305 tag
+        // on the decrypted payload. Advancing it prematurely on raw unauthenticated UDP
+        // packets would create an unauthenticated Denial-of-Service vector (Replay Window Poisoning).
     }
 }
 

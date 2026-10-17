@@ -27,16 +27,6 @@ int ProcessUtils::run_process_with_env(const std::vector<std::string>& command_a
         env_map[k] = v;
     }
 
-    std::vector<std::string> env_strings;
-    std::vector<char*> env_ptrs;
-    for (const auto& [k, v] : env_map) {
-        env_strings.push_back(k + "=" + v);
-    }
-    for (auto& s : env_strings) {
-        env_ptrs.push_back(s.data());
-    }
-    env_ptrs.push_back(nullptr);
-
     std::vector<char*> arg_ptrs;
     for (const auto& arg : command_and_args) {
         arg_ptrs.push_back(const_cast<char*>(arg.c_str()));
@@ -45,9 +35,11 @@ int ProcessUtils::run_process_with_env(const std::vector<std::string>& command_a
 
     pid_t pid = fork();
     if (pid == 0) {
-        // Child process: execute command
-        execvpe(arg_ptrs[0], arg_ptrs.data(), env_ptrs.data());
-        // If execvpe fails, try searching PATH manually or execvp
+        // Child process: apply combined environment
+        for (const auto& [k, v] : env_map) {
+            setenv(k.c_str(), v.c_str(), 1);
+        }
+        execvp(arg_ptrs[0], arg_ptrs.data());
         std::cerr << "slug: failed to execute " << arg_ptrs[0] << " (" << strerror(errno) << ")" << std::endl;
         _exit(127);
     } else if (pid > 0) {
@@ -63,17 +55,39 @@ int ProcessUtils::run_process_with_env(const std::vector<std::string>& command_a
     }
 
 #elif defined(SLUG_PLATFORM_WINDOWS)
+    // Helper to escape Windows arguments conforming to CommandLineToArgvW rules
+    auto quote_arg = [](const std::wstring& arg) -> std::wstring {
+        if (arg.empty()) return L"\"\"";
+        if (arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
+            return arg;
+        }
+        std::wstring result = L"\"";
+        int backslashes = 0;
+        for (wchar_t c : arg) {
+            if (c == L'\\') {
+                backslashes++;
+            } else if (c == L'"') {
+                result.append(backslashes * 2 + 1, L'\\');
+                result.push_back(L'"');
+                backslashes = 0;
+            } else {
+                result.append(backslashes, L'\\');
+                backslashes = 0;
+                result.push_back(c);
+            }
+        }
+        result.append(backslashes * 2, L'\\');
+        result.push_back(L'"');
+        return result;
+    };
+
     // Windows CreateProcess with environment block
     std::wstring cmd_line;
     for (size_t i = 0; i < command_and_args.size(); ++i) {
         if (i > 0) cmd_line += L" ";
         std::string a = command_and_args[i];
         std::wstring wa(a.begin(), a.end());
-        if (wa.find(L' ') != std::wstring::npos) {
-            cmd_line += L"\"" + wa + L"\"";
-        } else {
-            cmd_line += wa;
-        }
+        cmd_line += quote_arg(wa);
     }
 
     // Inherit current environment and overlay injected variables

@@ -16,11 +16,24 @@
 #ifndef pclose
 #define pclose _pclose
 #endif
+static const char* NULL_DEV = " 2>nul";
+#else
+static const char* NULL_DEV = " 2>/dev/null";
 #endif
 
 namespace slug::ai {
 
 using json = nlohmann::json;
+
+static bool is_safe_shell_param(const std::string& s) {
+    for (char c : s) {
+        if (c == '"' || c == '\'' || c == '`' || c == ';' || c == '&' || 
+            c == '|' || c == '$' || c == '\n' || c == '\r' || c == '<' || c == '>') {
+            return false;
+        }
+    }
+    return true;
+}
 
 AiScanner::AiScanner(ProviderType provider, std::string endpoint, std::string model)
     : provider_(provider), endpoint_(std::move(endpoint)), model_(std::move(model)) {}
@@ -171,10 +184,12 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
     req_body["stream"] = false;
 
     std::string url = endpoint_ + "/api/generate";
+    if (!is_safe_shell_param(url)) return h_finding;
+
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ollama_" + std::to_string(core::Utils::current_timestamp()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string curl_cmd = "curl -s -m 5 -X POST \"" + url + "\" -H \"Content-Type: application/json\" -d @" + tmp_payload.string();
+    std::string curl_cmd = "curl -s -m 5 -X POST \"" + url + "\" -H \"Content-Type: application/json\" -d @\"" + tmp_payload.generic_string() + "\"" + NULL_DEV;
     FILE* fp = popen(curl_cmd.c_str(), "r");
     std::string response;
     if (fp) {
@@ -269,13 +284,15 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     });
     req_body["temperature"] = 0.0;
 
+    if (!is_safe_shell_param(endpoint) || !is_safe_shell_param(api_key)) return h_finding;
+
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ai_req_" + std::to_string(core::Utils::current_timestamp()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
     std::string curl_cmd = "curl -s -m 8 -X POST \"" + endpoint + "\" "
                            "-H \"Content-Type: application/json\" "
                            "-H \"Authorization: Bearer " + api_key + "\" "
-                           "-d @" + tmp_payload.string();
+                           "-d @\"" + tmp_payload.generic_string() + "\"" + NULL_DEV;
 
     FILE* fp = popen(curl_cmd.c_str(), "r");
     std::string response;

@@ -1,6 +1,7 @@
 #include "src/crypto/xchacha20poly1305.hpp"
 #include <cstring>
 #include <algorithm>
+#include <openssl/crypto.h>
 
 namespace slug::crypto {
 
@@ -310,6 +311,9 @@ std::vector<uint8_t> XChaCha20Poly1305::encrypt(
     poly1305_update(&poly_st, lens, 16);
 
     poly1305_finish(&poly_st, output.data() + plaintext.size());
+    OPENSSL_cleanse(subkey, sizeof(subkey));
+    OPENSSL_cleanse(state, sizeof(state));
+    OPENSSL_cleanse(block0, sizeof(block0));
     return output;
 }
 
@@ -374,6 +378,9 @@ std::optional<std::vector<uint8_t>> XChaCha20Poly1305::decrypt(
         diff |= (calc_tag[i] ^ tag_ptr[i]);
     }
     if (diff != 0) {
+        OPENSSL_cleanse(subkey, sizeof(subkey));
+        OPENSSL_cleanse(state, sizeof(state));
+        OPENSSL_cleanse(block0, sizeof(block0));
         return std::nullopt; // Tag mismatch! Reject!
     }
 
@@ -395,6 +402,9 @@ std::optional<std::vector<uint8_t>> XChaCha20Poly1305::decrypt(
         remaining -= chunk;
     }
 
+    OPENSSL_cleanse(subkey, sizeof(subkey));
+    OPENSSL_cleanse(state, sizeof(state));
+    OPENSSL_cleanse(block0, sizeof(block0));
     return plaintext;
 }
 

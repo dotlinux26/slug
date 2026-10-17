@@ -12,6 +12,14 @@
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 namespace slug::core {
@@ -228,6 +236,16 @@ FileLockGuard::FileLockGuard(const std::string& file_path) {
     if (fd_ >= 0) {
         ::flock(fd_, LOCK_EX);
     }
+#elif defined(_WIN32)
+    std::string lock_file = file_path + ".lock";
+    HANDLE h = CreateFileA(lock_file.c_str(), GENERIC_READ | GENERIC_WRITE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        OVERLAPPED overlapped = {0};
+        LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &overlapped);
+        handle_ = static_cast<void*>(h);
+    }
 #else
     (void)file_path;
 #endif
@@ -238,6 +256,14 @@ FileLockGuard::~FileLockGuard() {
     if (fd_ >= 0) {
         ::flock(fd_, LOCK_UN);
         ::close(fd_);
+    }
+#elif defined(_WIN32)
+    if (handle_ != nullptr && handle_ != (void*)INVALID_HANDLE_VALUE) {
+        HANDLE h = static_cast<HANDLE>(handle_);
+        OVERLAPPED overlapped = {0};
+        UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, &overlapped);
+        CloseHandle(h);
+        handle_ = nullptr;
     }
 #endif
 }

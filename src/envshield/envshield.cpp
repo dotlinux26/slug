@@ -124,15 +124,20 @@ std::vector<EnvVaultEntry> EnvShield::history(const fs::path& workspace_root) {
 
 static std::optional<std::string> decrypt_env_file(const fs::path& workspace_root) {
     fs::path env_pqc_file = workspace_root / ".env.pqc";
-    fs::path key_file = workspace_root / ".slug" / "env_key.bin";
-
-    if (!fs::exists(env_pqc_file)) {
-        std::cerr << "slug env: .env.pqc not found. Run 'slug env init' first." << std::endl;
+    fs::path vault_key_file = EnvShield::get_vault_dir(workspace_root) / "env_key.bin";
+    fs::path legacy_key_file = workspace_root / ".slug" / "env_key.bin";
+    fs::path key_file;
+    if (fs::exists(vault_key_file)) {
+        key_file = vault_key_file;
+    } else if (fs::exists(legacy_key_file)) {
+        key_file = legacy_key_file;
+    } else {
+        std::cerr << "slug env: Encryption key not found in Central Vault or workspace (" << vault_key_file.string() << ")" << std::endl;
         return std::nullopt;
     }
 
-    if (!fs::exists(key_file)) {
-        std::cerr << "slug env: Encryption key not found at " << key_file.string() << std::endl;
+    if (!fs::exists(env_pqc_file)) {
+        std::cerr << "slug env: .env.pqc not found. Run 'slug env init' first." << std::endl;
         return std::nullopt;
     }
 
@@ -242,10 +247,10 @@ static std::optional<std::string> decrypt_env_file(const fs::path& workspace_roo
 bool EnvShield::init(const fs::path& workspace_root, core::SuiteID suite_id, bool keep_plaintext) {
     fs::path env_file = workspace_root / ".env";
     fs::path env_pqc_file = workspace_root / ".env.pqc";
-    fs::path slug_dir = workspace_root / ".slug";
-    fs::path key_file = slug_dir / "env_key.bin";
-
-    platform::PathUtils::ensure_directory(slug_dir);
+    fs::path vault_dir = get_vault_dir(workspace_root);
+    platform::PathUtils::ensure_directory(vault_dir);
+    fs::path key_file = vault_dir / "env_key.bin";
+    fs::path legacy_key_file = workspace_root / ".slug" / "env_key.bin";
 
     // Read or create sample .env
     std::string env_data;
@@ -268,8 +273,9 @@ bool EnvShield::init(const fs::path& workspace_root, core::SuiteID suite_id, boo
 
     // Load or generate recipient KEM keypair
     crypto::KemKeyPair kem_keys;
-    if (fs::exists(key_file)) {
-        auto raw = platform::PathUtils::read_binary_file(key_file);
+    fs::path load_key_path = fs::exists(key_file) ? key_file : (fs::exists(legacy_key_file) ? legacy_key_file : fs::path());
+    if (!load_key_path.empty()) {
+        auto raw = platform::PathUtils::read_binary_file(load_key_path);
         if (raw && raw->size() > 4) {
             uint32_t pub_len = (static_cast<uint32_t>((*raw)[0]) << 24) |
                                (static_cast<uint32_t>((*raw)[1]) << 16) |
@@ -284,7 +290,7 @@ bool EnvShield::init(const fs::path& workspace_root, core::SuiteID suite_id, boo
 
     if (kem_keys.public_key.empty() || kem_keys.private_key.empty()) {
         kem_keys = suite->generate_kem_keypair();
-        // Save keypair to .slug/env_key.bin
+        // Save keypair safely to Central Vault outside workspace repository
         uint32_t pub_len = static_cast<uint32_t>(kem_keys.public_key.size());
         std::vector<uint8_t> key_storage(4 + kem_keys.public_key.size() + kem_keys.private_key.size());
         key_storage[0] = static_cast<uint8_t>((pub_len >> 24) & 0xFF);
@@ -357,7 +363,6 @@ bool EnvShield::init(const fs::path& workspace_root, core::SuiteID suite_id, boo
     }
 
     // Backup original .env to Central Vault (~/.slug/env_vault/<hash>/)
-    fs::path vault_dir = get_vault_dir(workspace_root);
     platform::PathUtils::ensure_directory(vault_dir);
 
     auto existing_backups = history(workspace_root);
@@ -405,6 +410,8 @@ bool EnvShield::init(const fs::path& workspace_root, core::SuiteID suite_id, boo
     platform::PathUtils::write_text_file_atomic(meta_path, meta_json.dump(2));
 
     // Automatically generate .slug/ai-rule.md for AI coding assistants
+    fs::path slug_dir = workspace_root / ".slug";
+    platform::PathUtils::ensure_directory(slug_dir);
     platform::PathUtils::write_text_file_atomic(slug_dir / "ai-rule.md", agent_prompt(workspace_root));
 
     // Clean legacy local .env.bak if present

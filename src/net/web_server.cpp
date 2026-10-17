@@ -119,11 +119,18 @@ static std::vector<uint8_t> build_zip_archive(const std::vector<std::pair<std::s
 
     for (const auto& [fname, data] : files) {
         ZipMeta m;
-        m.filename = fname;
-        // Normalize slashes to forward slashes for cross-platform ZIP compatibility
-        std::replace(m.filename.begin(), m.filename.end(), '\\', '/');
-        while (!m.filename.empty() && m.filename.front() == '/') m.filename.erase(0, 1);
-
+        std::string clean_fn = fname;
+        std::replace(clean_fn.begin(), clean_fn.end(), '\\', '/');
+        while (!clean_fn.empty() && clean_fn.front() == '/') clean_fn.erase(0, 1);
+        fs::path p_test(clean_fn);
+        std::string safe_fn;
+        for (const auto& comp : p_test) {
+            std::string c_str = comp.string();
+            if (c_str == ".." || c_str == "." || c_str.empty()) continue;
+            if (!safe_fn.empty()) safe_fn += "/";
+            safe_fn += c_str;
+        }
+        m.filename = safe_fn.empty() ? "file" : safe_fn;
         m.crc = calculate_crc32(data);
         m.size = static_cast<uint32_t>(data.size());
         m.local_hdr_offset = static_cast<uint32_t>(zip.size());
@@ -258,13 +265,15 @@ void WebServer::revoke_session_by_ticket(const std::string& ticket) {
 }
 
 std::string WebServer::render_directory_listing(const std::string& rel_subpath, const WebSession& session) {
+    auto manifest = control_server_.get_or_build_manifest();
     return WebAssets::render_directory_listing(
         control_server_.workspace_root(),
         control_server_.port(),
         control_server_.suite_id(),
         rel_subpath,
         session.identity,
-        session.role
+        session.role,
+        manifest
     );
 }
 
@@ -375,6 +384,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         j["totp_rw"] = control_server_.totp_manager().generate_code(core::Role::READ_WRITE);
         j["totp"] = j["totp_rw"];
         j["totp_remaining_sec"] = control_server_.totp_manager().remaining_seconds();
+        j["totp_step_sec"] = slug::crypto::TotpManager::kStepSeconds;
         j["admin_ticket"] = control_server_.create_host_admin_ticket();
         j["ai_enabled"] = control_server_.ai_enabled();
         j["ttl_seconds"] = control_server_.cert_ttl();
@@ -382,15 +392,23 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         json s_arr = json::array();
         uint64_t now_ts = core::Utils::current_timestamp();
         for (const auto& s : control_server_.list_sessions()) {
+            if (s.identity == "host_admin" || s.auth_type == "Host Admin") continue;
             json item;
             item["session_id"] = s.session_id;
+            item["id"] = std::to_string(s.session_id);
             item["identity"] = s.identity;
+            item["name"] = s.identity;
             item["auth_type"] = s.auth_type;
             item["role"] = core::role_to_string(s.role);
+            item["authType"] = s.auth_type + " [" + core::role_to_string(s.role) + "]";
             item["remote_endpoint"] = s.remote_endpoint;
+            item["ip"] = s.remote_endpoint;
+            item["suite"] = core::suite_to_string(control_server_.suite_id());
             item["created_at"] = s.created_at;
+            item["connectedAt"] = core::Utils::format_timestamp(s.created_at);
             item["last_active_at"] = s.last_active_at;
             item["expires_at"] = s.expires_at;
+            item["transferred"] = "Active (Live)";
             item["remaining_sec"] = (s.expires_at > now_ts) ? (s.expires_at - now_ts) : 0;
             item["is_revoked"] = s.is_revoked;
             item["is_expired"] = (s.expires_at > 0 && s.expires_at <= now_ts);
@@ -409,6 +427,16 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         std::string body = WebAssets::render_forbidden_page("Mutual Post-Quantum Certificate / Session Ticket Required.");
         send_resp(403, "Forbidden", "text/html; charset=utf-8", body);
         return;
+    }
+
+    // If accessing from localhost loopback without an explicit ticket, treat as local host_admin
+    if (!current_session && is_localhost) {
+        WebSession local_admin_session;
+        local_admin_session.identity = "host_admin";
+        local_admin_session.role = core::Role::READ_WRITE;
+        local_admin_session.token = "local_admin";
+        local_admin_session.expires_at = 0;
+        current_session = local_admin_session;
     }
 
     // Authenticated endpoints:
@@ -799,6 +827,9 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             return;
         }
         std::string fname = fs::path(rel_path).filename().string();
+        for (char& c : fname) {
+            if (c == '\r' || c == '\n' || c == '"' || c == '\\') c = '_';
+        }
         std::string extra = "Content-Disposition: attachment; filename=\"" + fname + "\"\r\n";
         std::string body(reinterpret_cast<const char*>(data.data()), data.size());
         send_resp(200, "OK", "application/octet-stream", body, extra);
@@ -843,6 +874,9 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         auto zip_bytes = build_zip_archive(files_to_zip);
         std::string zip_name = norm_dir.empty() ? control_server_.workspace_root().filename().string() : fs::path(norm_dir).filename().string();
         if (zip_name.empty()) zip_name = "workspace";
+        for (char& c : zip_name) {
+            if (c == '\r' || c == '\n' || c == '"' || c == '\\') c = '_';
+        }
 
         std::string extra = "Content-Disposition: attachment; filename=\"" + zip_name + ".zip\"\r\n";
         std::string body(reinterpret_cast<const char*>(zip_bytes.data()), zip_bytes.size());

@@ -42,7 +42,7 @@ std::regex HierarchicalGitignore::glob_to_regex(const std::string& pattern, bool
     }
 
     if (is_dir_only) {
-        rx += "(?:/.*)?$";
+        rx += "/.*$";
     } else {
         rx += "(?:/.*)?$";
     }
