@@ -423,7 +423,7 @@ std::vector<AuditIndexEntry> StatefulAuditIndex::list_flagged_or_all(bool only_f
 
     const char* sql = only_flagged
         ? "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason "
-          "FROM audit_entries WHERE status IN (1, 2, 5) ORDER BY scanned_at DESC;"
+          "FROM audit_entries WHERE status IN (2, 5, 6) ORDER BY scanned_at DESC;"
         : "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason "
           "FROM audit_entries ORDER BY scanned_at DESC;";
 
@@ -504,35 +504,40 @@ StatefulAuditIndex::QueryResult StatefulAuditIndex::query_entries(
     std::vector<std::string> conditions;
     std::vector<std::string> bind_strings;
 
-    // Status filter: all | quarantined | allowed | clean | rule
-    if (status_filter == "quarantined") {
-        conditions.push_back("status IN (1, 2, 5)");
-    } else if (status_filter == "allowed") {
-        conditions.push_back("status IN (3, 4)");
+    // Status filter: all | blocked | quarantined | allowed | whitelisted | clean | rule
+    if (status_filter == "quarantined" || status_filter == "blocked") {
+        conditions.push_back("status IN (2, 5, 6)");
+    } else if (status_filter == "allowed" || status_filter == "whitelisted") {
+        conditions.push_back("status = 4");
     } else if (status_filter == "clean") {
-        conditions.push_back("status = 0");
+        conditions.push_back("status = 1");
     } else if (status_filter == "rule") {
         conditions.push_back("status = 5");
     }
 
-    // Detector filter: all | ai | regex | entropy | rule
+    // Detector filter: all | ai | regex | entropy | rule | manual
     if (detector_filter == "ai") {
-        conditions.push_back("(status = 1 OR reason LIKE '%AI%' OR reason LIKE '%Model%')");
+        conditions.push_back("(status = 2 OR reason LIKE '%AI%' OR reason LIKE '%Model%')");
     } else if (detector_filter == "regex") {
-        conditions.push_back("(status = 2 AND (reason LIKE '%Regex%' OR reason LIKE '%Secret%' OR reason LIKE '%Pattern%'))");
+        conditions.push_back("(status = 6 OR (status = 2 AND (reason LIKE '%Regex%' OR reason LIKE '%Secret%' OR reason LIKE '%Pattern%')))");
     } else if (detector_filter == "entropy") {
-        conditions.push_back("(status = 2 AND reason LIKE '%Entropy%')");
-    } else if (detector_filter == "rule") {
-        conditions.push_back("(status = 5 OR reason LIKE '%Rule%')");
+        conditions.push_back("(status = 6 OR (status = 2 AND reason LIKE '%Entropy%'))");
+    } else if (detector_filter == "rule" || detector_filter == "manual") {
+        conditions.push_back("(status = 5 OR reason LIKE '%Rule%' OR reason LIKE '%Manual%')");
     }
 
-    // Extension / File Type filter: all | config | code | binary
-    if (ext_filter == "config") {
-        conditions.push_back("(file_path LIKE '%.env%' OR file_path LIKE '%.key' OR file_path LIKE '%.pem' OR file_path LIKE '%.json' OR file_path LIKE '%.yaml' OR file_path LIKE '%.yml' OR file_path LIKE '%.toml' OR file_path LIKE '%.conf')");
-    } else if (ext_filter == "code") {
-        conditions.push_back("(file_path LIKE '%.py' OR file_path LIKE '%.cpp' OR file_path LIKE '%.h' OR file_path LIKE '%.hpp' OR file_path LIKE '%.c' OR file_path LIKE '%.js' OR file_path LIKE '%.ts' OR file_path LIKE '%.go' OR file_path LIKE '%.rs')");
-    } else if (ext_filter == "binary") {
-        conditions.push_back("(file_path LIKE '%.pyd' OR file_path LIKE '%.dll' OR file_path LIKE '%.so' OR file_path LIKE '%.exe' OR file_path LIKE '%.bin' OR file_path LIKE '%.pak')");
+    // Extension / File Type filter: all | config | code | binary | .ext
+    if (!ext_filter.empty() && ext_filter != "all") {
+        if (ext_filter == "config") {
+            conditions.push_back("(file_path LIKE '%.env%' OR file_path LIKE '%.key' OR file_path LIKE '%.pem' OR file_path LIKE '%.json' OR file_path LIKE '%.yaml' OR file_path LIKE '%.yml' OR file_path LIKE '%.toml' OR file_path LIKE '%.conf')");
+        } else if (ext_filter == "code") {
+            conditions.push_back("(file_path LIKE '%.py' OR file_path LIKE '%.cpp' OR file_path LIKE '%.h' OR file_path LIKE '%.hpp' OR file_path LIKE '%.c' OR file_path LIKE '%.js' OR file_path LIKE '%.ts' OR file_path LIKE '%.go' OR file_path LIKE '%.rs')");
+        } else if (ext_filter == "binary") {
+            conditions.push_back("(file_path LIKE '%.pyd' OR file_path LIKE '%.dll' OR file_path LIKE '%.so' OR file_path LIKE '%.exe' OR file_path LIKE '%.bin' OR file_path LIKE '%.pak')");
+        } else {
+            conditions.push_back("file_path LIKE ?");
+            bind_strings.push_back("%" + ext_filter + "%");
+        }
     }
 
     // Search text filter

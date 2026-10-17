@@ -292,7 +292,7 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
 
     fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
     ai::StatefulAuditIndex audit_idx(idx_file);
-    auto audit_entries = audit_idx.list_flagged_or_all(false);
+    auto audit_entries = audit_idx.list_flagged_or_all(true);
 
     auto client_sessions = control_server_.list_sessions();
 
@@ -309,7 +309,9 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
         audit_entries,
         client_sessions,
         control_server_.filter_level(),
-        control_server_.ai_provider()
+        control_server_.ai_provider(),
+        control_server_.workspace_ttl(),
+        control_server_.remaining_workspace_ttl()
     );
 }
 

@@ -805,7 +805,9 @@ public:
         const std::vector<ai::AuditIndexEntry>& audit_entries,
         const std::vector<SessionState>& client_sessions,
         core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX,
-        core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA)
+        core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA,
+        uint64_t workspace_ttl = 86400,
+        uint64_t remaining_workspace_ttl = 86400)
     {
         double blake3_speed = 0.0, sha256_speed = 0.0;
         for (const auto& h_item : bench_rep.hashes) {
@@ -934,6 +936,17 @@ public:
           << "  if (s >= 86400) return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';"
           << "  if (s >= 3600) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';"
           << "  return s + 's';"
+          << "}"
+          << "function formatClock(sec) {"
+          << "  if (sec === undefined || sec === null || sec < 0) return '00:00:00';"
+          << "  if (sec === 0) return '00:00:00';"
+          << "  const d = Math.floor(sec / 86400);"
+          << "  const h = Math.floor((sec % 86400) / 3600);"
+          << "  const m = Math.floor((sec % 3600) / 60);"
+          << "  const s = sec % 60;"
+          << "  const pad = n => String(n).padStart(2, '0');"
+          << "  if (d > 0) return d + 'd ' + pad(h) + ':' + pad(m) + ':' + pad(s);"
+          << "  return pad(h) + ':' + pad(m) + ':' + pad(s);"
           << "}"
           << "function formatAgo(ts) {"
           << "  if (!ts || ts === 0) return '-';"
@@ -1503,6 +1516,18 @@ public:
           << "  setInterval(reloadSessions, 2500);"
           << "  loadAiConfig();"
           << "  queryAudit(true);"
+          << "  let adminRem = parseInt(document.getElementById('ws-admin-ttl-badge')?.getAttribute('data-rem') || '86400');"
+          << "  const adminTot = parseInt(document.getElementById('ws-admin-ttl-badge')?.getAttribute('data-ttl') || '86400');"
+          << "  if (adminTot > 0) {"
+          << "    setInterval(() => {"
+          << "      if (adminRem > 0) adminRem--;"
+          << "      const b = document.getElementById('ws-admin-ttl-badge');"
+          << "      if (b) {"
+          << "        if (adminRem <= 0) { b.style.color = 'var(--danger)'; b.innerText = 'ĐÃ HẾT HẠN (0s)'; }"
+          << "        else { b.innerText = formatClock(adminRem); }"
+          << "      }"
+          << "    }, 1000);"
+          << "  }"
           << "});"
           << "</script></head><body><div class='container'>"
           << "<div class='top-bar'>"
@@ -1518,6 +1543,9 @@ public:
           << "<p style='font-family:\"JetBrains Mono\", monospace; font-size:12px;'><strong>Port:</strong> " << port << "<br>"
           << "<strong>Suite:</strong> <span style='color:var(--pqc); font-weight:bold;'>" << core::suite_to_string(suite_id) << "</span><br>"
           << "<strong>Path:</strong> " << workspace_root.string() << "<br>"
+          << "<strong>Workspace Lifetime:</strong> <span id='ws-admin-ttl-badge' style='color:#0969da; font-weight:bold;' data-rem='" << remaining_workspace_ttl << "' data-ttl='" << workspace_ttl << "'>"
+          << (workspace_ttl == 0 ? "Vĩnh viễn (∞)" : core::Utils::format_ttl(remaining_workspace_ttl)) << "</span>"
+          << (workspace_ttl > 0 ? (" <span style='font-size:10px; color:var(--text-muted);'>(" + std::to_string(workspace_ttl) + "s)</span>") : "") << "<br>"
           << "<strong>Filter Level:</strong> <span id='active-filter-badge' style='color:var(--text-accent); font-weight:bold;'>" << core::filter_level_to_string(filter_level) << "</span><br>"
           << "<strong>AI Provider:</strong> <span id='active-ai-badge'>" << core::ai_model_to_string(ai_provider) << "</span><br>"
           << "<strong>AI Secret Shield:</strong> <span id='active-shield-badge'>" << (ai_enabled ? "<span style='color:var(--success); font-weight:bold;'>ACTIVE</span>" : "OFF") << "</span></p>"
@@ -1735,9 +1763,10 @@ public:
           << "<div style='display:flex; align-items:center; gap:4px;'>"
           << "<label style='font-size:11px; font-weight:bold; color:var(--text-muted);'>Trạng Thái:</label>"
           << "<select id='audit-filter-status' onchange='queryAudit(true)' class='input-select' style='width:auto; height:28px; padding:2px 6px; font-size:11px;'>"
-          << "<option value='all'>Tất cả trạng thái</option>"
           << "<option value='blocked' selected>Chỉ tệp bị chặn (Blocked / Flagged)</option>"
           << "<option value='clean'>Đã an toàn / Allowed (Clean)</option>"
+          << "<option value='allowed'>Đã Whitelist (Whitelisted)</option>"
+          << "<option value='all'>Tất cả trạng thái</option>"
           << "</select></div>"
           << "<div style='display:flex; align-items:center; gap:4px;'>"
           << "<label style='font-size:11px; font-weight:bold; color:var(--text-muted);'>Detector:</label>"
@@ -2474,6 +2503,18 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+function formatClock(sec) {
+  if (sec === undefined || sec === null || sec < 0) return '00:00:00';
+  if (sec === 0) return '00:00:00';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const pad = n => String(n).padStart(2, '0');
+  if (d > 0) return d + 'd ' + pad(h) + ':' + pad(m) + ':' + pad(s);
+  return pad(h) + ':' + pad(m) + ':' + pad(s);
+}
+
 let currentRole = 'client';
 let clientAuthMode = 'otp';
 let hostedWorkspaces = [];
@@ -2537,6 +2578,8 @@ function loadHostedWorkspaces() {
           maxTtl: w.maxTtl || w.step_sec || 60,
           step_sec: w.step_sec || 60,
           cert_ttl: w.cert_ttl || 86400,
+          workspace_ttl: (w.workspace_ttl !== undefined) ? w.workspace_ttl : 86400,
+          workspace_remaining_sec: (w.workspace_remaining_sec !== undefined) ? w.workspace_remaining_sec : ((w.workspace_ttl !== undefined) ? w.workspace_ttl : 86400),
           role: 'rw',
           peers: w.peers || [],
           users: w.users || [],
@@ -3234,11 +3277,11 @@ function renderHostedWorkspaces() {
             </div>
           </div>
 
-          <!-- Box 2: Cấp Độ Mật Mã & Bộ Lọc (Cho Phép Cài Lại Trực Tiếp) -->
+          <!-- Box 2: Cấu Hình Mật Mã & Thời Gian Phiên Workspace -->
           <div class="host-box" style="gap:10px;">
             <div>
               <div class="host-box-title">
-                <span>${ICONS.shield} MỨC MẬT MÃ &amp; BỘ LỌC</span>
+                <span>${ICONS.shield} MỨC MẬT MÃ &amp; THỜI GIAN PHIÊN</span>
                 <span id="suite-badge-${w.id}" class="badge ${(w.suite === '3' || w.suite === 'pqc') ? 'badge-pqc' : ''}" style="${(w.suite === '2' || w.suite === 'modern' || !w.suite) ? 'background:#ddf4ff; color:#0969da; border:1px solid rgba(9,105,218,0.3);' : ((w.suite === '1' || w.suite === 'classical') ? 'background:#fff8c5; color:#9a6700; border:1px solid rgba(154,103,0,0.3);' : '')}">${(w.suite === '3' || w.suite === 'pqc') ? 'PQC NATIVE (FIPS 203)' : ((w.suite === '1' || w.suite === 'classical') ? 'CLASSICAL (X25519)' : 'MODERN HYBRID (ML-KEM-768)')}</span>
               </div>
               
@@ -3252,14 +3295,14 @@ function renderHostedWorkspaces() {
               </div>
 
               <div>
-                <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CẤP ĐỘ LỌC BẢO MẬT (CỐ ĐỊNH THEO PHIÊN):</label>
+                <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">THỜI GIAN SỐNG PHIÊN (WORKSPACE TTL):</label>
                 <div style="background:#ffffff; border:1px solid var(--border-primary); padding:6px 10px; border-radius:2px; font-size:11px; display:flex; align-items:center; justify-content:space-between;">
-                  <span style="font-weight:700; color:#0969da; display:inline-flex; align-items:center; gap:4px;">
-                    ${ICONS.lock} ${(w.filter_level === 'level4') ? 'Mức 4: AI Model Deep Scan' : ((w.filter_level === 'level3') ? 'Mức 3: Shannon Entropy' : ((w.filter_level === 'level1') ? 'Mức 1: Rules & Gitignore' : 'Mức 2: Regex Secret Guard [Mặc Định]'))}
+                  <span style="font-weight:700; color:#0969da; display:inline-flex; align-items:center; gap:6px; font-family:'JetBrains Mono', monospace;" id="ws-ttl-clock-${w.id}">
+                    ${ICONS.clock} <span id="ws-ttl-val-${w.id}">${(w.workspace_ttl === 0) ? 'Vĩnh viễn (∞)' : formatClock(w.workspace_remaining_sec !== undefined ? w.workspace_remaining_sec : (w.workspace_ttl || 86400))}</span>
                   </span>
-                  <span style="font-size:10px; color:var(--text-muted); background:#f6f8fa; padding:1px 6px; border:1px solid var(--border-primary); border-radius:2px;">Cố Định</span>
+                  <span id="ws-ttl-badge-${w.id}" style="font-size:10px; color:#1a7f37; background:#dafbe1; padding:1px 6px; border:1px solid rgba(26,127,55,0.3); border-radius:2px; font-weight:600;">${(w.workspace_ttl === 0) ? 'Không Giới Hạn' : 'Đang Đếm Ngược'}</span>
                 </div>
-                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">(Lọc .gitignore + rules.conf + chặn Secret Key/Token)</div>
+                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">(Tự động thu hồi phiên và ngắt kết nối khi hết thời gian sống)</div>
               </div>
             </div>
 
@@ -4677,6 +4720,29 @@ setInterval(() => {
       }
     } else {
       loadHostedWorkspaces();
+    }
+    if (w.workspace_remaining_sec !== undefined && w.workspace_ttl > 0) {
+      if (w.workspace_remaining_sec > 0) {
+        w.workspace_remaining_sec--;
+      }
+      const valEl = document.getElementById(`ws-ttl-val-${w.id}`);
+      const badgeEl = document.getElementById(`ws-ttl-badge-${w.id}`);
+      if (valEl) {
+        valEl.textContent = formatClock(w.workspace_remaining_sec);
+      }
+      if (badgeEl) {
+        if (w.workspace_remaining_sec <= 0) {
+          badgeEl.textContent = 'Đã Hết Hạn';
+          badgeEl.style.background = '#ffebe9';
+          badgeEl.style.color = '#cf222e';
+          badgeEl.style.borderColor = 'rgba(207,34,46,0.3)';
+        } else {
+          badgeEl.textContent = 'Đang Đếm Ngược';
+          badgeEl.style.background = '#dafbe1';
+          badgeEl.style.color = '#1a7f37';
+          badgeEl.style.borderColor = 'rgba(26,127,55,0.3)';
+        }
+      }
     }
   });
 }, 1000);

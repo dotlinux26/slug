@@ -527,4 +527,18 @@ Khi hoàn tất, báo cáo theo cấu trúc:
 - [x] **Cho phép thay đổi mức lọc và quét lại trực tiếp trong Admin Dashboard (Dynamic Re-Scan)**:
   - Thêm thẻ điều khiển mức lọc trực tiếp tại Admin Dashboard với dropdown chọn 4 cấp độ lọc (Level 1, Level 2, Level 3, Level 4).
   - Nút `⚡ Áp Dụng Mức Lọc & Quét Lại Ngay` gọi `POST /api/admin/scan/run`: máy chủ cập nhật ngay tức thì `FilterLevel` runtime, xóa cache manifest, kích hoạt quét lại toàn bộ workspace và trả về kết quả số tệp khả dụng / số tệp bị cách ly.
-  - Giao diện Admin Dashboard tự động cập nhật huy hiệu mức lọc đang hoạt động (`#active-filter-badge`, `#scan-status-badge`) và làm mới ngay lập tức bảng `Flagged & Quarantined Files`, cho phép người dùng thay đổi mức bảo mật tự do bất kỳ lúc nào mà không cần khởi động lại server.
+  - Giao diện Admin Dashboard tự động cập nhật huy hiệu mức lọc đang hoạt động (`#active-filter-badge`, `#scan-status-badge`) và làm mới ngay lập tức bảng `Flagged & Quarantined Files`, cho phép người dùng thay đổi mức bảo mật tự do bất kỳ lúc nào mà không cần khởi động lại server.
+
+### Hạng mục Cải Tiến & Sửa Lỗi Tinh Chỉnh — Đồng Hồ Thời Gian Phiên Workspace (Realtime TTL Clock) & Sửa Bộ Lọc Chi Tiết Audit
+- [x] **Loại bỏ hiển thị cố định mức lọc ở Tab 2 Portal và thay thế bằng đồng hồ đếm ngược thời gian phiên Workspace**:
+  - Tại Tab 2 (`renderHostedWorkspaces`), loại bỏ hoàn toàn thẻ hiển thị mức lọc cố định (`CẤP ĐỘ LỌC BẢO MẬT (CỐ ĐỊNH THEO PHIÊN)` và badge `Cố Định`) theo đúng yêu cầu người dùng, chỉ giữ cấu hình mật mã Cipher Suite.
+  - Thay thế bằng **Đồng hồ thời gian sống phiên Workspace (Workspace Session TTL Clock)** `#ws-ttl-clock-${w.id}`: hiển thị thời gian sống còn lại dưới định dạng đồng hồ `HH:MM:SS` (hoặc `Vĩnh viễn (∞)` nếu TTL = 0) cùng huy hiệu trạng thái `Đang Đếm Ngược` / `Đã Hết Hạn`.
+  - Bộ đếm thời gian realtime `setInterval` tự động trừ lùi mỗi 1 giây trong background và cập nhật trực tiếp lên giao diện DOM, tự động đổi màu cảnh báo đỏ khi phiên kết thúc.
+  - Đồng thời bổ sung hiển thị và bộ đếm realtime thời gian sống của workspace (`#ws-admin-ttl-badge`) trong thẻ `Active Server Workspace` trên trang Admin Dashboard `/admin`.
+- [x] **Sửa tận gốc lỗi truy vấn SQL khiến bảng Audit chỉ hiển thị tệp CLEAN và không hiển thị tệp bị chặn**:
+  - **Phát hiện Root Cause**: Trong `src/ai/stateful_audit.cpp`, hàm `list_flagged_or_all` và `query_entries` truy vấn `WHERE status IN (1, 2, 5)` và gán clean là `status = 0`. Tuy nhiên trong enum `core::AuditStatus`, `CLEAN = 1`, `AI_FLAGGED = 2`, `RULE_BLOCKED = 5`, `SMART_FILTER_FLAGGED = 6`, `UNKNOWN = 0`. Do đó, câu lệnh cũ vô tình gom toàn bộ file `CLEAN` (`status = 1`) vào danh sách bị chặn và bỏ sót `SMART_FILTER_FLAGGED` (`status = 6`), trong khi bộ lọc `Clean` truy vấn `status = 0` nên trả về 0 kết quả. Ngoài ra, frontend gửi `status=blocked` không khớp với chuỗi `"quarantined"` khiến backend bỏ qua bộ lọc và trả về toàn bộ database.
+  - **Sửa triệt để**:
+    - Sửa câu SQL trong `list_flagged_or_all`: chuẩn hóa thành `WHERE status IN (2, 5, 6)` (chỉ lấy đúng các tệp bị cách ly bởi AI Guard, Manual/Policy Rule và Smart Regex).
+    - Sửa `query_entries`: hỗ trợ cả `blocked` và `quarantined` ánh xạ về `status IN (2, 5, 6)`; ánh xạ `clean` về `status = 1`; ánh xạ `allowed` / `whitelisted` về `status = 4`; ánh xạ `rule` / `manual` về `status = 5`.
+    - Sửa điều kiện detector filter để `status = 1` không bị nhận diện nhầm thành AI.
+    - Cập nhật `web_server.cpp` khi khởi tạo trang Admin Dashboard gọi `list_flagged_or_all(true)` thay vì `false`, đảm bảo bảng ban đầu chỉ hiển thị tệp bị cách ly, loại bỏ hoàn toàn các tệp CLEAN khỏi bảng `Flagged & Quarantined Files`.
