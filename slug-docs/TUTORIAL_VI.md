@@ -1,299 +1,306 @@
 # Slug - Hướng Dẫn Sử Dụng & Triển Khai Toàn Diện (Tiếng Việt)
 
-> **Slug: Chia Sẻ & Đồng Bộ Workspace Bảo Mật P2P, Hậu Lượng Tử (Post-Quantum)**
-> Giấy phép: Apache-2.0 | Kiến trúc: C++20 Portable, Độc lập runtime (Zero Dependencies)
+> **Slug: Chia Sẻ & Đồng Bộ Workspace Bảo Mật P2P, Mật Mã Hậu Lượng Tử (Post-Quantum)**  
+> Giấy phép: Apache-2.0 | Kiến trúc: C++20 Portable, Độc lập runtime (Zero-Dependency Static Binary ~8.4 MB)
 
 ---
 
 ## Mục Lục
 
-1. [Giới thiệu Slug](#1-giới-thiệu-slug)
-2. [Cài đặt trên mọi bản phân phối Linux](#2-cài-đặt-trên-mọi-bản-phân-phối-linux)
-3. [Cài đặt trên Microsoft Windows](#3-cài-đặt-trên-microsoft-windows)
-4. [3 Bộ mã hóa (Crypto Suites)](#4-3-bộ-mã-hóa-crypto-suites)
-5. [Khởi động nhanh: Chia sẻ Folder P2P](#5-khởi-động-nhanh-chia-sẻ-folder-p2p)
-6. [Cơ chế xác thực: One-Time TOTP & Phân quyền RBAC](#6-cơ-chế-xác-thực-one-time-totp--phân-quyền-rbac)
-7. [Đồng bộ vi sai kiểu Git (Delta Sync 64 KiB)](#7-đồng-bộ-vi-sai-kiểu-git-delta-sync-64-kib)
-8. [Bộ lọc bảo mật & Stateful AI Secret Guard](#8-bộ-lọc-bảo-mật--stateful-ai-secret-guard)
-9. [EnvShield: Chạy ứng dụng với RAM-only Secret](#9-envshield-chạy-ứng-dụng-với-ram-only-secret)
+1. [Giới thiệu Slug & Tôn chỉ No-Overclaim](#1-giới-thiệu-slug--tôn-chỉ-no-overclaim)
+2. [Cài đặt & Biên dịch nhanh](#2-cài-đặt--biên-dịch-nhanh)
+3. [Giao diện Web Viewing Engine & Lối tắt Desktop](#3-giao-diện-web-viewing-engine--lối-tắt-desktop)
+4. [3 Bộ mật mã (Crypto Suites) & Kiến trúc Directional AEAD](#4-3-bộ-mật-mã-crypto-suites--kiến-trúc-directional-aead)
+5. [Khởi động nhanh: Chia sẻ & Đồng bộ Workspace](#5-khởi-động-nhanh-chia-sẻ--đồng-bộ-workspace)
+6. [Cơ chế xác thực: 3 Mã OTP phân quyền & RBAC Ephemeral](#6-cơ-chế-xác-thực-3-mã-otp-phân-quyền--rbac-ephemeral)
+7. [Đồng bộ vi sai kiểu Git (Delta Sync 64 KiB) & Tải file đơn](#7-đồng-bộ-vi-sai-kiểu-git-delta-sync-64-kib--tải-file-đơn)
+8. [Bộ lọc bảo mật: Slug Guard, Whitelist & Cố vấn AI](#8-bộ-lọc-bảo-mật-slug-guard-whitelist--cố-vấn-ai)
+9. [EnvShield & Central Vault: Bảo vệ file .env khỏi AI Assistants](#9-envshield--central-vault-bảo-vệ-file-env-khỏi-ai-assistants)
 10. [Bộ đo đạc hiệu năng (Benchmark Suite)](#10-bộ-đo-đạc-hiệu-năng-benchmark-suite)
-11. [Kịch bản thực chiến: Red Team, Pentest & Dev Team](#11-kịch-bản-thực-chiến-red-team-pentest--dev-team)
-12. [Bảng tra cứu lệnh CLI (Cheatsheet)](#12-bảng-tra-cứu-lệnh-cli-cheatsheet)
+11. [Kịch bản thực chiến: Lớp học nộp bài, Red Team & Dev Team](#11-kịch-bản-thực-chiến-lớp-học-nộp-bài-red-team--dev-team)
+12. [Bảng tra cứu lệnh CLI chuẩn mực (Cheatsheet)](#12-bảng-tra-cứu-lệnh-cli-chuẩn-mực-cheatsheet)
 
 ---
 
-## 1. Giới thiệu Slug
+## 1. Giới thiệu Slug & Tôn chỉ No-Overclaim
 
-Slug được thiết kế để giải quyết bài toán: **Làm thế nào để chuyển giao và đồng bộ code/workspace an toàn giữa 2 máy mà không phải đẩy lên cloud, không cần Git repository công khai, không để lộ secret và không bị nghe lén bởi máy tính lượng tử?**
+Slug được thiết kế để giải quyết bài toán: **Làm thế nào để chia sẻ và đồng bộ mã nguồn/workspace an toàn giữa các máy tính mà không phải đẩy lên cloud, không cần Git repository công khai, không lãng phí băng thông WAN, không để lộ bí mật và không bị nghe lén bởi máy tính lượng tử trong tương lai?**
 
-### So sánh Slug với Git, Rsync và SSH:
-
-- **Khác Git:** Git lưu toàn bộ lịch sử commit vĩnh viễn trên server. Slug chỉ tạo phiên chia sẻ tạm thời (ephemeral), tự hủy theo thời gian (TTL) và không cần git remote.
-- **Khác Rsync/SCP:** Rsync chuyển nguyên vẹn file chứa mật khẩu, key, token. Slug tích hợp **Stateful AI Secret Guard** tự động chặn leak key và mã hóa đường truyền bằng **ML-KEM-768 / XChaCha20-Poly1305**.
-- **Khác SSH:** Không cần tạo tài khoản hệ điều hành, không cần quản lý file `authorized_keys`. Mỗi phiên được bảo vệ bởi mã TOTP 8 chữ số tự hủy sau lần bắt tay đầu tiên.
+### So sánh Slug với Git, Rsync và HTTP Server:
+- **Khác Git:** Git lưu toàn bộ lịch sử commit vĩnh viễn trên remote repository. Slug tạo phiên chia sẻ tạm thời (ephemeral), tự hủy theo thời gian (TTL) và đồng bộ vi sai trực tiếp P2P.
+- **Khác Rsync/SCP:** Rsync chuyển nguyên vẹn file chứa mật khẩu, key, token. Slug tích hợp **Slug Guard** (100% offline, Regex + Shannon Entropy $H(X) \ge 4.0$) tự động cách ly credential và hỗ trợ kênh truyền mã hóa **ML-KEM-768 / XChaCha20-Poly1305**.
+- **Khác `python -m http.server`:** Không phơi bày plaintext HTTP ra mạng LAN. Kênh truyền trên dây mạng là **100% nhị phân PQC an toàn lượng tử (Zero Remote HTTP)**; hỗ trợ phân quyền rõ ràng (`[rw]` Đọc/Ghi, `[r]` Chỉ Đọc, `[w]` Hộp Thư Nộp Bài chống nhìn trộm).
 
 ---
 
-## 2. Cài đặt trên mọi bản phân phối Linux
+## 2. Cài đặt & Biên dịch nhanh
 
-Slug được biên dịch tĩnh hoàn toàn (`slug-static`), không phụ thuộc vào phiên bản `glibc` hay `musl` động trên máy. Nhờ đó, file thực thi chạy được trên:
-- Ubuntu, Debian, Kali Linux, Linux Mint, Pop!_OS
-- Fedora, CentOS, RHEL, Rocky Linux, AlmaLinux
-- Arch Linux, Manjaro
-- Alpine Linux (musl)
-- Void Linux, openSUSE, NixOS
+Slug được biên dịch tĩnh hoàn toàn (`slug-static`), không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy mượt mà trên mọi hệ điều hành.
 
-### Cách 1: Script cài đặt tự động (Khuyên dùng)
-Chỉ cần chạy lệnh sau trên terminal:
+### 2.1. Cài đặt trên Linux / macOS
 ```bash
+# Script cài đặt tự động 1 lệnh:
 curl -fsSL https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.sh | bash
-```
-Hoặc nếu bạn đã tải mã nguồn về máy:
-```bash
-./scripts/install.sh
-```
 
-Script sẽ tự động:
-1. Nhận diện kiến trúc CPU (`x86_64` hoặc `aarch64`).
-2. Cài đặt file thực thi vào `/usr/local/bin/slug` (hoặc `~/.local/bin/slug`).
-3. Cài đặt tính năng gợi ý lệnh (Bash tab-completion).
-4. Kiểm tra phiên bản bằng `slug version`.
+# Hoặc cài đặt gói Debian / Ubuntu (.deb):
+sudo dpkg -i dist/slug_1.0.0_amd64.deb
 
-### Cách 2: Gói cài đặt Debian / Ubuntu (.deb)
-```bash
-# Đóng gói file .deb:
-./scripts/package_deb.sh
-
-# Cài đặt qua dpkg:
-sudo dpkg -i dist/slug_1.0.0-rc1_amd64.deb
+# Hoặc tải file thực thi tĩnh độc lập:
+chmod +x slug-linux-x86_64 && sudo mv slug-linux-x86_64 /usr/local/bin/slug
 ```
 
-### Cách 3: Sử dụng trực tiếp file nén Tarball
-```bash
-tar -xzf dist/slug-1.0.0-rc1-linux-x86_64.tar.gz
-cd slug-1.0.0-rc1-linux-x86_64/
-sudo mv slug /usr/local/bin/
-sudo chmod +x /usr/local/bin/slug
-```
-
----
-
-## 3. Cài đặt trên Microsoft Windows
-
-Slug hỗ trợ đầy đủ Windows 10, Windows 11, Windows Server (x64).
-
-### Cách 1: Cài đặt qua PowerShell (Khuyên dùng)
-Mở PowerShell và chạy lệnh:
+### 2.2. Cài đặt trên Microsoft Windows
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+# Script cài đặt tự động qua PowerShell:
+irm https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.ps1 | iex
+
+# Hoặc giải nén và thiết lập PATH:
+Expand-Archive slug-1.0.0-windows-x86_64.zip -DestinationPath "$env:LOCALAPPDATA\slug\bin"
+[Environment]::SetEnvironmentVariable("PATH", "$([Environment]::GetEnvironmentVariable('PATH','User'));$env:LOCALAPPDATA\slug\bin", "User")
 ```
-Script sẽ tự động sao chép `slug.exe` vào `%LOCALAPPDATA%\slug\bin` và thêm đường dẫn vào biến môi trường `PATH` vĩnh viễn.
 
-### Cách 2: Tự biên dịch trên Windows với Visual Studio 2022
-Yêu cầu:
-- Visual Studio 2022 (MSVC C++20).
-- CMake 3.20+.
-- OpenSSL (qua vcpkg hoặc Chocolatey: `choco install openssl.light`).
+### 2.3. Tự biên dịch từ mã nguồn (Build From Source)
+Yêu cầu: Trình biên dịch C++20 (`g++-11+`, `clang++-14+`, hoặc MSVC 2022 v143), thư viện OpenSSL 3.0+.
+```bash
+# Trên Linux: Biên dịch binary tĩnh:
+make static -j$(nproc)
 
-Chạy file script biên dịch:
-```cmd
+# Trên Windows (MSVC 2022 Prompt / PowerShell):
 scripts\build_windows.bat
 ```
-File thực thi độc lập sẽ nằm tại `bin\slug.exe`.
 
 ---
 
-## 4. 3 Bộ mã hóa (Crypto Suites)
+## 3. Giao diện Web Viewing Engine & Lối tắt Desktop
 
-Slug cung cấp 3 bộ mã hóa phù hợp với các cấp độ bảo mật khác nhau:
+Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, 100% SVG vector offline không phụ thuộc internet).
 
-- **Suite 1 (Classical):** SHA-256 + X25519 + Ed25519 + XChaCha20-Poly1305.
-- **Suite 2 (Modern):** BLAKE3 + X25519 + Ed25519 + XChaCha20-Poly1305.
-- **Suite 3 (PurePQC - Mặc định):** BLAKE3 + ML-KEM-768 (Kyber FIPS 203) + ML-DSA-65 (Dilithium FIPS 204) + XChaCha20-Poly1305.
-
-> **Tại sao nên dùng Suite 3?**
-> Các thuật toán RSA hay ECC có nguy cơ bị bẻ khóa bởi máy tính lượng tử trong tương lai. Suite 3 sử dụng mật mã mạng tinh thể (lattice-based) theo chuẩn NIST FIPS 203/204, vô hiệu hóa hoàn toàn chiến thuật tấn công "Thu thập hôm nay, giải mã sau này".
-
----
-
-## 5. Khởi động nhanh: Chia sẻ Folder P2P
-
-### Bước 1: Máy A (Host) mở chia sẻ thư mục
-Chia sẻ thư mục `./du_an` tại cổng `9443`, mã hóa Suite 3, thời hạn sống (TTL) 4 tiếng:
+### 3.1. Khởi chạy 1-Chạm (Zero-Config GUI)
+Chỉ cần gõ lệnh không tham số:
 ```bash
-slug add ./du_an -p 9443 -s 3 --ttl 4h -ai --daemon
+slug
+# hoặc
+slug portal
 ```
+Slug sẽ tự động:
+1. Kích hoạt Web Viewing Engine trên loopback cục bộ `http://127.0.0.1:8080/` (tự động tịnh tiến cổng nếu 8080 bận).
+2. Tự động mở trình duyệt web mặc định của bạn.
+3. Toàn bộ lưu lượng truyền tải từ xa qua mạng LAN/Internet đều là các gói nhị phân PQC đã mã hóa, hoàn toàn **Zero Remote HTTP**.
 
-Kết quả hiển thị:
+### 3.2. Tạo lối tắt màn hình Desktop (Windows)
+```powershell
+slug shortcut
+```
+Lệnh này tạo lối tắt `Slug Workspace.lnk` trên màn hình Desktop. Khi khởi chạy từ lối tắt hoặc File Explorer, Slug tự động kích hoạt chế độ **Absolute Stealth** (ẩn hoàn toàn cửa sổ terminal đen), mang lại trải nghiệm phần mềm Desktop chuyên nghiệp.
+
+---
+
+## 4. 3 Bộ mật mã (Crypto Suites) & Kiến trúc Directional AEAD
+
+Slug cung cấp 3 bộ mật mã phù hợp với từng nhu cầu:
+
+| Tiêu chí | Suite 1: Classical | Suite 2: Modern | Suite 3: PurePQC (Mặc định) |
+| :--- | :--- | :--- | :--- |
+| **KEM / Trao đổi khóa** | X25519 (ECDH 128-bit) | X25519 (ECDH 128-bit) | **ML-KEM-768 (Kyber NIST FIPS 203)** |
+| **Chữ ký số (Sign/Verify)** | Ed25519 (128-bit) | Ed25519 (128-bit) | **ML-DSA-65 (Dilithium NIST FIPS 204)** |
+| **Hàm băm (Hashing)** | SHA-256 | BLAKE3 (Băm cây đa luồng) | **BLAKE3 (Băm cây đa luồng)** |
+| **Mã hóa luồng (AEAD)** | XChaCha20-Poly1305 | XChaCha20-Poly1305 | **XChaCha20-Poly1305 (256-bit)** |
+| **Kháng Lượng Tử (PQC)** | ❌ Không | ❌ Không | ✅ **Kháng lượng tử 100% FIPS 203/204** |
+
+### Kỹ thuật mật mã chuyên sâu (Hardcore Crypto Internals):
+- **Directional Salt AEAD:** Khóa phiên được dẫn xuất qua `BLAKE3-KDF` thành 2 muối độc lập: `ClientToServer_Salt` (16B) và `ServerToClient_Salt` (16B). Đảm bảo 2 chiều gửi và nhận không bao giờ dùng chung Nonce, triệt tiêu hoàn toàn rủi ro Nonce-Reuse trong XChaCha20.
+- **Cửa sổ trượt chống phát lại (Anti-Replay Window 64-bit):** Mỗi frame nhị phân mang số thứ tự tăng dần `tx_seq`. Phía nhận duy trì bitmap 64-bit để phát hiện và hủy ngay các gói tin phát lại.
+- **Chunk-Level AEAD:** File lớn được chia thành các khối 64 KiB. Mỗi khối đều được xác thực độc lập bằng mã MAC Poly1305 (16B) trước khi giải mã, bảo vệ chống giả mạo dữ liệu trung gian (MITM).
+- **Ephemeral KEM Forward Secrecy:** Mỗi phiên kết nối sinh một cặp khóa KEM tạm thời, khóa phiên bị hủy sạch khỏi RAM ngay khi đóng kết nối.
+
+---
+
+## 5. Khởi động nhanh: Chia sẻ & Đồng bộ Workspace
+
+### Bước 1: Phía Máy Chủ (Host) mở chia sẻ thư mục
+Chia sẻ thư mục `./du_an` tại cổng `9443`, mã hóa Suite 3 (PurePQC), thời hạn sống (TTL) 24 tiếng, bật Slug Guard:
+```bash
+slug add ./du_an -p 9443 -s pqc -t 24h -d
+```
+Màn hình xuất hiện bảng thông số và bộ 3 mã OTP phân quyền:
 ```text
 +----------------------------------------------------------------------------+
 | SLUG SECURE WORKSPACE HOSTED SUCCESSFULLY                                  |
+| Path:            D:/du_an                                                  |
+| Port:            9443                                                      |
+| Crypto Suite:    Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)   |
+| AI Secret Guard: ON                                                        |
+| Session TTL:     24h                                                       |
+| Role OTPs (Rotates in 30s):                                                |
+|   [rw] Read-Write OTP: 12822565 (Full Sync & Web Dropbox)                  |
+|   [r]  Read-Only OTP:  08796195 (Read/Pull/View files only)                |
+|   [w]  Write-Only OTP: 70788146 (Blind Drop/Upload only)                   |
 +----------------------------------------------------------------------------+
-  Port:            9443
-  Crypto Suite:    Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)
-  AI Secret Guard: ENABLED (Stateful BLAKE3 Audit)
-  Session TTL:     4h
-  One-Time TOTP:   49182305 (Rotates in 30s)
-  Directory Drop:  http://127.0.0.1:9443/drop
-  Admin Dashboard: http://127.0.0.1:9443/admin
-+----------------------------------------------------------------------------+
 ```
 
-### Bước 2: Máy B kiểm tra kết nối & bắt tay bảo mật
+### Bước 2: Phía Máy Khách (Client) kết nối và đồng bộ
+
+#### Cách A: Đồng bộ toàn bộ thư mục bằng lệnh `slug pull` (CLI)
 ```bash
-slug connect -i 192.168.1.50 -p 9443 -o 49182305
+slug pull -i 192.168.1.105 -p 9443 -o 12822565 --to ./du_an_tai_ve
 ```
+Tiến trình sẽ tự động hiển thị kế hoạch truyền tải vi sai (Transfer Plan Preview), yêu cầu xác nhận và kéo các khối thay đổi về máy.
 
-### Bước 3: Máy B kéo dữ liệu về máy (Pull)
+#### Cách B: Tải ĐÚNG 1 tệp tin cụ thể bằng lệnh `slug get`
 ```bash
-slug pull ./du_an_tai_ve -i 192.168.1.50 -p 9443 -o 49182305
+slug get 192.168.1.105:9443?otp=12822565 src/main.cpp ./main.cpp
 ```
 
-### Bước 4: Máy B đẩy sửa đổi ngược lại Máy A (Push)
+#### Cách C: Trải nghiệm trực quan qua Web Viewing Engine
+Mở giao diện Web Viewing Engine cục bộ:
 ```bash
-slug push ./du_an_tai_ve src/tinh_nang_moi.cpp -i 192.168.1.50 -p 9443 -u alice -W mat_khau_alice
+slug
 ```
-
-### Bước 5: Truy cập qua Web GUI & Trình duyệt
-Máy trong mạng có thể mở trình duyệt:
-- `http://192.168.1.50:9443/drop`: Tải nhanh từng file.
-- `http://192.168.1.50:9443/admin`: Bảng điều khiển xem thống kê, log và chạy benchmark trực tiếp.
+Trình duyệt tự mở `http://127.0.0.1:8080/`. Nhập IP `192.168.1.105:9443` và mã OTP `12822565` -> Bấm **Kết Nối Nhanh** -> Vào **Tab 3: Web Dropbox Explorer** để duyệt tệp hoặc nhấn **Tải Toàn Bộ Thư Mục (ZIP)**.
 
 ---
 
-## 6. Cơ chế xác thực: One-Time TOTP & Phân quyền RBAC
+## 6. Cơ chế xác thực: 3 Mã OTP phân quyền & RBAC Ephemeral
 
-### 1. Mã OTP dùng một lần (One-Time TOTP)
-- Sinh mã 8 chữ số tuân thủ RFC 6238, xoay vòng mỗi 30 giây.
-- **Tự hủy (Burn-on-use):** Ngay khi client bắt tay thành công với mã TOTP hiện tại, mã đó lập tức bị hủy bỏ trong server để chống phát lại (replay attack).
+### 6.1. Bộ ba mã OTP phân quyền (Role-Based One-Time Tokens)
+Slug sinh 3 mã OTP 8 chữ số phân quyền độc lập, xoay vòng mỗi 30–60 giây:
+- **`[rw]` Read-Write OTP:** Quyền cao nhất, cho phép duyệt cây thư mục, kéo toàn bộ workspace và đẩy sửa đổi lên.
+- **`[r]` Read-Only OTP:** Quyền chỉ đọc, chỉ cho phép tải file hoặc pull về máy, cấm ghi sửa đổi.
+- **`[w]` Write-Only OTP:** Quyền hộp thư một chiều (Blind Drop), chỉ cho phép tải file lên máy chủ, cấm hoàn toàn xem danh sách thư mục hoặc đọc file.
+- **Cơ chế Burn-On-Use:** Mã OTP là vé dùng 1 lần cho từng thiết bị cá nhân; sau khi bắt tay thành công, mã đó lập tức bị hủy bỏ để chống phát lại.
 
-### 2. Phân quyền người dùng tạm thời (RBAC)
-Cấu hình trong file `.slug/users.conf`:
-- `r` (Chỉ đọc): Cho phép xem manifest và tải file.
-- `rw` (Đọc/Ghi): Cho phép đẩy file sửa đổi vào phạm vi được cấp phép.
-- `audit` (Kiểm toán): Chỉ xem log và trạng thái bảo mật.
-
----
-
-## 7. Đồng bộ vi sai kiểu Git (Delta Sync 64 KiB)
-
-Slug không tải lại toàn bộ file nếu file đó chỉ sửa một phần nhỏ.
-1. Cắt file thành các khối 64 KiB và băm bằng BLAKE3.
-2. Client so sánh hash của từng block với server.
-3. Chỉ truyền tải các khối block bị thay đổi qua kênh mã hóa XChaCha20.
-4. Kiểm tra trạng thái thay đổi trước khi pull bằng `slug status` và `slug diff`.
-
----
-
-## 8. Bộ lọc bảo mật & Stateful AI Secret Guard
-
-Khi bật cờ `-ai`, Slug tự động quét mã nguồn trước khi truyền tải:
-- Quét entropy thông tin (Shannon entropy) tìm chuỗi ngẫu nhiên có độ dài lớn.
-- Quét biểu thức chính quy (Regex): AWS Access Key, Stripe Live Key, GitHub PAT, RSA/EC Private Key.
-- Tự động bỏ qua `.env`, `.git`, `node_modules`, `build/`.
-
-### Cache trạng thái (`.slug/index.db`)
-Kết quả quét được lưu theo mã băm BLAKE3. File không đổi sẽ được bỏ qua tức thì (chỉ mất **0.015 μs** tra cứu cache).
-
-### Tùy chỉnh luật (`.slug/rules.conf`)
+### 6.2. Tài khoản phân quyền RBAC cho nhóm / lớp học đông người
+Khi cần cho cả lớp 40–50 sinh viên cùng nộp bài đồng thời:
 ```bash
-# Chặn toàn bộ file có đuôi .pem:
-slug rule block --ext pem
+# Tạo tài khoản chung quyền Ghi [w] có thời hạn 4 giờ:
+slug user add -u sinhvien -P 123456 -r w -t 4h -p 9443
 
-# Chặn file chứa cụm từ nhạy cảm:
-slug rule block --contains "BEGIN PRIVATE KEY"
-
-# Cho phép ngoại lệ một file mẫu:
-slug rule allow --path ./.env.example
-
-# Xem danh sách luật:
-slug rule list
-```
-
-### Xử lý dương tính giả (False Positives)
-Nếu file test chứa mock token bị nhận nhầm là secret:
-```bash
-# Đưa vào danh sách ngoại lệ được người dùng phê duyệt:
-slug audit allow tests/mock_token.ts --reason "Key mock phục vụ unit test"
-
-# Kiểm tra lại:
-slug audit recheck tests/mock_token.ts
+# Xem danh sách tài khoản đang kích hoạt:
+slug user list -p 9443
 ```
 
 ---
 
-## 9. EnvShield: Chạy ứng dụng với RAM-only Secret
+## 7. Đồng bộ vi sai kiểu Git (Delta Sync 64 KiB) & Tải file đơn
 
-Để bảo vệ file `.env` chứa mật khẩu cơ sở dữ liệu và API key:
-
-1. **Mã hóa file `.env`**:
+Slug không truyền lại toàn bộ dữ liệu nếu file chỉ sửa đổi một phần nhỏ:
+1. **Phân mảnh khối 64 KiB:** Tệp tin được chia thành các khối 64 KiB và băm bằng BLAKE3.
+2. **So khớp vi sai In-Memory:** Client so sánh bảng hash của các block với Host.
+3. **Chỉ truyền block thay đổi:** Chỉ những block có hash khác biệt mới được mã hóa qua kênh XChaCha20 và gửi đi.
+4. **Xem trước kế hoạch đồng bộ:**
    ```bash
-   slug env init -s 3
+   slug pull -i 192.168.1.105 -p 9443 -o 12822565 --dry-run
    ```
-   File `.env` dạng văn bản rõ sẽ bị xóa an toàn khỏi đĩa cứng và thay thế bằng `.env.pqc` được mã hóa bởi Suite 3.
 
-2. **Chạy ứng dụng trực tiếp từ RAM**:
-   ```bash
-   slug env run -- python3 app.py
-   # hoặc
-   slug env run -- npm start
-   ```
-   Slug giải mã secret vào bộ nhớ RAM của tiến trình, tiêm biến môi trường cho ứng dụng con và xóa sạch vùng nhớ ngay lập tức (zeroize). Secret không ghi xuống ổ cứng.
+---
+
+## 8. Bộ lọc bảo mật: Slug Guard, Whitelist & Cố vấn AI
+
+### 8.1. Slug Guard (100% Offline, Deterministic Core)
+- **Tự động áp dụng `.gitignore`:** Loại bỏ sạch sẽ các thư mục build rác (`node_modules/`, `target/`, `build/`, `*.log`).
+- **Phân tích Heuristic & Shannon Entropy:** Đo độ hỗn loạn $H(X) \ge 4.0$ để phát hiện API token, private key và tự động cách ly (`Quarantined`).
+- **BLAKE3 Content Cache (`.slug/index.db`):** Tra cứu kết quả quét chỉ mất **0.015 μs**, không tốn CPU quét lại các file không đổi.
+
+### 8.2. Hỗ trợ Whitelist ngoại lệ (`!.env.example`)
+Slug Guard hỗ trợ tiền tố chấm than `!` theo chuẩn `.gitignore`:
+```text
+# Trong .slug/rules.conf hoặc trên Web Command Center:
+.env*
+!.env.example
+!*.example
+```
+Các file khớp luật `!` sẽ được đánh dấu `Whitelisted / Clean` và cho phép truyền tải an toàn.
+
+### 8.3. Slug AI Contextual Advisor (Tùy chọn với `--ai`)
+Khi truyền cờ `--ai` và có cấu hình Ollama hoặc Cloud API, Slug AI gửi đoạn code mẫu để nhận về schema JSON cấu trúc (`has_secret`, `reason`, `line`). Slug AI chỉ đóng vai trò cố vấn ngữ cảnh hỗ trợ người dùng, **tuyệt đối không ghi đè hoặc thay thế luật cứng của Slug Guard**.
+
+---
+
+## 9. EnvShield & Central Vault: Bảo vệ file .env khỏi AI Assistants
+
+Ngăn chặn các trợ lý AI (Cursor, Copilot, Claude Code) đọc lén khóa API trên ổ đĩa:
+
+```bash
+# 1. Niêm phong file .env vào Central Vault (~/.slug/env_vault/) và mã hóa thành .env.pqc
+slug env init
+
+# 2. Sinh hướng dẫn chuẩn cho AI coding agents (tạo .slug/ai-rule.md)
+slug env prompt
+
+# 3. Chạy ứng dụng từ RAM: Slug giải mã duy nhất trong RAM tiến trình
+slug env run -- python3 app.py
+# hoặc
+slug env run -- npm test
+
+# 4. Khôi phục lại .env nguyên trạng khi cần cấu hình
+slug env restore
+
+# 5. Xem lịch sử các bản backup đã niêm phong
+slug env history
+```
 
 ---
 
 ## 10. Bộ đo đạc hiệu năng (Benchmark Suite)
 
-Slug tích hợp sẵn công cụ đo đạc hiệu năng tính toán mật mã cục bộ (PQC, BLAKE3, ChaCha20), phân mảnh vi sai In-Memory và tốc độ I/O đĩa cứng (không bao gồm độ trễ mạng ngoại vi vốn phụ thuộc vào hạ tầng hai đầu):
-
-### Chạy từ Terminal:
+Slug tích hợp công cụ đo đạc hiệu năng CPU mật mã, phân mảnh vi sai In-Memory và I/O đĩa:
 ```bash
-# Đo nhanh:
+# Đo nhanh hiệu năng:
 slug bench --quick
 
-# Xuất dữ liệu JSON cho hệ thống tự động:
+# Xuất kết quả dạng JSON:
 slug bench --json --quick
 ```
 
-Kết quả đo đạc thực tế:
-- **ML-KEM-768 Encap/Decap:** ~36–79 μs (đạt gần 6.000–7.000 ops/s).
+Kết quả đo đạc thực tế trên CPU phổ thông:
+- **ML-KEM-768 Encap/Decap:** ~36–79 μs (~6.000–7.000 ops/s).
 - **ML-DSA-65 Sign/Verify:** ~109–548 μs.
-- **XChaCha20-Poly1305:** ~500–600 MB/s.
+- **XChaCha20-Poly1305 AEAD:** ~500–600 MB/s.
 - **BLAKE3 Tree Hashing:** ~1.050 MB/s.
-- **Tra cứu Cache AI Guard:** 0.015 μs / file (không tốn tài nguyên khi file không đổi).
-- **Delta Chunker:** > 1.000 MB/s (16.700 chunks/giây).
-
-### Chạy từ Web GUI:
-Truy cập `http://<IP>:<Port>/admin` và nhấn nút **"Run Real-Time Benchmark"** để kích hoạt đo đạc trực tiếp trên máy chủ.
+- **Tra cứu Cache Slug Guard:** 0.015 μs / file.
+- **Delta Chunker:** > 1.000 MB/s (16.700 chunks/s).
 
 ---
 
-## 11. Kịch bản thực chiến: Red Team, Pentest & Dev Team
+## 11. Kịch bản thực chiến: Lớp học nộp bài, Red Team & Dev Team
 
-Trong các đợt kiểm thử xâm nhập (Pentest) hoặc tác chiến mạng (Red Team):
-- Cần chuyển report, payload lab, wordlist giữa máy Linux và máy Windows trong mạng nội bộ.
-- Mở một cổng ephemeral với TTL 30 phút: `slug add ./payloads -p 18443 -s 3 --ttl 30m --daemon`.
-- Phía máy đích chỉ cần chạy: `slug.exe pull C:\staging -i <IP> -p 18443 -o <TOTP>`.
-- Hết 30 phút, server tự động đóng, xóa sạch dấu vết mạng, không để lại artifact trên bất kỳ dịch vụ lưu trữ trung gian nào.
+### Kịch bản 1: Giảng viên thu bài tập phòng máy một chạm (Blind Drop)
+1. **Giáo viên:** Chạy `slug add ./nop_bai -p 9443`, tạo tài khoản lớp `slug user add -u sinhvien -P 123456 -r w -p 9443`.
+2. **Sinh viên:** Mở Web Viewing Engine `slug` (hoặc chạy `slug push ./bai_lam.zip -i 192.168.1.107 -p 9443 -u sinhvien -P 123456`).
+3. **Bảo mật:** `SlugVFS Jail` cưỡng chế quyền `WRITE_ONLY`, sinh viên nộp bài thành công nhưng hoàn toàn không thể xem hoặc tải bài của các bạn khác về.
+
+### Kịch bản 2: Red Team / Pentest chuyển giao payload an toàn
+1. Mở trạm chia sẻ có TTL tự hủy 30 phút: `slug add ./payloads -p 18443 -s pqc -t 30m -d`.
+2. Máy đích kéo dữ liệu: `slug pull -i <IP> -p 18443 -o <OTP> --to ./staging`.
+3. Hết 30 phút, server tự hủy, dọn sạch bộ nhớ và không để lại bất kỳ dấu vết mạng nào.
 
 ---
 
-## 12. Bảng tra cứu lệnh CLI (Cheatsheet)
+## 12. Bảng tra cứu lệnh CLI chuẩn mực (Cheatsheet)
 
-| Lệnh | Ý nghĩa |
+| Lệnh CLI | Chức năng chính |
 | :--- | :--- |
-| `slug add <path> -p <port> -s 3 --ttl 2h -ai --daemon` | Khởi tạo và chia sẻ workspace ngầm |
-| `slug list` | Xem danh sách workspace đang chạy |
-| `slug stop -p <port>` | Tắt workspace trên cổng chỉ định |
-| `slug connect -i <ip> -p <port> -o <totp>` | Kết nối kiểm tra bắt tay bảo mật |
-| `slug pull <dir> -i <ip> -p <port> -o <totp>` | Tải toàn bộ file trong workspace |
-| `slug push <dir> <file> -i <ip> -p <port> -u <u> -W <p>` | Đẩy file sửa đổi lên host |
-| `slug diff <dir> -i <ip> -p <port> -o <totp>` | So sánh sự khác biệt nội dung file |
-| `slug status` | Kiểm tra trạng thái đồng bộ và cảnh báo secret |
-| `slug rule list` | Xem danh sách bộ lọc bảo mật |
-| `slug rule block --ext pem` | Chặn chia sẻ file theo đuôi |
-| `slug audit allow <path> --reason "..."` | Bỏ chặn cho file ngoại lệ |
-| `slug env init -s 3` | Mã hóa `.env` thành `.env.pqc` |
-| `slug env run -- <lệnh>` | Chạy ứng dụng với secret nạp thẳng vào RAM |
-| `slug bench --quick` | Đo đạc hiệu năng mật mã và thông lượng |
-| `slug version` | Hiển thị phiên bản phần mềm |
+| `slug` | Mở ngay Web Viewing Engine trên `http://127.0.0.1:8080/` (Aliases: `slug portal`, `slug web`) |
+| `slug shortcut` | Tạo lối tắt Desktop Windows (`Slug Workspace.lnk`) mở 1-chạm ẩn cửa sổ console |
+| `slug add <path> -p 9443 -s pqc -t 1d --ai -d` | Khởi tạo trạm chia sẻ workspace an toàn lượng tử chạy ngầm |
+| `slug status` | Xem danh sách các workspace đang host, cổng, PID và trạng thái OTP |
+| `slug totp [-p <port>]` | Xem bảng 3 mã OTP phân quyền (`[rw]`, `[r]`, `[w]`) hoặc lấy mã nhanh |
+| `slug stop [-p <port>\|-a]` | Dừng server trên cổng chỉ định hoặc dừng toàn bộ server |
+| `slug serve -p <port> -w` | Mở giao diện Web Host Admin Dashboard trên loopback máy chủ |
+| `slug connect -i <ip> -p <port> -o <otp>` | Xác thực và lưu chứng chỉ phiên vào danh bạ kết nối |
+| `slug pull -i <ip> -p <port> -o <otp> --to <dir>` | Đồng bộ vi sai toàn bộ workspace về thư mục cục bộ (kèm kế hoạch preview) |
+| `slug get <IP:PORT?otp=CODE> <remote_path> [dest]` | Tải ĐÚNG 1 file đơn lẻ cụ thể từ xa về máy |
+| `slug push <file> -i <ip> -p <port> -o <otp>\|-u <u>` | Đẩy tệp lên trạm từ xa (hộp thư nộp bài hoặc cập nhật mã nguồn) |
+| `slug ls` | Duyệt danh sách file từ xa với trạng thái (Available, Blocked, Quarantined) |
+| `slug user add -u <user> -P <pass> -r <rw\|r\|w> -t <ttl>` | Quản lý tài khoản phân quyền RBAC cho nhóm hoặc lớp học |
+| `slug session <list\|kill <id>>` | Giám sát và hủy các phiên client đang kết nối |
+| `slug audit <list\|scan\|allow\|recheck>` | Quản lý các file bị cách ly bởi Slug Guard; phê duyệt ngoại lệ Whitelist |
+| `slug rule <list\|block\|allow>` | Quản lý quy tắc lọc `.slug/rules.conf` (hỗ trợ whitelist tiền tố `!`) |
+| `slug env init` | Niêm phong `.env` vào Central Vault, mã hóa `.env.pqc` và dọn sạch plaintext |
+| `slug env prompt` | Sinh chỉ thị chuẩn cho AI coding agents (`.slug/ai-rule.md`) |
+| `slug env run -- <command>` | Chạy ứng dụng hoặc test: giải mã secret duy nhất trong RAM tiến trình |
+| `slug env restore` | Khôi phục 1 chạm file `.env` bản rõ từ Vault khi cần chỉnh sửa cấu hình |
+| `slug bench [--quick\|--json]` | Đo hiệu năng mật mã (ML-KEM, ML-DSA, BLAKE3, ChaCha20) và I/O đĩa |
+| `slug completion <bash\|zsh>` | Sinh script gợi ý lệnh tự động cho shell (Tab completion) |
+| `slug version` | Hiển thị thông tin phiên bản, giấy phép Apache-2.0 và chi tiết build |
+| `slug uninstall [-y]` | Gỡ cài đặt hoàn toàn Slug khỏi hệ thống máy tính |

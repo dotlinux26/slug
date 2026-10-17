@@ -30,8 +30,9 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
                                      |
                                      v
   [BƯỚC 3: CHIA SẺ NỘI BỘ LAN / P2P THEO VAI TRÒ]
-       slug add .  --->  slug get <link_kèm_otp>
+       slug add .  --->  slug pull -i <host> -p <port> -o <otp>
        ├── Tự động lọc bỏ rác build (node_modules/, target/, build/) theo .gitignore
+       ├── Hỗ trợ luật ngoại lệ Whitelist (!.env.example, !*.example)
        ├── Tự động cách ly và ngăn chặn các file nhạy cảm đã bị cảnh báo ở Bước 1
        └── Kênh truyền P2P mã hóa Hậu Lượng Tử (PQC), xác thực bằng mã OTP phân quyền 3 vai trò
 ```
@@ -50,10 +51,16 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
      ```
   2. Người nhận kéo trực tiếp qua mạng LAN chỉ trong vài giây (tốc độ đạt trần băng thông LAN/Wi-Fi):
      ```bash
-     slug get "192.168.1.105:9443?otp=12822565" ./tailieu
-     # Hoặc mở trực tiếp trên trình duyệt Web: http://192.168.1.105:9443/drop?ticket=...
+     # Đồng bộ toàn bộ thư mục bằng CLI:
+     slug pull -i 192.168.1.105 -p 9443 -o 12822565 --to ./tailieu
+
+     # Hoặc tải 1 file đơn lẻ cụ thể:
+     slug get 192.168.1.105:9443?otp=12822565 bao_cao.pdf ./bao_cao.pdf
+
+     # Hoặc mở giao diện Web Viewing Engine cục bộ trên máy mình (gõ 'slug' -> http://127.0.0.1:8080/):
+     # Kết nối tới 192.168.1.105:9443 bằng OTP và nhấn "Tải ZIP Toàn Bộ Thư Mục"
      ```
-  - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768).
+  - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768). Tuyệt đối Zero Remote HTTP trên mạng!
 
 ---
 
@@ -72,7 +79,10 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
      - Giảng viên tạo nhanh tài khoản chung (hoặc tài khoản lớp) trên Web Trạm Điều Khiển hoặc qua lệnh CLI (ví dụ: username `sinhvien` với vai trò `[w] Write-Only`) để cả lớp cùng đăng nhập nộp bài đồng thời mà không bị giới hạn 1 máy.
      - *(Lưu ý: Mã OTP 8 chữ số là vé định danh bảo mật dùng một lần cho từng phiên/1 máy riêng lẻ; đối với lớp học đông người, cơ chế tài khoản RBAC chung với quyền `[w]` giúp toàn bộ 40–50 sinh viên cùng nộp bài thuận tiện).*
   3. Sinh viên mở trình duyệt Web hoặc dùng lệnh nộp bài:
-     - Sinh viên đăng nhập tài khoản chung rồi kéo thả bài làm vào Web Dropbox hoặc gõ `slug push`.
+     - Sinh viên đăng nhập tài khoản chung rồi kéo thả bài làm vào Web Dropbox hoặc gõ `slug push`:
+       ```bash
+       slug push ./bai_lam.zip -i 192.168.1.107 -p 9443 -u sinhvien -P 123456
+       ```
      - **Cơ chế VFS Jail & RBAC:** Tầng hệ thống tập tin ảo của Slug cưỡng chế quyền `WRITE_ONLY`. Sinh viên chỉ được phép ghi file lên server, **hoàn toàn bị cấm liệt kê thư mục (`list_dir`) hoặc đọc tệp (`read_file`)**.
   - **Lợi ích:** Thu bài cực kỳ gọn nhẹ, zero-setup, chống nhìn trộm bài thi triệt để, hoạt động mượt mà ngay cả khi phòng máy mất kết nối Internet quốc tế.
 
@@ -84,8 +94,9 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
 - **Giải pháp với Slug:**
   - Khi chạy `slug add .`, hệ thống **Slug Guard** tự động kích hoạt:
     1. **Tự động lọc rác build:** Đọc file `.gitignore` để loại bỏ các thư mục `node_modules/`, `target/`, `build/`.
-    2. **Rà soát secret đa cơ chế:** Quét qua bộ lọc Heuristic & Shannon Entropy. Nếu phát hiện chuỗi token có độ ngẫu nhiên cao hoặc file nghi vấn, hệ thống tự động gắn cờ cách ly (`QUARANTINED`), ngăn không cho đối tác tải về.
-    3. **AI Semantic Guard:** Hỗ trợ phân tích ngữ cảnh để phân biệt giữa mock key trong file test và API key thật sự.
+    2. **Hỗ trợ Whitelist ngoại lệ:** Cho phép chỉ định các file mẫu cấu hình (`!.env.example`) được phép truyền tải an toàn.
+    3. **Rà soát secret đa cơ chế:** Quét qua bộ lọc Heuristic & Shannon Entropy ($H(X) \ge 4.0$). Nếu phát hiện chuỗi token có độ ngẫu nhiên cao hoặc file nghi vấn, hệ thống tự động gắn cờ cách ly (`QUARANTINED`), ngăn không cho đối tác tải về.
+    4. **AI Contextual Advisor:** Hỗ trợ phân tích ngữ cảnh để phân biệt giữa mock key trong file test và API key thật sự.
   - **Lợi ích:** Đồng đội nhận được mã nguồn sạch sẽ, không bị nghẽn mạng vì rác build, và người gửi an tâm rằng các khóa bí mật đã được kiểm duyệt và cách ly an toàn.
 
 ---

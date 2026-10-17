@@ -47,11 +47,11 @@ docs/
 
 ### 3.2. Thu bài thi / bài tập sinh viên phòng máy một chạm (Blind Drop)
 - **Thực trạng:** Giảng viên cần thu bài 40–50 sinh viên nhanh chóng, không bị nghẽn mạng WAN như Google Drive, không phức tạp như tạo tài khoản FTP/Domain, và **đặc biệt phải chống nhìn trộm / chép bài của bạn khác**. `python -m http.server` không hỗ trợ tính năng này (ai cũng xem và tải được file người khác vừa nộp).
-- **Lời giải Slug:** Giảng viên khởi tạo workspace với quyền Ghi **Write-Only (`[w]`)**. Sinh viên kéo thả bài vào trình duyệt Web Dropbox hoặc gõ `slug push`. Tầng `SlugVFS Jail` cưỡng chế chặn lệnh đọc (`read_file`) và liệt kê (`list_dir`) đối với máy khách, đảm bảo sinh viên chỉ nộp được bài mà không thể xem bài của bạn khác. Zero-setup, chạy offline hoàn toàn.
+- **Lời giải Slug:** Giảng viên khởi tạo workspace với quyền Ghi **Write-Only (`[w]`)** và tạo tài khoản lớp chung (`[w] Write-Only`) để toàn bộ 40–50 sinh viên cùng nộp bài đồng thời (mã OTP 8 số là vé bảo mật dùng 1 lần cho từng máy riêng). Sinh viên đăng nhập tài khoản chung rồi kéo thả bài vào trình duyệt Web Dropbox hoặc gõ `slug push`. Tầng `SlugVFS Jail` cưỡng chế chặn lệnh đọc (`read_file`) và liệt kê (`list_dir`) đối với máy khách, đảm bảo sinh viên chỉ nộp được bài mà không thể xem bài của bạn khác. Zero-setup, chạy offline hoàn toàn.
 
 ### 3.3. Chia sẻ mã nguồn nhóm có kiểm soát (Selective Staging)
 - **Thực trạng:** Lập trình viên muốn gửi nhanh thư mục code cho bạn cùng nhóm để gỡ lỗi. Các công cụ FTP hay HTTP Server chỉ là "đường ống thụ động" — gặp gì gửi nấy, dẫn đến việc gửi thừa hàng trăm MB rác build (`node_modules/`, `build/`) và lỡ tay chia sẻ nhầm file `.env` chứa token/khóa bí mật.
-- **Lời giải Slug:** Hệ thống **Slug Guard** đa cơ chế tự động đọc `.gitignore` để loại bỏ rác build; đồng thời bộ quét Heuristic & Shannon Entropy rà soát các chuỗi khóa bí mật nghi vấn, kết hợp AI Semantic Guard hỗ trợ cảnh báo trước khi truyền dữ liệu.
+- **Lời giải Slug:** Hệ thống **Slug Guard** đa cơ chế tự động đọc `.gitignore` để loại bỏ rác build; đồng thời bộ quét Heuristic & Shannon Entropy ($H(X) \ge 4.0$) rà soát các chuỗi khóa bí mật nghi vấn, kết hợp bộ lọc Whitelist (`!.env.example`) và AI Semantic Advisor hỗ trợ cảnh báo trước khi truyền dữ liệu.
 
 ### 3.4. Phòng vệ bí mật trước các trợ lý AI lập trình (EnvShield)
 - **Thực trạng:** Khi lập trình với Cursor, Copilot hay Claude Code, các trợ lý AI tự động đọc các file văn bản rõ (plaintext `.env`) trên ổ đĩa để nạp vào Context Window gửi lên cloud, làm rò rỉ API key.
@@ -66,9 +66,9 @@ Nhằm hỗ trợ Hội đồng Giám khảo nhanh chóng đối chiếu thông 
 | Khía cạnh đánh giá | Thực trạng & Cách tiếp cận của Slug | Minh chứng kỹ thuật & Vị trí tra cứu |
 | :--- | :--- | :--- |
 | **1. Mức độ cần thiết & Tính thực tế** | Giải quyết trực diện các nỗi đau thường nhật:<br>• Chuyển tệp nội bộ gigabit, tiết kiệm 100% băng thông WAN.<br>• Thu bài phòng máy một chiều chống chép bài.<br>• Ngăn chặn nguy cơ mất tiền do lộ API key khi làm việc với AI hoặc push repo công khai. | • [01-PROBLEM.md](01-PROBLEM.md)<br>• Bảng phân tích lỗ hổng của `python -m http.server`, FTP/SFTP và Cloud Drive ở Mục 2. |
-| **2. Tính khả thi & Mức độ hoàn thiện** | • Đóng gói thành **1 file thực thi nhị phân duy nhất (~8MB)**, zero-dependency, không cần cài đặt Python, Node.js hay DB.<br>• Đã hiện thực hóa 100% bằng C++20, chạy mượt mà trên cả Linux và Windows.<br>• Cung cấp cả CLI POSIX chuẩn mực lẫn Web Portal trực quan (`127.0.0.1:8080/drop`). | • [02-SOLUTION.md](02-SOLUTION.md)<br>• [BUILD.md](../BUILD.md)<br>• CI/CD tự động build binary đa nền tảng trong `.github/workflows/`. |
-| **3. Tính sáng tạo & Điểm khác biệt** | • **Khắc phục nhược điểm của `python http.server`:** Thay đường truyền plain HTTP bằng kênh PQC AEAD; bổ sung phân quyền OTP 3 vai trò (`[rw]`, `[r]`, `[w]`).<br>• **Khác biệt so với FTP/SFTP:** Khả năng kiểm soát nội dung chủ động (Selective Staging) tự động lọc rác build theo `.gitignore`.<br>• **Sáng tạo với EnvShield:** Nạp biến môi trường vào RAM lúc chạy, ngăn chặn AI đọc trộm secret trên đĩa. | • [04-ARCHITECTURE.md](04-ARCHITECTURE.md)<br>• [MODULE-MAP.md](MODULE-MAP.md)<br>• Kiến trúc đóng khung Directional AEAD và VFS Jail. |
-| **4. Ứng dụng AI & Giá trị thực tế** | • Không lạm dụng AI làm bình phong, AI đóng vai trò là **Cố vấn ngữ cảnh (Contextual Advisor)**: đọc các chuỗi có entropy cao nghi vấn, giải thích bằng tiếng Việt đâu là mock key trong test và đâu là live key của cloud.<br>• Tối ưu hiệu năng bằng bộ nhớ đệm trạng thái BLAKE3 (`index.db`), không quét lại file cũ.<br>• Chỉ dẫn AI agent cách dùng công cụ an toàn (`.slug/ai-rule.md`). | • [03-AI-USAGE.md](03-AI-USAGE.md)<br>• Mã nguồn module `src/ai/stateful_audit.hpp` và `src/ai/scanner.cpp`. |
+| **2. Tính khả thi & Mức độ hoàn thiện** | • Đóng gói thành **1 file thực thi nhị phân duy nhất (~8MB)**, zero-dependency, không cần cài đặt Python, Node.js hay DB.<br>• Đã hiện thực hóa 100% bằng C++20, chạy mượt mà trên cả Linux và Windows.<br>• Cung cấp cả CLI POSIX chuẩn mực lẫn Web Viewing Engine nội bộ (`127.0.0.1:8080/`). | • [02-SOLUTION.md](02-SOLUTION.md)<br>• [BUILD.md](../BUILD.md)<br>• CI/CD tự động build binary đa nền tảng trong `.github/workflows/`. |
+| **3. Tính sáng tạo & Điểm khác biệt** | • **Khắc phục nhược điểm của `python http.server`:** Thay đường truyền plain HTTP bằng kênh PQC AEAD; bổ sung phân quyền OTP 3 vai trò (`[rw]`, `[r]`, `[w]`).<br>• **Khác biệt so với FTP/SFTP:** Khả năng kiểm soát nội dung chủ động (Selective Staging) tự động lọc rác build theo `.gitignore` và quy tắc Whitelist (`!.env.example`).<br>• **Sáng tạo với EnvShield:** Nạp biến môi trường vào RAM lúc chạy, ngăn chặn AI đọc trộm secret trên đĩa. | • [04-ARCHITECTURE.md](04-ARCHITECTURE.md)<br>• [MODULE-MAP.md](MODULE-MAP.md)<br>• Kiến trúc đóng khung Directional AEAD và VFS Jail. |
+| **4. Ứng dụng AI & Giá trị thực tế** | • Định vị trung thực: **Slug Guard** chịu trách nhiệm chặn cứng (Heuristic Regex + Shannon Entropy $H(X) \ge 4.0$ hoàn toàn offline).<br>• **Slug AI** là lớp cố vấn tùy chọn (`--ai`), trả về schema JSON (`has_secret`, `reason`, `line`) để tham vấn ngữ cảnh, tuyệt đối không lạm dụng thay thế cơ chế an toàn deterministic.<br>• Tối ưu hiệu năng bằng bộ nhớ đệm trạng thái BLAKE3 (`index.db`), không quét lại file cũ.<br>• Chỉ dẫn AI agent cách dùng công cụ an toàn (`.slug/ai-rule.md`). | • [03-AI-USAGE.md](03-AI-USAGE.md)<br>• Mã nguồn module `src/ai/stateful_audit.hpp` và `src/ai/scanner.cpp`. |
 
 ---
 
@@ -77,7 +77,7 @@ Nhằm hỗ trợ Hội đồng Giám khảo nhanh chóng đối chiếu thông 
 Ban giám khảo hoặc người dùng có thể kiểm chứng toàn bộ quy trình của Slug trong vòng 3 phút qua 3 bước cốt lõi:
 
 ```bash
-# Bước 1: Quét kiểm tra mã nguồn (Heuristic + Shannon Entropy + AI Advisor)
+# Bước 1: Quét kiểm tra mã nguồn (Slug Guard Heuristic + Shannon Entropy + AI Advisor)
 slug audit scan .
 
 # Bước 2: Niêm phong file .env vào Vault và chạy ứng dụng từ RAM
@@ -87,10 +87,12 @@ slug env run -- npm test      # (hoặc pytest, python main.py)
 
 # Bước 3: Mở trạm chia sẻ P2P mã hóa với bộ lọc rác tự động
 slug add . -p 9443
-# -> Terminal hiển thị liên kết một chạm kèm mã OTP phân quyền.
-# Máy bạn bè hoặc sinh viên chỉ cần gõ:
-slug get "<IP_SERVER>:9443?otp=<OTP>" ./tai_ve
-# Hoặc mở trực tiếp trên trình duyệt Web Explorer: http://127.0.0.1:8080/drop
+# -> Terminal hiển thị thông số và các mã OTP phân quyền ([rw], [r], [w]).
+# Máy đồng nghiệp hoặc sinh viên có thể kéo dữ liệu bằng lệnh:
+slug pull -i <IP_SERVER> -p 9443 -o <OTP> --to ./tai_ve
+# Hoặc tải 1 file cụ thể:
+slug get <IP_SERVER>:9443?otp=<OTP> src/main.cpp ./main.cpp
+# Hoặc mở trực tiếp Web Viewing Engine trên loopback: gõ 'slug' (http://127.0.0.1:8080/)
 ```
 
 ---

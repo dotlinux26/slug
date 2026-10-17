@@ -8,26 +8,29 @@ Slug tiếp cận AI theo một triết lý kỹ thuật thực dụng và có k
 
 ```text
 +---------------------------------------------------------------------------------+
-| QUY TẮC CỐT LÕI (DETERMINISTIC CORE) - LOGIC TOÁN HỌC & HỆ THỐNG XÁC ĐỊNH        |
+| TẦNG 1: SLUG GUARD - LOGIC TOÁN HỌC & HỆ THỐNG XÁC ĐỊNH (100% OFFLINE)           |
 | - Mật mã học: NIST FIPS 203/204 (ML-KEM-768, ML-DSA-65), AEAD XChaCha20-Poly1305|
 | - Phân quyền: RBAC (r / w / rw), TTL tự hủy, TOTP Anti-Replay                   |
-| - Phân loại Workspace: Đọc phân tầng file .gitignore                            |
-| - Chính sách máy chủ: File cấu hình .slug/rules.conf                            |
+| - Lọc cấu trúc: Đọc phân tầng file .gitignore                                   |
+| - Chính sách máy chủ: File cấu hình .slug/rules.conf & Whitelist (!)            |
+| - Quét Heuristic / Regex: Bắt AWS, GitHub, Stripe, Private Key, JWT, DB URLs    |
+| - Phân tích Shannon Entropy: Đo độ hỗn loạn toán học (H(X) >= 4.0) bắt token lạ |
+| - Khóa cứng VFS Jail: Chặn hàm đọc vfs_.read_file() ngay tại tầng hệ thống tệp  |
 +---------------------------------------------------------------------------------+
                                       |
                                       v
 +---------------------------------------------------------------------------------+
-| VAI TRÒ CỦA AI: TÍN HIỆU PHÂN TÍCH HỖ TRỢ (ADVISORY & CONTEXT-AWARE AUDIT)      |
-| - Nhận diện bí mật ngữ nghĩa (Semantic Secret Detection) mà rule tĩnh bỏ sót    |
-| - Quét Heuristic kết hợp phân tích độ hỗn loạn Shannon Entropy                   |
-| - Gắn cờ cảnh báo (Flag/Quarantine) đưa vào bảng kiểm toán (.slug/index.db)      |
+| TẦNG 2: SLUG AI - CỐ VẤN NGỮ NGHĨA TÙY CHỌN (OPTIONAL ADVISORY ONLY)             |
+| - Kích hoạt khi có cấu hình LLM (Ollama / Cloud API với cờ --ai)                |
+| - Gửi trích đoạn mã để nhận định dạng JSON cấu trúc (has_secret, reason, line)  |
+| - Hỗ trợ con người tham khảo thêm góc nhìn ngữ cảnh, KHÔNG thay thế Slug Guard  |
 +---------------------------------------------------------------------------------+
                                       |
                                       v
 +---------------------------------------------------------------------------------+
-| THỰC THI BẢO MẬT: DO POLICY CỦA HOST QUYẾT ĐỊNH (HOST POLICY ENFORCEMENT)       |
-| - AI chỉ cung cấp tín hiệu phân tích, KHÔNG tự ý cấp quyền vượt qua rule chặn    |
-| - Chủ máy (Host Admin) giữ quyền tối thượng để Whitelist hoặc cưỡng chế chặn   |
+| TẦNG 3: QUYẾT ĐỊNH CỦA CHỦ MÁY (HOST ADMIN / MANUAL GUARD)                      |
+| - Chủ máy giữ quyền tối thượng để Whitelist (!.env.example) hoặc cưỡng chế chặn|
+| - Toàn bộ quyết định được băm BLAKE3 và lưu trạng thái vào .slug/index.db      |
 +---------------------------------------------------------------------------------+
 ```
 
@@ -35,27 +38,27 @@ Slug tiếp cận AI theo một triết lý kỹ thuật thực dụng và có k
 
 ## 2. Mô Hình 3 Tầng Phân Loại Bảo Vệ Dữ Liệu (3-Tier Protection Model)
 
-Slug phân định rạch ròi giữa **Quy tắc lọc cấu trúc**, **Chính sách của chủ máy**, và **Kiểm toán bí mật bằng AI**:
+Slug phân định rạch ròi giữa **Quy tắc lọc cấu trúc (Filter)**, **Chính sách của chủ máy (Policy)**, và **Kiểm duyệt bí mật (Slug Guard & AI)**:
 
 | Tầng | Tên Cơ Chế | Nguồn Cấu Hình | Trạng Thái Hiển Thị (Status) | Ý Nghĩa Kỹ Thuật |
 | :---: | :--- | :--- | :--- | :--- |
 | **1** | **Workspace Filter** | `.gitignore` (phân tầng theo thư mục) | `Excluded (gitignore)` | Lọc bỏ các file rác phát sinh trong quá trình build (`node_modules/`, `target/`, `*.o`, `*.log`). Không phải cơ chế bảo mật mà là bộ lọc cấu trúc dự án. |
-| **2** | **Host Sharing Policy** | `.slug/rules.conf` | `Blocked (policy: <lý do>)` | Chính sách kiểm soát do chủ máy định nghĩa (chặn theo đuôi `.pem`, `.key`, `.sqlite`, hoặc chặn cứng tên file `.env`). Có hiệu lực ưu tiên cao nhất. |
-| **3** | **Secret Audit** | Stateful AI Secret Guard | `Quarantined (AI Secret Guard: <lý do>)` | Hệ thống AI phát hiện chuỗi khóa bí mật, token có entropy cao hoặc file môi trường. Tự động cách ly khỏi manifest và chặn tải về. |
+| **2** | **Host Sharing Policy** | `.slug/rules.conf` | `Blocked (policy: <lý do>)` | Chính sách kiểm soát do chủ máy định nghĩa (chặn theo đuôi `.pem`, `.key`, `.sqlite`, hoặc chặn cứng tên file `.env`). Có hiệu lực ưu tiên cao nhất, hỗ trợ Whitelist với tiền tố `!`. |
+| **3** | **Secret Audit** | Slug Guard (Regex & Shannon Entropy) + Slug AI (Optional) | `Quarantined (Slug Guard: <lý do>)` | Động cơ Slug Guard phát hiện chuỗi khóa bí mật, token có entropy cao hoặc file môi trường. Tự động cách ly khỏi manifest và khóa chặt tại VFS Jail. |
 
 ---
 
-## 3. Stateful AI Secret Guard: Kiến Trúc & Cơ Chế Hoạt Động
+## 3. Slug Guard & Stateful Audit Index: Kiến Trúc & Cơ Chế Hoạt Động
 
-Hệ thống AI Guard của Slug (`src/ai/stateful_audit.hpp`, `src/ai/scanner.cpp`) hoạt động như một trạm kiểm soát dữ liệu tự động ngay tại tầng giao vận.
+Hệ thống bảo vệ cốt lõi của Slug (`src/ai/stateful_audit.hpp`, `src/ai/scanner.cpp`, `src/policy/rules.cpp`) hoạt động như một trạm kiểm soát dữ liệu tự động ngay tại tầng giao vận.
 
-### 3.1. Hai Tầng Quét Thông Minh
-1. **Quét Mẫu Ngữ Cảnh Nâng Cao (Context-Aware Heuristics):**
-   * **Nhận diện chuyên sâu file môi trường:** Tự động phát hiện `.env`, `.env.local`, `.env.production` và các biến thể (loại trừ các file mẫu tài liệu như `.env.example`, `.env.sample`).
+### 3.1. Hai Tầng Phòng Thủ Xác Định Của Slug Guard (Deterministic Defense)
+1. **Quét Mẫu Heuristic & Regex Chuẩn Xác:**
+   * **Nhận diện chuyên sâu file môi trường:** Tự động phát hiện `.env`, `.env.local`, `.env.production` và các biến thể (loại trừ an toàn các file mẫu tài liệu như `.env.example`, `.env.sample`, `.env.template`).
    * **Nhận diện Unquoted & Quoted Token:** Quét các dòng gán biến `KEY=VALUE` hoặc `KEY: VALUE` cho các từ khóa nhạy cảm (`api_key`, `secret`, `token`, `password`, `auth`) ngay cả khi không đặt trong dấu ngoặc kép.
-   * **Mẫu định danh nhà cung cấp phổ biến:** OpenAI (`sk-proj-...`), Stripe (`sk_live_...`), GitHub (`ghp_...`), AWS (`AKIA...`), Private Key Headers (`-----BEGIN ... PRIVATE KEY-----`).
-2. **Phân Tích Độ Hỗn Loạn Thông Tin (Shannon Entropy Analyzer):**
-   * Với các chuỗi secret được sinh ngẫu nhiên (không có tiền tố cố định), AI Guard tính toán độ hỗn loạn Shannon:
+   * **Mẫu định danh nhà cung cấp phổ biến:** OpenAI (`sk-proj-...`, `sk-...`), Stripe (`sk_live_...`), GitHub (`ghp_...`), AWS (`AKIA...`), Private Key Headers (`-----BEGIN ... PRIVATE KEY-----`).
+2. **Phân Tích Độ Hỗn Loạn Toán Học (Shannon Entropy Analyzer):**
+   * Với các chuỗi secret được sinh ngẫu nhiên (không có tiền tố cố định), Slug Guard tính toán độ hỗn loạn Shannon:
      $$H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
    * Bất kỳ giá trị nào có độ dài $\ge 20$ ký tự và entropy $H(X) \ge 4.0$ bits/byte sẽ bị nghi vấn là khóa mật mã sinh ngẫu nhiên và đưa vào diện cách ly.
 

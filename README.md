@@ -20,12 +20,12 @@
 Trong kỷ nguyên lập trình hiện đại với các trợ lý AI (Cursor, Copilot, Claude Code, Antigravity, Devin, v.v.), AI liên tục lập chỉ mục và đọc các tệp trong workspace để nạp context vào mô hình ngôn ngữ lớn (LLM) gửi về cloud.
 - **Rủi ro thực tế:** Nếu tệp cấu hình chứa secret (`.env`, private key, API token) nằm dưới dạng bản rõ (plaintext) trên ổ đĩa, AI sẽ tự động đọc lén và đưa toàn bộ bí mật vào context window hoặc log chat mà lập trình viên không hề hay biết.
 - **Cách Slug giải quyết:**
-  - `slug env init`: Mã hóa file `.env` thành `.env.pqc` bằng mật mã hậu lượng tử và **xóa hoàn toàn bản rõ khỏi đĩa cứng**.
-  - Lập trình viên hướng dẫn AI thực thi dự án thông qua công cụ: `slug env run -- <command>`.
-  - Slug chỉ giải mã bí mật trong bộ nhớ RAM tạm thời của tiến trình con lúc chạy. **AI không bao giờ được tiếp xúc trực tiếp với tệp plaintext trên đĩa cứng.**
+  - `slug env init`: Mã hóa file `.env` thành `.env.pqc` bằng mật mã hậu lượng tử, lưu bản sao niêm phong vào Central Vault (`~/.slug/env_vault/`) và **xóa hoàn toàn bản rõ khỏi đĩa cứng trong repo**.
+  - `slug env prompt`: Xuất hướng dẫn tự động tạo `.slug/ai-rule.md` để huấn luyện AI luôn thực thi lệnh qua công cụ wrapper.
+  - `slug env run -- <command>`: Slug giải mã bí mật duy nhất trong bộ nhớ RAM tạm thời của tiến trình con lúc chạy. **AI không bao giờ được tiếp xúc trực tiếp với tệp plaintext trên đĩa cứng.**
 - **Góc nhìn kỹ thuật thẳng thắn (Tránh Overclaim):**
-  - *Có đọc được không nếu cố tình?* **Có!** Khi ứng dụng chạy, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ RAM của process để code hoạt động. Nếu viết lệnh `printenv` hoặc cố tình dump memory thì vẫn đọc được.
-  - *Tại sao cách tiếp cận này lại hiệu quả?* Các trợ lý AI là tác nhân hỗ trợ (cooperative agents), chúng **không bao giờ chủ động tìm cách bypass hay khai thác bộ nhớ RAM** (trừ phi người dùng cố tình viết prompt hướng dẫn AI làm điều đó).
+  - *Có đọc được không nếu cố tình?* **Có!** Khi ứng dụng chạy, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ RAM của process để code hoạt động. Nếu người dùng cố tình viết lệnh `printenv` hoặc dump memory thì vẫn đọc được.
+  - *Tại sao cách tiếp cận này lại hiệu quả?* Các trợ lý AI là tác nhân hỗ trợ (cooperative agents), chúng **không bao giờ chủ động tìm cách bypass hay khai thác bộ nhớ RAM** (trừ phi người dùng cố tình viết prompt yêu cầu AI làm điều đó).
   - *Giá trị thực chất:* Slug tạo ra một **rào cản ma sát chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ ổ đĩa, đảm bảo secret không bị nuốt chửng vào context window của LLM trong công việc hàng ngày.
 
 ### 1.2. Chia Sẻ An Toàn Giữa Người Với Người (Không Lo Thừa Rác, Không Lo Nhầm Bí Mật)
@@ -33,35 +33,104 @@ Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc 
 - **Không lo chia sẻ thừa file rác:** Tự động nhận diện phân tầng `.gitignore` của dự án, loại bỏ sạch sẽ các thư mục build nặng nề (`node_modules/`, `target/`, `build/`, file tạm).
 - **Không lo chia sẻ nhầm file bí mật:** Hệ thống **Slug Guard** kết hợp đa cơ chế phòng vệ phân định minh bạch:
   - **Quy tắc cấu trúc dự án (`.gitignore` / `.slugignore`):** Tự động lọc bỏ các thư mục build rác và dependencies nặng nề.
-  - **Chính sách kiểm soát của Host (`.slug/rules.conf`):** Các quy tắc cấm hoặc cho phép cụ thể theo thư mục và phần mở rộng (`deny *.pem`, `deny *.key`, v.v.).
-  - **Smart Regex & Shannon Entropy Guard:** Bộ lọc heuristic & entropy cục bộ trong bộ nhớ, phát hiện chuỗi token có độ ngẫu nhiên cao, private key mà không cần kết nối mạng.
-  - **AI Semantic Guard (tùy chọn với `--ai`):** Hỗ trợ kết nối các mô hình cục bộ (Ollama) hoặc Cloud LLM để rà soát ngữ nghĩa chuyên sâu các credential ngụy trang phức tạp.
+  - **Chính sách kiểm soát của Host (`.slug/rules.conf`):** Các quy tắc cấm hoặc cho phép cụ thể theo thư mục và phần mở rộng (`deny *.pem`, `deny *.key`, v.v.). Hỗ trợ luật ngoại lệ Whitelist bằng tiền tố `!` (ví dụ: `!.env.example`, `!*.example` vẫn được truyền ngay cả khi `.env*` bị chặn).
+  - **Smart Heuristic Regex & Shannon Entropy Guard:** Bộ lọc cục bộ 100% offline trong bộ nhớ, tính toán mật độ thông tin $H(X) \ge 4.0$ để phát hiện chuỗi token có độ ngẫu nhiên cao, private key mà không cần kết nối mạng.
+  - **AI Contextual Advisor (tùy chọn với `--ai`):** Hỗ trợ kết nối các mô hình cục bộ (Ollama) hoặc Cloud LLM trả lời qua schema JSON cấu trúc (`has_secret`, `reason`, `line`) để tham vấn ngữ cảnh, tuyệt đối không thay thế luật cứng của Slug Guard.
 
 ### 1.3. Kiến Trúc Engine Viewing Nội Bộ (Zero Remote HTTP)
-- Trên mạng dây LAN/Internet **chỉ tồn tại kết nối nhị phân PQC an toàn lượng tử** (cổng `9443`).
-- Giao diện Web chỉ là một **Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080`** của máy client. Mọi thao tác duyệt cây thư mục (`/drop`), tải file ZIP toàn thư mục (`/download-folder`), tải file đơn hay upload đều được tunnel mã hóa qua các frame PQC nhị phân. Không có bất kỳ byte HTTP lộ thiên nào trên mạng!
+- Trên mạng dây LAN/Internet **chỉ tồn tại kết nối nhị phân PQC an toàn lượng tử** (cổng `9443`). Tuyệt đối không phơi bày cổng Web HTTP ra ngoài Internet!
+- Giao diện Web chỉ là một **Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080`** của máy client (hoặc máy host). Mọi thao tác duyệt cây thư mục, tải file đơn, tải file nén ZIP toàn thư mục hay upload đều được tunnel mã hóa qua các frame PQC nhị phân. Không có bất kỳ byte HTTP lộ thiên nào trên mạng!
 
 ---
 
-## 2. Trải Nghiệm Giao Diện Người Dùng (Visual Product Showcase)
+## 2. Cài Đặt & Biên Dịch Nhanh (Installation & Build)
+
+Slug được đóng gói dưới dạng binary tĩnh độc lập (100% Static Binary, ~8.4 MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy mượt mà trên mọi bản phân phối Linux và Windows.
+
+### 2.1. Cài Đặt Nhanh (Quick Install)
+
+#### Quick Install (Linux / macOS)
+```bash
+# Automated 1-liner installer:
+curl -fsSL https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.sh | bash
+
+# Or Debian/Ubuntu .deb:
+sudo dpkg -i dist/slug_1.0.0_amd64.deb
+
+# Or standalone portable binary:
+chmod +x slug-linux-x86_64 && sudo mv slug-linux-x86_64 /usr/local/bin/slug
+```
+
+#### Quick Install (Microsoft Windows)
+```powershell
+# Automated 1-liner installer (PowerShell):
+irm https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.ps1 | iex
+
+# Or extract ZIP distribution archive:
+Expand-Archive slug-1.0.0-windows-x86_64.zip -DestinationPath "$env:LOCALAPPDATA\slug\bin"
+[Environment]::SetEnvironmentVariable("PATH", "$([Environment]::GetEnvironmentVariable('PATH','User'));$env:LOCALAPPDATA\slug\bin", "User")
+
+# Or run standalone portable binary directly:
+.\slug.exe version
+```
+
+### 2.2. Tạo Lối Tắt Màn Hình & Trải Nghiệm 1-Chạm (Windows Desktop Shortcut)
+Slug hỗ trợ tạo ngay shortcut Desktop chuyên nghiệp để khởi chạy giao diện Web Viewing Engine chỉ bằng 1 cú nhấp chuột:
+```powershell
+slug shortcut
+```
+> **Đặc tính Absolute Stealth:** Khi mở từ Desktop Shortcut hoặc Windows Explorer, Slug tự động ẩn cửa sổ console terminal, mang lại trải nghiệm như một ứng dụng desktop native mượt mà.
+
+### 2.3. Bật Tính Năng Tự Động Gợi Ý Lệnh (Shell Autocompletion)
+Slug hỗ trợ tự động gợi ý cờ và các cổng workspace đang chạy cho Bash và Zsh:
+```bash
+# Đối với Bash:
+slug completion bash > ~/.bash_completion.d/slug
+source ~/.bash_completion.d/slug
+
+# Đối với Zsh:
+slug completion zsh > ~/.zsh/completion/_slug
+```
+
+### 2.4. Tự Biên Dịch Từ Mã Nguồn (Build From Source)
+Yêu cầu: Trình biên dịch hỗ trợ C++20 (`g++-11+`, `clang++-14+`, hoặc MSVC 2022 v143), thư viện OpenSSL 3.0+ (hoặc OpenSSL 3.6.3 hỗ trợ NIST PQC).
+```bash
+# Trên Linux: Biên dịch binary động:
+make -j$(nproc)
+
+# Trên Linux: Biên dịch binary tĩnh 100% portable:
+make static -j$(nproc)
+
+# Trên Windows (MSVC 2022 Developer Command Prompt / PowerShell):
+scripts\build_windows.bat
+
+# Chạy toàn bộ 50 kịch bản kiểm thử tích hợp tự động:
+bash scripts/test_local.sh
+```
+
+---
+
+## 3. Trải Nghiệm Giao Diện Người Dùng & Web Viewing Engine
 
 Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, 100% SVG vector offline không phụ thuộc internet).
 
-### 2.1. Trạm Kết Nối & Quản Lý Phiên Làm Việc (Client Portal & Quick Connect)
+> **Chỉ cần gõ `slug` (không tham số) hoặc `slug portal`:** Hệ thống tự động kích hoạt Web Viewing Engine trên `http://127.0.0.1:8080/` và tự động mở trình duyệt mặc định của bạn!
+
+### 3.1. Trạm Kết Nối & Quản Lý Phiên Làm Việc (Client Portal & Quick Connect)
 > Cho phép nhập nhanh IP trạm và mã OTP 1 lần (hoặc tài khoản Ephemeral RBAC), tự động thương lượng kênh mật mã Hậu lượng tử NIST FIPS 203 và lưu danh sách trạm thường dùng để truy cập 1 chạm.
 
 <p align="center">
   <img src="docs/ketnoi.png" alt="Slug - Trạm Kết Nối & Quản Lý Phiên" width="100%" />
 </p>
 
-### 2.2. Trạm Phát & Trung Tâm Điều Khiển Bảo Mật (Host Command Center & Slug Guard)
-> Khởi tạo và quản lý đa trạm phát, giám sát bộ 3 mã OTP xoay vòng theo quyền hạn (`[rw]` Đọc/Ghi, `[r]` Chỉ Đọc, `[w]` Hộp Thư Nộp Bài), quản lý người dùng Ephemeral RBAC và tùy biến bộ quy tắc lọc.
+### 3.2. Trạm Phát & Trung Tâm Điều Khiển Bảo Mật (Host Command Center & Slug Guard)
+> Khởi tạo và quản lý đa trạm phát, giám sát bộ 3 mã OTP xoay vòng theo quyền hạn (`[rw]` Đọc/Ghi, `[r]` Chỉ Đọc, `[w]` Hộp Thư Nộp Bài), quản lý người dùng Ephemeral RBAC và tùy biến bộ quy tắc lọc (hỗ trợ Whitelist `!.env.example`).
 
 <p align="center">
   <img src="docs/chiase.png" alt="Slug - Trạm Phát & Quản Lý Chia Sẻ" width="100%" />
 </p>
 
-### 2.3. Trình Duyệt File Trực Quan & Web Dropbox Explorer (PQC Tunnel Browsing)
+### 3.3. Trình Duyệt File Trực Quan & Web Dropbox Explorer (PQC Tunnel Browsing)
 > Duyệt cây thư mục từ xa được bảo vệ bởi kênh mã hóa PQC, hỗ trợ tải từng tệp, nén tải toàn bộ thư mục ZIP và xem kế hoạch đồng bộ vi sai (Delta Fast-Path) trước khi kéo về máy.
 
 <p align="center">
@@ -70,127 +139,135 @@ Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn th
 
 ---
 
-## 3. Hệ Thống Tài Liệu Kỹ Thuật (Architecture & Technical Specs)
+## 4. Quy Hoạch Lệnh Cốt Lõi ("The Essential Suite")
 
-Hệ thống tài liệu chuyên sâu được phân định chi tiết theo từng khía cạnh kỹ thuật:
-
-| Tài liệu | Nội dung trọng tâm |
-| :--- | :--- |
-| **[docs/README.md](docs/README.md)** | **Tổng quan hệ thống tài liệu & Cẩm nang thẩm định:** Tóm lược bản chất vấn đề, 4 kịch bản đời thường và ma trận thông tin đối chiếu hỗ trợ Hội đồng Ban giám khảo. |
-| **[01-PROBLEM.md](docs/01-PROBLEM.md)** | Phân tích thực trạng: Lỗ hổng của `python -m http.server`, rủi ro tài khoản mồ côi SSH, ô nhiễm Git và nguy cơ rò rỉ secret vào AI coding assistants. |
-| **[02-SOLUTION.md](docs/02-SOLUTION.md)** | Giải pháp toàn diện của Slug: Quy hoạch 9 lệnh cốt lõi, cơ chế một chạm `slug get`, 3 bộ Suite mật mã, hệ thống tập tin ảo `SlugVFS` và Web Dropbox. |
-| **[03-AI-USAGE.md](docs/03-AI-USAGE.md)** | Phòng thủ dữ liệu AI: Stateful AI Secret Guard với bộ nhớ đệm băm BLAKE3 (`index.db`), cơ chế kiểm toán `slug audit`, và công nghệ RAM-only PQC EnvShield. |
-| **[04-ARCHITECTURE.md](docs/04-ARCHITECTURE.md)** | Kiến trúc 5 tầng nghiêm ngặt, giao thức đóng khung nhị phân Directional AEAD (`XChaCha20-Poly1305`), cửa sổ trượt 64-bit chống phát lại, và cơ chế xuyên NAT đa tầng ("SLUG-ICE"). |
-| **[MODULE-MAP.md](docs/MODULE-MAP.md)** | Bản đồ kiến trúc chi tiết, phân rã mã nguồn các tầng và đặc tả luồng kiểm duyệt dữ liệu (Gatekeepers). |
-
----
-
-## 4. Quy Hoạch 9 Lệnh Cốt Lõi ("The Essential 9")
-
-Toàn bộ hệ thống CLI của Slug tuân thủ nghiêm ngặt chuẩn POSIX/GNU, tổ chức thành 3 nhóm nghiệp vụ chính và các công cụ tiện ích:
+Toàn bộ hệ thống CLI của Slug tuân thủ nghiêm ngặt chuẩn POSIX/GNU:
 
 ```text
-SLUG THE ESSENTIAL 9 CORE CLI
+SLUG THE ESSENTIAL COMMAND SUITE
+
+[CLIENT WORKSPACE & WEB VIEWING ENGINE]
+  slug (không tham số)        Mở ngay Web Viewing Engine trên loopback http://127.0.0.1:8080/
+  slug portal [-p <port>]     Chỉ định cổng loopback cho Web Viewing Engine (Aliases: slug web, slug ui)
+  slug shortcut               Tạo lối tắt Desktop Windows ("Slug Workspace.lnk") chạy 1-chạm ẩn console
+  slug config [list|get|set]  Quản lý cấu hình toàn cục (~/.slug/config.json): default_suite, portal_port
 
 [HOST WORKSPACE]
-  slug add [path]             Khởi tạo và host workspace (-p, -s, -t, --ai, --filter-mode, --no-filter, -d)
-  slug status [-p <port>]     Kiểm tra danh sách hoặc chi tiết server đang chạy (-s rút gọn)
+  slug add <path>             Khởi tạo và host workspace (-p, -s, -t, --ai, --filter-mode, --no-filter, -d)
+  slug status                 Kiểm tra danh sách server đang chạy (-s rút gọn, -p <port>, --sessions, --flagged)
   slug totp [-p <port>]       Xem bảng 3 mã OTP phân quyền hoặc xuất mã nhanh (-r <role> --code-only)
-  slug stop [-p <port>|--all] Dừng server cụ thể hoặc toàn bộ server đang mở
+  slug stop [-p <port>|-a]    Dừng server cụ thể hoặc toàn bộ server đang mở (-a, --all)
+  slug serve [-p <port>] [-w] Bảng thông số server; truyền cờ -w để mở Web Host Admin Dashboard nội bộ
 
 [ACCESS CONTROL & SECURITY]
-  slug user                   Quản lý tài khoản phân quyền: add, list, mod, del, chpass
-  slug audit                  Quản lý các file bị AI Guard chặn: list, allow, recheck
+  slug session <list|kill>    Giám sát và hủy phiên kết nối của các client đang truy cập (-p <port>)
+  slug user <add|mod|rm|list> Quản lý tài khoản phân quyền RBAC: -u <user>, -P <pass>, -r <rw|r|w>, -t <ttl>
+  slug audit <list|scan|allow>Quản lý các file nghi vấn bị Slug Guard chặn (list, scan, allow, recheck, clear)
+  slug rule <list|block|allow>Quản lý quy tắc lọc tệp .slug/rules.conf (hỗ trợ whitelist tiền tố '!')
 
 [CLIENT WORKSPACE SYNC]
-  slug get <ENDPOINT?otp=...> Kéo toàn bộ workspace về máy trong đúng 1 lệnh (One-Shot Sync)
-  slug pull                   Đồng bộ vi sai cập nhật từ Host về máy cục bộ (--dry-run, --prune)
-  slug push                   Đẩy các thay đổi cục bộ lên Host (--dry-run)
+  slug connect -i <ip> -p <p> Xác thực với trạm chia sẻ từ xa và lưu chứng chỉ phiên vào danh bạ
+  slug ls [subpath]           Duyệt danh sách file từ xa với trạng thái chi tiết (Available, Blocked, Quarantined)
+  slug pull [scope] [--to <d>]Đồng bộ vi sai kiểu Git (Delta Sync 64 KiB), xem preview transfer plan (-y, --dry-run)
+  slug get <file> [dest]      Tải ĐÚNG 1 file cụ thể được chỉ định từ xa (hỗ trợ cú pháp IP:PORT?otp=CODE)
+  slug push <file> [dest]     Đẩy tệp lên trạm từ xa (yêu cầu quyền 'w' hoặc 'rw', dùng cho nộp bài hoặc sync)
 
 [SYSTEM UTILITIES]
-  slug serve -p <port> [-w]   Xem chi tiết server hoặc mở Web Dashboard quản trị
-  slug conn                   Quản lý danh sách kết nối lưu trên máy client (list, use, prune)
+  slug conn <list|use|prune>  Quản lý danh sách kết nối đã lưu trên client (chuyển đổi trạm làm việc 1 lệnh)
   slug env                    Bảo vệ biến môi trường trong RAM & Central Vault (init, restore, history, prompt, run)
-  slug completion <bash|zsh>  Sinh script tự động hoàn thành lệnh cho shell (Tab completion)
-  slug bench                  Đo hiệu năng thuật toán mật mã (PQC, BLAKE3) và phân mảnh vi sai In-Memory
-  slug version                Hiển thị thông tin phiên bản, commit hash và giấy phép bản quyền
+  slug bench [--quick|--json] Đo hiệu năng mật mã (ML-KEM-768, ML-DSA-65, BLAKE3, AEAD) và I/O đĩa
+  slug completion <bash|zsh>  Sinh script gợi ý lệnh tự động cho shell
+  slug version                Hiển thị thông tin phiên bản, bản quyền và chi tiết build
+  slug uninstall [-y]         Gỡ cài đặt hoàn toàn Slug khỏi hệ thống (dọn binary, config, registry)
 ```
 
 ---
 
 ## 5. Hướng Dẫn Sử Dụng Nhanh (Quickstart)
 
-### Kịch Bản 1: Host Workspace Và Chia Sẻ Bằng Lệnh Một Chạm (`slug get`)
+### Kịch Bản 1: Khởi Tạo Workspace & Đồng Bộ Về Máy Khách (Full Sync)
 
 **Bước 1: Trên máy chủ (Host):**
-Khởi tạo workspace chia sẻ thư mục hiện tại trên cổng 9443 với thuật toán Hậu Lượng Tử và bật AI Guard:
+Khởi tạo chia sẻ thư mục hiện tại trên cổng 9443 với thuật toán Hậu Lượng Tử (Suite 3) và bật AI Guard:
 ```bash
 slug add . -p 9443 -s pqc -t 1d --ai
 ```
-Màn hình terminal sẽ xuất hiện bảng thông số và dòng hướng dẫn kết nối một chạm:
+Màn hình terminal sẽ xuất hiện bảng thông số và các mã OTP phân quyền:
 ```text
 +----------------------------------------------------------------------------+
 | SLUG SECURE WORKSPACE HOSTED SUCCESSFULLY                                  |
-+----------------------------------------------------------------------------+
-  Port:            9443
-  Crypto Suite:    Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)
-  AI Secret Guard: ON
-  Session TTL:     1d
-  Role OTPs (Rotates in 50s):
-    [rw] Read-Write OTP: 12822565 (Full Sync & Web Dropbox)
-    [r]  Read-Only OTP:  08796195 (Read/Pull/View files only)
-    [w]  Write-Only OTP: 70788146 (Blind Drop/Upload only)
-+----------------------------------------------------------------------------+
-Connect (One-Shot): slug get 192.168.1.107:9443?otp=12822565
+| Path:            D:/my-project                                             |
+| Port:            9443                                                      |
+| Crypto Suite:    Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)   |
+| AI Secret Guard: ON (Stateful BLAKE3 Content-Addressable Index)            |
+| Session TTL:     1d                                                        |
+| Role OTPs (Rotates in 30s):                                                |
+|   [rw] Read-Write OTP: 12822565 (Full Sync & Web Dropbox)                  |
+|   [r]  Read-Only OTP:  08796195 (Read/Pull/View files only)                |
+|   [w]  Write-Only OTP: 70788146 (Blind Drop/Upload only)                   |
 +----------------------------------------------------------------------------+
 ```
-
-> **Tùy chọn Chế độ Lọc Nội dung (`--filter-mode`):**
-> * `--filter-mode protected` *(Mặc định)*: Áp dụng đầy đủ `.gitignore`, `rules.conf`, phát hiện secret và cách ly (quarantine).
-> * `--include-ignored`: Bỏ qua `.gitignore` (truyền cả thư mục build/deps), nhưng vẫn áp dụng luật chặn secret của host.
-> * `--no-filter` *(hoặc `--filter-mode none`)*: Chế độ truyền thô không lọc nội dung cho đồng đội tin cậy (vẫn bảo vệ chống path traversal và cô lập metadata `.slug/`).
 
 **Bước 2: Trên máy khách (Client):**
-Người nhận chỉ cần gõ đúng một câu lệnh để tải toàn bộ thư mục về máy đích:
-```bash
-slug get "192.168.1.107:9443?otp=12822565" ./my-project
-```
-Tiến trình sẽ tự động thực hiện bắt tay trao đổi khóa ML-KEM-768, đốt hủy mã OTP một lần, nhận chứng chỉ phiên, phân tích khối vi sai 64 KiB và tải dữ liệu về máy.
+Người nhận có 3 cách kết nối cực kỳ linh hoạt:
+
+1. **Cách 1: Đồng bộ toàn bộ thư mục bằng lệnh `slug pull` (CLI):**
+   ```bash
+   slug pull -i 192.168.1.107 -p 9443 -o 12822565 --to ./my-project
+   ```
+   *Tiến trình sẽ tự động bắt tay ML-KEM-768, đốt hủy mã OTP một lần, tải manifest, tính toán vi sai 64 KiB và đồng bộ trọn vẹn dữ liệu.*
+
+2. **Cách 2: Tải ĐÚNG 1 tệp tin cụ thể bằng lệnh `slug get` (Single-File Fetch):**
+   ```bash
+   slug get 192.168.1.107:9443?otp=12822565 src/main.cpp ./main.cpp
+   ```
+
+3. **Cách 3: Trải nghiệm đồ họa qua Web Viewing Engine (Zero Remote HTTP):**
+   - Chỉ cần gõ:
+     ```bash
+     slug
+     ```
+   - Trình duyệt tự động mở `http://127.0.0.1:8080/`. Nhập IP `192.168.1.107:9443` và mã OTP `12822565` -> Nhấn **Kết Nối Nhanh**.
+   - Tại Tab 3 (Web Dropbox), bạn có thể xem cây thư mục từ xa, tải từng file, hoặc nhấn **Tải ZIP Toàn Bộ Thư Mục** để nhận trọn vẹn dự án.
 
 ---
 
-### Kịch Bản 2: Thu Bài Tập Phòng Máy Học Sinh / Sinh Viên (Write-Only Blind Drop)
+### Kịch Bản 2: Thu Bài Tập Phòng Máy Sinh Viên (Write-Only Blind Drop)
 
-Khi giảng viên hoặc trưởng nhóm cần thu bài nộp của học sinh, sinh viên trong phòng thực hành nhanh gọn, không lo nghẽn mạng WAN:
+Khi giảng viên hoặc trưởng nhóm cần thu bài nộp của học sinh, sinh viên trong phòng lab nhanh gọn, không lo nghẽn mạng WAN:
+
 1. **Trên máy giáo viên (Host):**
    Khởi tạo thư mục nhận bài:
    ```bash
    slug add ./bai_nop -p 9443
    ```
-   Hệ thống in ra **Mã OTP quyền Ghi `[w]` Write-Only** (dành cho kết nối bảo mật 1 máy). Để cả lớp 40–50 sinh viên cùng nộp bài đồng thời, giảng viên tạo nhanh **tài khoản chung quyền Ghi `[w]`** trên Trạm Điều Khiển Web hoặc qua `slug user add` (ví dụ: user `sinhvien` với quyền `[w] Write-Only`).
+   Tạo nhanh tài khoản chung quyền Ghi `[w]` cho cả lớp trên Web Host Command Center hoặc qua CLI:
+   ```bash
+   slug user add -u sinhvien -P 123456 -r w -p 9443
+   ```
+   *(Lưu ý: Mã OTP 8 chữ số là vé bảo mật dùng 1 lần cho từng thiết bị cá nhân; việc tạo tài khoản RBAC chung với quyền `[w]` giúp 40–50 sinh viên cùng nộp bài đồng thời mà không bị xung đột).*
+
 2. **Phía học sinh, sinh viên nộp bài:**
-   - Học sinh chỉ cần mở trình duyệt đăng nhập tài khoản chung rồi kéo thả bài làm vào Web Dropbox hoặc dùng lệnh CLI:
+   - **Qua Web GUI:** Mở `slug`, nhập IP máy thầy `192.168.1.107:9443`, chọn tài khoản `sinhvien` / mật khẩu `123456` và kéo thả bài làm vào Web Dropbox.
+   - **Qua CLI:**
      ```bash
-     slug push ./bai_lam.zip 192.168.1.107:9443?otp=70788146
+     slug push ./bai_lam.zip -i 192.168.1.107 -p 9443 -u sinhvien -P 123456
      ```
-   - **Bảo mật & Chống chép bài:** Tầng `SlugVFS Jail` cưỡng chế quyền `WRITE_ONLY`, học sinh chỉ được phép tải bài lên, **hoàn toàn bị cấm xem danh sách hoặc tải bài của các bạn khác về**. Không lo nghẽn mạng WAN, chạy mượt mà ngay cả khi phòng máy mất Internet.
+   - **Bảo mật & Chống chép bài:** Tầng `SlugVFS Jail` cưỡng chế quyền `WRITE_ONLY`, học sinh chỉ được phép tải bài lên, **hoàn toàn bị cấm xem danh sách hoặc tải bài của các bạn khác về**. Hoạt động mượt mà ngay cả khi phòng máy mất kết nối Internet quốc tế!
 
 ---
 
-### Kịch Bản 3: Truy Cập Giao Diện Web Techno B2B (No-CLI Workspace)
+### Kịch Bản 3: Thiết Lập Bộ Quy Tắc Lọc & Ngoại Lệ Whitelist (`!.env.example`)
 
-Khi chia sẻ với người dùng không cài đặt sẵn CLI:
-1. Chủ máy mở giao diện quản trị:
-   ```bash
-   slug serve -p 9443 -w
-   ```
-2. Người dùng mở liên kết trên trình duyệt:
-   ```text
-   http://192.168.1.107:9443/drop?ticket=24b3eca0480f255bae394325316c6c871cf8a41d4c7af557
-   ```
-   - Giao diện tối Techno Doanh nghiệp sắc nét (bo góc 2px, font JetBrains Mono).
-   - Kéo thả tệp tin hoặc thư mục trực tiếp vào trình duyệt để tải lên.
-   - Hiển thị thông số giám sát tốc độ và tình trạng phiên làm việc theo thời gian thực.
+Slug Guard hỗ trợ cơ chế đánh giá tuần tự (Sequential Rule Evaluation) tương thích với cú pháp `.gitignore`:
+- Nếu bạn cấm toàn bộ file `.env*` nhưng muốn đồng đội vẫn nhận được file mẫu cấu hình `.env.example`:
+  ```text
+  # Trong file .slug/rules.conf hoặc trên Web Command Center:
+  .env*
+  !.env.example
+  !*.example
+  ```
+- Quy tắc có dấu chấm than `!` ở đầu biểu thị luật **Whitelist (Cho phép ngoại lệ)**. Slug Guard sẽ tự động phê duyệt các file này ở trạng thái `Whitelisted / Clean` và không bao giờ cách ly nhầm.
 
 ---
 
@@ -219,60 +296,19 @@ slug env history
 
 ---
 
-## 6. Cài Đặt & Biên Dịch (Installation & Build)
+## 6. Hệ Thống Tài Liệu Kỹ Thuật (Architecture & Technical Specs)
 
-Slug được đóng gói dưới dạng binary tĩnh độc lập (100% Static Binary, ~8.4 MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy mượt mà trên mọi bản phân phối Linux (Ubuntu, Debian, Alpine, RHEL, CentOS, Arch, Kali).
+Hệ thống tài liệu chuyên sâu được phân định chi tiết theo từng khía cạnh kỹ thuật:
 
-### 6.1. Cài Đặt Nhanh (Quick Install)
-
-#### Quick Install (Linux / macOS)
-```bash
-# Automated 1-liner installer:
-curl -fsSL https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.sh | bash
-
-# Or Debian/Ubuntu .deb:
-sudo dpkg -i dist/slug_1.0.0_amd64.deb
-
-# Or standalone portable binary:
-chmod +x slug-linux-x86_64 && sudo mv slug-linux-x86_64 /usr/local/bin/slug
-```
-
-#### Quick Install (Microsoft Windows)
-```powershell
-# Automated 1-liner installer (PowerShell):
-irm https://raw.githubusercontent.com/dotlinux26/slug/main/scripts/install.ps1 | iex
-
-# Or extract ZIP distribution archive:
-Expand-Archive slug-1.0.0-windows-x86_64.zip -DestinationPath "$env:LOCALAPPDATA\slug\bin"
-[Environment]::SetEnvironmentVariable("PATH", "$([Environment]::GetEnvironmentVariable('PATH','User'));$env:LOCALAPPDATA\slug\bin", "User")
-
-# Or run standalone portable binary directly:
-.\slug.exe version
-```
-
-### 6.2. Bật Tính Năng Tự Động Gợi Ý Lệnh (Shell Autocompletion)
-Slug hỗ trợ tự động gợi ý cờ và các cổng workspace đang chạy cho Bash và Zsh:
-```bash
-# Đối với Bash:
-slug completion bash > ~/.bash_completion.d/slug
-source ~/.bash_completion.d/slug
-
-# Đối với Zsh:
-slug completion zsh > ~/.zsh/completion/_slug
-```
-
-### 6.3. Tự Biên Dịch Từ Mã Nguồn (Build From Source)
-Yêu cầu: Trình biên dịch hỗ trợ C++20 (`g++` hoặc `clang++`), thư viện OpenSSL 3.0+ hoặc OpenSSL 3.6.3 (hỗ trợ NIST PQC).
-```bash
-# Biên dịch binary động thông thường:
-make -j$(nproc)
-
-# Biên dịch binary tĩnh hoàn chỉnh:
-make static -j$(nproc)
-
-# Chạy toàn bộ 50 kịch bản kiểm thử tích hợp tự động:
-bash scripts/test_local.sh
-```
+| Tài liệu | Nội dung trọng tâm |
+| :--- | :--- |
+| **[docs/README.md](docs/README.md)** | **Tổng quan hệ thống tài liệu & Cẩm nang thẩm định:** Tóm lược bản chất vấn đề, 4 kịch bản đời thường và ma trận thông tin đối chiếu hỗ trợ Hội đồng Ban giám khảo. |
+| **[01-PROBLEM.md](docs/01-PROBLEM.md)** | Phân tích thực trạng: Lỗ hổng của `python -m http.server`, rủi ro tài khoản mồ côi SSH, ô nhiễm Git và nguy cơ rò rỉ secret vào AI coding assistants. |
+| **[02-SOLUTION.md](docs/02-SOLUTION.md)** | Giải pháp toàn diện của Slug: Quy hoạch bộ lệnh cốt lõi, cơ chế đồng bộ vi sai `slug pull`, 3 bộ Suite mật mã, hệ thống tập tin ảo `SlugVFS` và Web Dropbox. |
+| **[03-AI-USAGE.md](docs/03-AI-USAGE.md)** | Phòng thủ dữ liệu AI: Phân định minh bạch giữa **Slug Guard** (deterministic offline regex + entropy) và **Slug AI** (advisory JSON schema); công nghệ RAM-only PQC EnvShield. |
+| **[04-ARCHITECTURE.md](docs/04-ARCHITECTURE.md)** | Kiến trúc 5 tầng nghiêm ngặt, bảng so sánh 3 bộ mật mã (Suite 1 Classical, Suite 2 Modern, Suite 3 PurePQC), giao thức Directional AEAD (`XChaCha20-Poly1305`), và cơ chế NAT-ICE. |
+| **[MODULE-MAP.md](docs/MODULE-MAP.md)** | Bản đồ kiến trúc chi tiết, phân rã mã nguồn các tầng và đặc tả luồng kiểm duyệt dữ liệu (Gatekeepers). |
+| **[TUTORIAL_VI.md](docs/TUTORIAL_VI.md)** | Cẩm nang hướng dẫn sử dụng và triển khai thực chiến chi tiết bằng tiếng Việt. |
 
 ---
 

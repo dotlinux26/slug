@@ -30,8 +30,9 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
                                      |
                                      v
   [BƯỚC 3: CHIA SẺ NỘI BỘ LAN / P2P THEO VAI TRÒ]
-       slug add .  --->  slug get <link_kèm_otp>
+       slug add .  --->  slug pull -i <host> -p <port> -o <otp>
        ├── Tự động lọc bỏ rác build (node_modules/, target/, build/) theo .gitignore
+       ├── Hỗ trợ luật ngoại lệ Whitelist (!.env.example, !*.example)
        ├── Tự động cách ly và ngăn chặn các file nhạy cảm đã bị cảnh báo ở Bước 1
        └── Kênh truyền P2P mã hóa Hậu Lượng Tử (PQC), xác thực bằng mã OTP phân quyền 3 vai trò
 ```
@@ -50,10 +51,16 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
      ```
   2. Người nhận kéo trực tiếp qua mạng LAN chỉ trong vài giây (tốc độ đạt trần băng thông LAN/Wi-Fi):
      ```bash
-     slug get "192.168.1.105:9443?otp=12822565" ./tailieu
-     # Hoặc mở trực tiếp trên trình duyệt Web: http://192.168.1.105:9443/drop?ticket=...
+     # Đồng bộ toàn bộ thư mục bằng CLI:
+     slug pull -i 192.168.1.105 -p 9443 -o 12822565 --to ./tailieu
+
+     # Hoặc tải 1 file đơn lẻ cụ thể:
+     slug get 192.168.1.105:9443?otp=12822565 bao_cao.pdf ./bao_cao.pdf
+
+     # Hoặc mở giao diện Web Viewing Engine cục bộ trên máy mình (gõ 'slug' -> http://127.0.0.1:8080/):
+     # Kết nối tới 192.168.1.105:9443 bằng OTP và nhấn "Tải ZIP Toàn Bộ Thư Mục"
      ```
-  - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768).
+  - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768). Tuyệt đối Zero Remote HTTP trên mạng!
 
 ---
 
