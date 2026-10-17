@@ -1,6 +1,7 @@
 #include "src/net/web_server.hpp"
 #include "src/net/web_assets.hpp"
 #include "src/platform/fs.hpp"
+#include "src/platform/native_dialog.hpp"
 #include "src/core/utils.hpp"
 #include "src/sync/manifest.hpp"
 #include "src/bench/benchmark.hpp"
@@ -459,6 +460,165 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
     if (path == "/portal") {
         send_resp(302, "Found", "text/html", "", "Location: http://127.0.0.1:8080/portal\r\n");
         return;
+    }
+
+    // Native OS file / folder pickers and openers (Available on localhost)
+    if (path == "/api/fs/pick-folder") {
+        json res;
+        if (!is_localhost) {
+            res["status"] = "error";
+            res["message"] = "Native file picker is only available on localhost/loopback.";
+            send_resp(403, "Forbidden", "application/json", res.dump());
+            return;
+        }
+        std::string chosen = slug::platform::NativeDialog::pick_folder_native();
+        if (!chosen.empty()) {
+            res["status"] = "ok";
+            res["path"] = chosen;
+        } else {
+            res["status"] = "cancelled";
+            res["path"] = "";
+        }
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/fs/pick-file") {
+        json res;
+        if (!is_localhost) {
+            res["status"] = "error";
+            res["message"] = "Native file picker is only available on localhost/loopback.";
+            send_resp(403, "Forbidden", "application/json", res.dump());
+            return;
+        }
+        std::string chosen = slug::platform::NativeDialog::pick_file_native();
+        if (!chosen.empty()) {
+            res["status"] = "ok";
+            res["path"] = chosen;
+        } else {
+            res["status"] = "cancelled";
+            res["path"] = "";
+        }
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/fs/open-folder" && method == "POST") {
+        if (!is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"error\",\"message\":\"Local only\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string target_p = j.value("path", "");
+            bool ok = false;
+            if (!target_p.empty()) {
+                ok = slug::platform::NativeDialog::open_path_in_os(target_p);
+            }
+            json res;
+            res["status"] = ok ? "ok" : "error";
+            res["message"] = ok ? "Đã mở thư mục trong trình quản lý tệp" : "Không thể mở thư mục";
+            send_resp(200, "OK", "application/json", res.dump());
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+        }
+        return;
+    }
+
+    if (path == "/api/fs/open-file" && method == "POST") {
+        if (!is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"error\",\"message\":\"Local only\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string target_p = j.value("path", "");
+            bool ok = false;
+            if (!target_p.empty()) {
+                ok = slug::platform::NativeDialog::open_path_in_os(target_p);
+            }
+            json res;
+            res["status"] = ok ? "ok" : "error";
+            res["message"] = ok ? "Đã mở tệp bằng ứng dụng mặc định" : "Không thể mở tệp";
+            send_resp(200, "OK", "application/json", res.dump());
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+        }
+        return;
+    }
+
+    if (path == "/api/fs/upload-local-path" && method == "POST") {
+        if (!current_session || current_session->role == core::Role::READ_ONLY) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\",\"message\":\"Read-only role cannot upload.\"}");
+            return;
+        }
+        if (!is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"error\",\"message\":\"Local upload only allowed on loopback.\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string source_str = j.value("source_path", "");
+            std::string rel_dir = j.value("dir", "");
+            bool is_dir = j.value("is_dir", false);
+            if (source_str.empty()) {
+                send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"source_path required\"}");
+                return;
+            }
+            fs::path src_path(source_str);
+            if (!fs::exists(src_path)) {
+                send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Đường dẫn không tồn tại trên máy.\"}");
+                return;
+            }
+
+            if (!fs::is_directory(src_path) && !is_dir) {
+                std::string filename = src_path.filename().string();
+                std::string target_rel = rel_dir.empty() ? filename : (rel_dir + "/" + filename);
+                auto file_bytes = slug::platform::PathUtils::read_binary_file(src_path);
+                if (!file_bytes) {
+                    send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Không thể đọc tệp từ máy.\"}");
+                    return;
+                }
+                core::VfsStatus vfs_st = control_server_.vfs().write_file(target_rel, *file_bytes, current_session->role, true);
+                if (vfs_st == core::VfsStatus::FILTERED) {
+                    control_server_.audit_logger().log(current_session->identity, "AI_UPLOAD_BLOCKED", target_rel, "Blocked by Policy or AI Secret Guard", false);
+                    send_resp(400, "Bad Request", "application/json", "{\"status\":\"blocked\",\"message\":\"Upload blocked by Policy or AI Secret Guard!\"}");
+                    return;
+                }
+                if (vfs_st != core::VfsStatus::OK) {
+                    send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Lỗi ghi tệp VFS: " + core::vfs_status_to_string(vfs_st) + "\"}");
+                    return;
+                }
+                control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_LOCAL", target_rel, "Uploaded native local file (" + std::to_string(file_bytes->size()) + " bytes)");
+                control_server_.invalidate_manifest_cache();
+                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"filename\":\"" + filename + "\",\"count\":1}");
+                return;
+            } else {
+                int uploaded_count = 0;
+                std::string top_folder = src_path.filename().string();
+                std::string base_target = rel_dir.empty() ? top_folder : (rel_dir + "/" + top_folder);
+                for (const auto& entry : fs::recursive_directory_iterator(src_path, fs::directory_options::skip_permission_denied)) {
+                    if (entry.is_regular_file()) {
+                        auto rel_from_src = fs::relative(entry.path(), src_path).generic_string();
+                        std::string target_rel = base_target + "/" + rel_from_src;
+                        auto file_bytes = slug::platform::PathUtils::read_binary_file(entry.path());
+                        if (file_bytes) {
+                            core::VfsStatus vfs_st = control_server_.vfs().write_file(target_rel, *file_bytes, current_session->role, true);
+                            if (vfs_st == core::VfsStatus::OK) {
+                                uploaded_count++;
+                            }
+                        }
+                    }
+                }
+                control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_LOCAL_DIR", base_target, "Uploaded native directory (" + std::to_string(uploaded_count) + " files)");
+                control_server_.invalidate_manifest_cache();
+                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"filename\":\"" + top_folder + "\",\"count\":" + std::to_string(uploaded_count) + "}");
+                return;
+            }
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Lỗi xử lý yêu cầu tải lên.\"}");
+            return;
+        }
     }
 
     if (path == "/" || path == "/drop") {

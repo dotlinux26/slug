@@ -12,6 +12,7 @@
 #include "src/platform/platform.hpp"
 #include "src/platform/fs.hpp"
 #include "src/platform/socket.hpp"
+#include "src/platform/native_dialog.hpp"
 #include "src/net/web_assets.hpp"
 #include "src/policy/gitignore.hpp"
 #include <iostream>
@@ -474,14 +475,16 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
     nlohmann::json quarantined = nlohmann::json::array();
     nlohmann::json clean = nlohmann::json::array();
     nlohmann::json excluded = nlohmann::json::array();
+    nlohmann::json allowed_files = nlohmann::json::array();
 
     std::error_code ec;
     std::filesystem::path canonical_ws = std::filesystem::absolute(ws_path, ec);
     if (!std::filesystem::exists(canonical_ws, ec) || !std::filesystem::is_directory(canonical_ws, ec)) {
-        res["stats"] = {{"clean", 0}, {"quarantined", 0}, {"excluded", 0}};
+        res["stats"] = {{"clean", 0}, {"quarantined", 0}, {"excluded", 0}, {"allowed", 0}};
         res["quarantined_files"] = quarantined;
         res["clean_files"] = clean;
         res["excluded_files"] = excluded;
+        res["allowed_files"] = allowed_files;
         return res;
     }
 
@@ -632,6 +635,20 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             continue;
         }
 
+        if (allowed) {
+            std::string reason = (entry_opt && !entry_opt->decision_reason.empty()) 
+                ? entry_opt->decision_reason 
+                : ((entry_opt && !entry_opt->reason.empty()) ? entry_opt->reason : "Gỡ chặn & cho phép bởi Quản Trị Viên (Host Admin)");
+            allowed_files.push_back(nlohmann::json{
+                {"name", rel},
+                {"size", core::Utils::format_size(sz)},
+                {"tiers", nlohmann::json::array({"User Whitelist", "Host Admin"})},
+                {"reason", reason},
+                {"unquarantined", true}
+            });
+            continue;
+        }
+
         auto finding = scanner.scan_content(rel, sv, true);
         bool is_template_sample = (filename == ".env.example" || filename == ".env.sample" || filename == ".env.template" ||
                                    core::Utils::ends_with(filename, ".example") || core::Utils::ends_with(filename, ".sample"));
@@ -643,22 +660,20 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             ss << std::fixed << std::setprecision(2) << entropy;
             reason += " (Entropy: " + ss.str() + ")";
 
-            if (!allowed) {
-                ai::AuditIndexEntry idx_entry;
-                idx_entry.file_path = rel;
-                idx_entry.blake3_hash = crypto::Blake3::hash_hex(*data);
-                idx_entry.scanned_at = core::Utils::current_timestamp();
-                idx_entry.status = core::AuditStatus::SMART_FILTER_FLAGGED;
-                idx_entry.reason = reason;
-                audit_idx.update_entry(idx_entry);
-            }
+            ai::AuditIndexEntry idx_entry;
+            idx_entry.file_path = rel;
+            idx_entry.blake3_hash = crypto::Blake3::hash_hex(*data);
+            idx_entry.scanned_at = core::Utils::current_timestamp();
+            idx_entry.status = core::AuditStatus::SMART_FILTER_FLAGGED;
+            idx_entry.reason = reason;
+            audit_idx.update_entry(idx_entry);
 
             quarantined.push_back(nlohmann::json{
                 {"name", rel},
                 {"size", core::Utils::format_size(sz)},
                 {"tiers", nlohmann::json::array({"Slug Regex", "Slug AI"})},
                 {"reason", reason},
-                {"unquarantined", allowed}
+                {"unquarantined", false}
             });
         } else {
             if (clean.size() < 250) {
@@ -681,14 +696,44 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         }
     }
 
+    // Ensure all user-allowed files from index.db are represented in allowed_files
+    for (const auto& ae : audit_idx.list_flagged_or_all(false)) {
+        if (ae.status == core::AuditStatus::USER_ALLOWED || (ae.status == core::AuditStatus::CLEAN && ae.decision_actor == "user")) {
+            bool already = false;
+            for (const auto& af : allowed_files) {
+                if (af.value("name", "") == ae.file_path) {
+                    already = true;
+                    break;
+                }
+            }
+            if (!already) {
+                std::error_code ec2;
+                std::filesystem::path full_p = canonical_ws / ae.file_path;
+                uintmax_t fsz = 0;
+                if (std::filesystem::exists(full_p, ec2) && !std::filesystem::is_directory(full_p, ec2)) {
+                    fsz = std::filesystem::file_size(full_p, ec2);
+                }
+                allowed_files.push_back(nlohmann::json{
+                    {"name", ae.file_path},
+                    {"size", fsz > 0 ? core::Utils::format_size(fsz) : "-"},
+                    {"tiers", nlohmann::json::array({"User Whitelist", "Host Admin"})},
+                    {"reason", !ae.decision_reason.empty() ? ae.decision_reason : (!ae.reason.empty() ? ae.reason : "Gỡ chặn & cho phép bởi Quản Trị Viên (Host Admin)")},
+                    {"unquarantined", true}
+                });
+            }
+        }
+    }
+
     res["stats"] = {
         {"clean", clean.size()},
         {"quarantined", quarantined.size()},
-        {"excluded", excluded.size()}
+        {"excluded", excluded.size()},
+        {"allowed", allowed_files.size()}
     };
     res["quarantined_files"] = quarantined;
     res["clean_files"] = clean;
     res["excluded_files"] = excluded;
+    res["allowed_files"] = allowed_files;
     audit_idx.save();
     return res;
 }
@@ -732,10 +777,11 @@ static nlohmann::json get_cached_workspace_audit(const std::filesystem::path& ws
         }
     }
     nlohmann::json placeholder;
-    placeholder["stats"] = {{"clean", 0}, {"quarantined", 0}, {"excluded", 0}};
+    placeholder["stats"] = {{"clean", 0}, {"quarantined", 0}, {"excluded", 0}, {"allowed", 0}};
     placeholder["clean_files"] = nlohmann::json::array();
     placeholder["quarantined_files"] = nlohmann::json::array();
     placeholder["excluded_files"] = nlohmann::json::array();
+    placeholder["allowed_files"] = nlohmann::json::array();
     placeholder["is_scanning"] = true;
     return placeholder;
 }
@@ -2928,190 +2974,16 @@ static void send_portal_http(platform::TcpSocket& sock, int code, const std::str
     sock.send_all(resp);
 }
 
-#if defined(SLUG_PLATFORM_WINDOWS)
 static std::string pick_folder_native() {
-    std::string result = "";
-    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    bool need_uninit = SUCCEEDED(hr);
+    return slug::platform::NativeDialog::pick_folder_native();
+}
 
-    IFileOpenDialog* pFileOpen = nullptr;
-    hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-    if (SUCCEEDED(hr)) {
-        DWORD dwOptions = 0;
-        if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
-            pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-        }
-        pFileOpen->SetTitle(L"Slug: Chọn Thư Mục Workspace Chia Sẻ");
-        HWND hwndOwner = GetForegroundWindow();
-        if (!hwndOwner) hwndOwner = GetActiveWindow();
-        if (hwndOwner) {
-            SetForegroundWindow(hwndOwner);
-            BringWindowToTop(hwndOwner);
-        }
-        hr = pFileOpen->Show(hwndOwner);
-        if (SUCCEEDED(hr)) {
-            IShellItem* pItem = nullptr;
-            hr = pFileOpen->GetResult(&pItem);
-            if (SUCCEEDED(hr)) {
-                PWSTR pszFilePath = nullptr;
-                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-                if (SUCCEEDED(hr)) {
-                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
-                    if (size_needed > 0) {
-                        result.resize(size_needed - 1);
-                        WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
-                    }
-                    CoTaskMemFree(pszFilePath);
-                }
-                pItem->Release();
-            }
-        }
-        pFileOpen->Release();
-    }
-    if (need_uninit) CoUninitialize();
-    return result;
-}
-#elif defined(SLUG_PLATFORM_POSIX)
-static std::string pick_folder_native() {
-    std::string chosen_path = "";
-    // 1. Thu zenity voi co --modal de GNOME/X11/Wayland ep focus len foreground
-    FILE* pipe = popen("zenity --file-selection --directory --title='Slug: Chọn Thư Mục Workspace Chia Sẻ' --modal 2>/dev/null", "r");
-    if (pipe) {
-        char buf[512];
-        while (fgets(buf, sizeof(buf), pipe)) {
-            chosen_path += buf;
-        }
-        pclose(pipe);
-    }
-    // 2. Neu zenity khong co (KDE Plasma), fallback sang kdialog
-    if (chosen_path.empty()) {
-        pipe = popen("kdialog --getexistingdirectory . --title 'Slug: Chọn Thư Mục Workspace Chia Sẻ' 2>/dev/null", "r");
-        if (pipe) {
-            char buf[512];
-            while (fgets(buf, sizeof(buf), pipe)) {
-                chosen_path += buf;
-            }
-            pclose(pipe);
-        }
-    }
-    while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
-        chosen_path.pop_back();
-    }
-    return chosen_path;
-}
-#else
-static std::string pick_folder_native() {
-    return "";
-}
-#endif
-
-#if defined(SLUG_PLATFORM_WINDOWS)
 static std::string pick_file_native() {
-    std::string result = "";
-    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    bool need_uninit = SUCCEEDED(hr);
-
-    IFileOpenDialog* pFileOpen = nullptr;
-    hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-    if (SUCCEEDED(hr)) {
-        DWORD dwOptions = 0;
-        if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
-            pFileOpen->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
-        }
-        pFileOpen->SetTitle(L"Slug: Chọn Tệp Tin");
-        HWND hwndOwner = GetForegroundWindow();
-        if (!hwndOwner) hwndOwner = GetActiveWindow();
-        if (hwndOwner) {
-            SetForegroundWindow(hwndOwner);
-            BringWindowToTop(hwndOwner);
-        }
-        hr = pFileOpen->Show(hwndOwner);
-        if (SUCCEEDED(hr)) {
-            IShellItem* pItem = nullptr;
-            hr = pFileOpen->GetResult(&pItem);
-            if (SUCCEEDED(hr)) {
-                PWSTR pszFilePath = nullptr;
-                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-                if (SUCCEEDED(hr)) {
-                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
-                    if (size_needed > 0) {
-                        result.resize(size_needed - 1);
-                        WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
-                    }
-                    CoTaskMemFree(pszFilePath);
-                }
-                pItem->Release();
-            }
-        }
-        pFileOpen->Release();
-    }
-    if (need_uninit) CoUninitialize();
-    return result;
+    return slug::platform::NativeDialog::pick_file_native();
 }
-#elif defined(SLUG_PLATFORM_POSIX)
-static std::string pick_file_native() {
-    std::string chosen_path = "";
-    FILE* pipe = popen("zenity --file-selection --title='Slug: Chọn Tệp Tin' --modal 2>/dev/null", "r");
-    if (pipe) {
-        char buf[512];
-        while (fgets(buf, sizeof(buf), pipe)) {
-            chosen_path += buf;
-        }
-        pclose(pipe);
-    }
-    if (chosen_path.empty()) {
-        pipe = popen("kdialog --getopenfilename . --title 'Slug: Chọn Tệp Tin' 2>/dev/null", "r");
-        if (pipe) {
-            char buf[512];
-            while (fgets(buf, sizeof(buf), pipe)) {
-                chosen_path += buf;
-            }
-            pclose(pipe);
-        }
-    }
-    while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
-        chosen_path.pop_back();
-    }
-    return chosen_path;
-}
-#else
-static std::string pick_file_native() {
-    return "";
-}
-#endif
 
 static bool open_path_in_os(const std::string& path_str) {
-    if (path_str.empty()) return false;
-    try {
-        std::filesystem::path p(path_str);
-        std::error_code ec;
-        if (!std::filesystem::exists(p, ec)) {
-            p = std::filesystem::absolute(p, ec);
-        }
-        std::string native_p = p.make_preferred().string();
-#if defined(SLUG_PLATFORM_WINDOWS)
-        HWND hwnd_owner = GetForegroundWindow();
-        if (!hwnd_owner) hwnd_owner = GetDesktopWindow();
-        AllowSetForegroundWindow(ASFW_ANY);
-        HINSTANCE res = ShellExecuteA(hwnd_owner, "explore", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
-        if (reinterpret_cast<INT_PTR>(res) <= 32) {
-            res = ShellExecuteA(hwnd_owner, "open", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
-        }
-        if (reinterpret_cast<INT_PTR>(res) <= 32) {
-            std::string cmd = "explorer.exe \"" + native_p + "\"";
-            system(cmd.c_str());
-        }
-        return true;
-#elif defined(SLUG_PLATFORM_POSIX)
-        std::string cmd = "xdg-open \"" + native_p + "\" >/dev/null 2>&1 &";
-        int ret = system(cmd.c_str());
-        return ret == 0;
-#else
-        return false;
-#endif
-    } catch (...) {
-        return false;
-    }
+    return slug::platform::NativeDialog::open_path_in_os(path_str);
 }
 
 int cmd_portal(int argc, char* argv[]) {
@@ -3630,10 +3502,11 @@ int cmd_portal(int argc, char* argv[]) {
 
                     // Attach real audit data, quarantined files, and rules for this workspace (using in-memory cache to guarantee 0ms response)
                     auto audit_data = get_cached_workspace_audit(w.path);
-                    item["auditStats"] = audit_data.value("stats", nlohmann::json{{"clean", 0}, {"quarantined", 0}, {"excluded", 0}});
+                    item["auditStats"] = audit_data.value("stats", nlohmann::json{{"clean", 0}, {"quarantined", 0}, {"excluded", 0}, {"allowed", 0}});
                     item["quarantinedFiles"] = audit_data.value("quarantined_files", nlohmann::json::array());
                     item["cleanFiles"] = audit_data.value("clean_files", nlohmann::json::array());
                     item["excludedFiles"] = audit_data.value("excluded_files", nlohmann::json::array());
+                    item["allowedFiles"] = audit_data.value("allowed_files", nlohmann::json::array());
 
                     // Read custom rules if rules.conf or .slugignore exists
                     std::filesystem::path rules_file = w.path / "rules.conf";

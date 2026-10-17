@@ -1,0 +1,207 @@
+#pragma once
+
+#include <string>
+#include <filesystem>
+
+#if defined(_WIN32) || defined(_WIN64)
+#  ifndef SLUG_PLATFORM_WINDOWS
+#    define SLUG_PLATFORM_WINDOWS 1
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#  include <shobjidl.h>
+#  include <shellapi.h>
+#elif defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+#  ifndef SLUG_PLATFORM_POSIX
+#    define SLUG_PLATFORM_POSIX 1
+#  endif
+#  include <cstdio>
+#  include <cstdlib>
+#endif
+
+namespace slug::platform {
+
+class NativeDialog {
+public:
+    static std::string pick_folder_native(const std::wstring& title = L"Slug: Chọn Thư Mục Workspace Chia Sẻ") {
+#if defined(SLUG_PLATFORM_WINDOWS)
+        std::string result = "";
+        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        bool need_uninit = SUCCEEDED(hr);
+
+        IFileOpenDialog* pFileOpen = nullptr;
+        hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+        if (SUCCEEDED(hr)) {
+            DWORD dwOptions = 0;
+            if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+                pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+            }
+            pFileOpen->SetTitle(title.c_str());
+            HWND hwndOwner = GetForegroundWindow();
+            if (!hwndOwner) hwndOwner = GetActiveWindow();
+            if (hwndOwner) {
+                SetForegroundWindow(hwndOwner);
+                BringWindowToTop(hwndOwner);
+            }
+            hr = pFileOpen->Show(hwndOwner);
+            if (SUCCEEDED(hr)) {
+                IShellItem* pItem = nullptr;
+                hr = pFileOpen->GetResult(&pItem);
+                if (SUCCEEDED(hr)) {
+                    PWSTR pszFilePath = nullptr;
+                    hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                    if (SUCCEEDED(hr)) {
+                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                        if (size_needed > 0) {
+                            result.resize(size_needed - 1);
+                            WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                        }
+                        CoTaskMemFree(pszFilePath);
+                    }
+                    pItem->Release();
+                }
+            }
+            pFileOpen->Release();
+        }
+        if (need_uninit) CoUninitialize();
+        return result;
+#elif defined(SLUG_PLATFORM_POSIX)
+        std::string chosen_path = "";
+        // 1. Zenity modal
+        FILE* pipe = popen("zenity --file-selection --directory --title='Slug: Chọn Thư Mục Workspace Chia Sẻ' --modal 2>/dev/null", "r");
+        if (pipe) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), pipe)) {
+                chosen_path += buf;
+            }
+            pclose(pipe);
+        }
+        // 2. Fallback to kdialog
+        if (chosen_path.empty()) {
+            pipe = popen("kdialog --getexistingdirectory . --title 'Slug: Chọn Thư Mục Workspace Chia Sẻ' 2>/dev/null", "r");
+            if (pipe) {
+                char buf[512];
+                while (fgets(buf, sizeof(buf), pipe)) {
+                    chosen_path += buf;
+                }
+                pclose(pipe);
+            }
+        }
+        while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
+            chosen_path.pop_back();
+        }
+        return chosen_path;
+#else
+        return "";
+#endif
+    }
+
+    static std::string pick_file_native(const std::wstring& title = L"Slug: Chọn Tệp Tin") {
+#if defined(SLUG_PLATFORM_WINDOWS)
+        std::string result = "";
+        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        bool need_uninit = SUCCEEDED(hr);
+
+        IFileOpenDialog* pFileOpen = nullptr;
+        hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+        if (SUCCEEDED(hr)) {
+            DWORD dwOptions = 0;
+            if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+                pFileOpen->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+            }
+            pFileOpen->SetTitle(title.c_str());
+            HWND hwndOwner = GetForegroundWindow();
+            if (!hwndOwner) hwndOwner = GetActiveWindow();
+            if (hwndOwner) {
+                SetForegroundWindow(hwndOwner);
+                BringWindowToTop(hwndOwner);
+            }
+            hr = pFileOpen->Show(hwndOwner);
+            if (SUCCEEDED(hr)) {
+                IShellItem* pItem = nullptr;
+                hr = pFileOpen->GetResult(&pItem);
+                if (SUCCEEDED(hr)) {
+                    PWSTR pszFilePath = nullptr;
+                    hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                    if (SUCCEEDED(hr)) {
+                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                        if (size_needed > 0) {
+                            result.resize(size_needed - 1);
+                            WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                        }
+                        CoTaskMemFree(pszFilePath);
+                    }
+                    pItem->Release();
+                }
+            }
+            pFileOpen->Release();
+        }
+        if (need_uninit) CoUninitialize();
+        return result;
+#elif defined(SLUG_PLATFORM_POSIX)
+        std::string chosen_path = "";
+        FILE* pipe = popen("zenity --file-selection --title='Slug: Chọn Tệp Tin' --modal 2>/dev/null", "r");
+        if (pipe) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), pipe)) {
+                chosen_path += buf;
+            }
+            pclose(pipe);
+        }
+        if (chosen_path.empty()) {
+            pipe = popen("kdialog --getopenfilename . --title 'Slug: Chọn Tệp Tin' 2>/dev/null", "r");
+            if (pipe) {
+                char buf[512];
+                while (fgets(buf, sizeof(buf), pipe)) {
+                    chosen_path += buf;
+                }
+                pclose(pipe);
+            }
+        }
+        while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
+            chosen_path.pop_back();
+        }
+        return chosen_path;
+#else
+        return "";
+#endif
+    }
+
+    static bool open_path_in_os(const std::string& path_str) {
+        if (path_str.empty()) return false;
+        try {
+            std::filesystem::path p(path_str);
+            std::error_code ec;
+            if (!std::filesystem::exists(p, ec)) {
+                p = std::filesystem::absolute(p, ec);
+            }
+            std::string native_p = p.make_preferred().string();
+#if defined(SLUG_PLATFORM_WINDOWS)
+            HWND hwnd_owner = GetForegroundWindow();
+            if (!hwnd_owner) hwnd_owner = GetDesktopWindow();
+            AllowSetForegroundWindow(ASFW_ANY);
+            HINSTANCE res = ShellExecuteA(hwnd_owner, "explore", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(res) <= 32) {
+                res = ShellExecuteA(hwnd_owner, "open", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            }
+            if (reinterpret_cast<INT_PTR>(res) <= 32) {
+                std::string cmd = "explorer.exe \"" + native_p + "\"";
+                system(cmd.c_str());
+            }
+            return true;
+#elif defined(SLUG_PLATFORM_POSIX)
+            std::string cmd = "xdg-open \"" + native_p + "\" >/dev/null 2>&1 &";
+            int ret = system(cmd.c_str());
+            return ret == 0;
+#else
+            return false;
+#endif
+        } catch (...) {
+            return false;
+        }
+    }
+};
+
+} // namespace slug::platform
