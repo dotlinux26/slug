@@ -304,4 +304,21 @@ Trạng thái hiện tại: Đang tiến hành thực hiện tuần tự 7 bư�
     - Level 2 (Regex): Kích hoạt bộ mẫu phát hiện secrets/tokens/keys/JWT.
     - Level 3 (Entropy): Quét Shannon Entropy với điều kiện sàng lọc nghiêm ngặt `is_scannable_file()`, miễn nhiễm hoàn toàn false positive cho file `.pyd`, binary, video, ảnh, tài liệu nén.
     - Level 4 (AI): Quét sâu qua LLM backend (Ollama/OpenAI/Gemini) theo provider được cấu hình.
-    - Bất biến bảo mật: Thư mục `.slug/` và `.git/` luôn được bảo vệ cứng ở tầng thấp nhất (`platform::PathUtils::is_internal_slug_path`), tuyệt đối không thể bypass bằng bất kỳ rule ALLOW hay cờ `--no-filter` nào.
+    - Bất biến bảo mật: Thư mục `.slug/` và `.git/` luôn được bảo vệ cứng ở tầng thấp nhất (`platform::PathUtils::is_internal_slug_path`), tuyệt đối không thể bypass bằng bất kỳ rule ALLOW hay cờ `--no-filter` nào.
+
+- [x] **Bước 8: Hoàn thiện toàn diện Admin Dashboard & Đồng bộ mặc định Level 2**
+  - **Đồng bộ mặc định Level 2 (Regex Secret Guard)**:
+    - Sửa toàn bộ các giá trị fallback từ Level 3 sang Level 2 ở cả CLI, API, WorkspaceManager, ManifestBuilder và form Portal.
+    - Khắc phục lỗi giao diện ("GUI troll") làm hiển thị sai Suite 2 thành Suite 3/1 và Level 3 thành Level 2 khi tạo host.
+  - **Quản lý an toàn dữ liệu kiểm toán SQLite (.slug/index.db)**:
+    - Bổ sung `clear_all()` thực thi xóa an toàn qua transaction `DELETE FROM audit_entries;` và checkpoint WAL, tránh lỗi crash/khóa file trên Windows.
+    - Bổ sung endpoint `POST /api/admin/audit/clear` và nút "Xóa Dữ Liệu Quét" kèm xác nhận an toàn trên UI.
+  - **Bộ lọc truy vấn SQL đa trường & Phân trang**:
+    - Bổ sung `query_entries()` trong `StatefulAuditIndex` hỗ trợ lọc theo Trạng thái, Detector, Phần mở rộng đuôi tệp, Tìm kiếm từ khóa và phân trang `LIMIT / OFFSET`.
+    - Endpoint `GET /api/admin/audit/query` trả về tổng bản ghi và bản ghi lọc; tích hợp thanh công cụ lọc và điều hướng phân trang mượt mà trên Admin Dashboard.
+  - **Bộ quét 4 cấp độ và cấu hình AI theo workspace**:
+    - Tích hợp thẻ điều khiển quét 4 cấp độ và nút "Quét Lại (Scan Now)" gọi `POST /api/admin/scan/run`.
+    - Tích hợp bảng cấu hình AI cho workspace (`.slug/ai.json`), tự động chỉ kích hoạt/hiển thị khi chọn Mức 4 (AI Model Scan). Masked API key và có nút kiểm tra kết nối `POST /api/admin/ai/test`.
+  - **Sửa triệt để User TTL display**:
+    - Hàm `format_ttl` và hàm frontend xử lý đúng thời lượng relative seconds, xóa bỏ lỗi `Active (Expired)`.
+

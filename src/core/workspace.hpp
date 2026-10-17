@@ -18,7 +18,7 @@ struct WorkspaceInfo {
     SuiteID suite{SuiteID::SUITE_2_MODERN};
     bool ai_enabled{false};
     FilterMode filter_mode{FilterMode::PROTECTED};
-    FilterLevel filter_level{FilterLevel::LEVEL_3_ENTROPY};
+    FilterLevel filter_level{FilterLevel::LEVEL_2_REGEX};
     AiModelProvider ai_provider{AiModelProvider::OLLAMA};
     uint64_t ttl_seconds{86400}; // Client Cert TTL
     uint64_t workspace_ttl{86400}; // Workspace Lifetime (0 = Permanent)
@@ -41,7 +41,7 @@ public:
                        bool enable_ai = false,
                        FilterMode filter_mode = FilterMode::PROTECTED,
                        uint16_t* actual_port = nullptr,
-                       FilterLevel filter_level = FilterLevel::LEVEL_3_ENTROPY,
+                       FilterLevel filter_level = FilterLevel::LEVEL_2_REGEX,
                        AiModelProvider ai_provider = AiModelProvider::OLLAMA,
                        uint32_t otp_step = 60,
                        uint64_t workspace_ttl = 86400);

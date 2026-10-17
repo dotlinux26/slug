@@ -163,6 +163,10 @@ uint64_t Utils::parse_ttl(std::string_view ttl_str) {
 
 std::string Utils::format_ttl(uint64_t expires_at, uint64_t now) {
     if (expires_at == 0) return "∞ (Permanent)";
+    // If caller passed relative duration (e.g., remaining seconds < 100000000)
+    if (expires_at < 100000000ULL) {
+        return format_duration(expires_at);
+    }
     if (now == 0) now = current_timestamp();
     if (now >= expires_at) return "Expired";
     return format_duration(expires_at - now);

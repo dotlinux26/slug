@@ -1108,7 +1108,7 @@ int cmd_add(int argc, char* argv[]) {
     uint64_t ttl_sec = 86400;
     bool enable_ai = false;
     core::FilterMode filter_mode = core::FilterMode::PROTECTED;
-    core::FilterLevel filter_level = core::FilterLevel::LEVEL_3_ENTROPY;
+    core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX;
     core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA;
     uint32_t otp_step = 60;
     uint64_t workspace_ttl = 86400;
@@ -3938,7 +3938,7 @@ int cmd_portal(int argc, char* argv[]) {
                     if (wpath.empty()) wpath = "./";
                     uint16_t wport = static_cast<uint16_t>(j.value("port", 9443));
                     std::string suite_str = j.value("suite", "2");
-                    std::string filter_str = j.value("filter", "level3");
+                    std::string filter_str = j.value("filter", "level2");
                     std::string ai_model_str = j.value("ai_model", "ollama");
                     uint32_t otp_step = static_cast<uint32_t>(j.value("otp_ttl", j.value("otp_step", 60)));
                     uint64_t wttl = j.value("ttl", 86400ULL);
@@ -4185,15 +4185,16 @@ int cmd_portal(int argc, char* argv[]) {
                 } catch (...) {}
 
                 std::filesystem::path idx_file = std::filesystem::path(ws) / ".slug" / "index.db";
-                std::error_code ec;
-                std::filesystem::remove(idx_file, ec);
+                ai::StatefulAuditIndex audit_idx(idx_file);
+                size_t deleted = audit_idx.clear_all();
                 {
                     std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
                     g_audit_cache.erase(ws);
                 }
                 nlohmann::json res;
                 res["status"] = "ok";
-                res["message"] = "Đã xóa trắng bộ nhớ đệm kiểm toán (.slug/index.db).";
+                res["deleted_count"] = deleted;
+                res["message"] = "Đã xóa an toàn " + std::to_string(deleted) + " bản ghi kiểm toán trong SQLite (.slug/index.db).";
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 return;
             }
@@ -4929,7 +4930,7 @@ int cmd_audit(int argc, char* argv[]) {
     } else if (sub == "scan" && argc >= 4) {
         std::string target_file = argv[3];
         bool deep = false;
-        core::FilterLevel filter_level = core::FilterLevel::LEVEL_3_ENTROPY;
+        core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX;
         core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA;
         ai::AiScanner::ProviderType prov = ai::AiScanner::ProviderType::LOCAL_HEURISTIC;
         std::string endpoint = "http://127.0.0.1:11434";

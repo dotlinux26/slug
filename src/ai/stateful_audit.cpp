@@ -451,4 +451,151 @@ std::vector<AuditIndexEntry> StatefulAuditIndex::list_flagged_or_all(bool only_f
     return results;
 }
 
+size_t StatefulAuditIndex::clear_all() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        init_sqlite();
+    }
+    if (!db_) return 0;
+
+    int total_before = 0;
+    sqlite3_stmt* count_stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM audit_entries;", -1, &count_stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+            total_before = sqlite3_column_int(count_stmt, 0);
+        }
+        sqlite3_finalize(count_stmt);
+    }
+
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db_, "BEGIN TRANSACTION; DELETE FROM audit_entries; COMMIT;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        if (err_msg) {
+            sqlite3_free(err_msg);
+        }
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return 0;
+    }
+    sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+    return static_cast<size_t>(total_before);
+}
+
+StatefulAuditIndex::QueryResult StatefulAuditIndex::query_entries(
+    const std::string& status_filter,
+    const std::string& detector_filter,
+    const std::string& ext_filter,
+    const std::string& search_text,
+    size_t limit,
+    size_t offset
+) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    QueryResult result;
+    if (!db_) return result;
+
+    // Total count of all rows in DB
+    sqlite3_stmt* total_stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM audit_entries;", -1, &total_stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(total_stmt) == SQLITE_ROW) {
+            result.total_count = static_cast<size_t>(sqlite3_column_int(total_stmt, 0));
+        }
+        sqlite3_finalize(total_stmt);
+    }
+
+    std::vector<std::string> conditions;
+    std::vector<std::string> bind_strings;
+
+    // Status filter: all | quarantined | allowed | clean | rule
+    if (status_filter == "quarantined") {
+        conditions.push_back("status IN (1, 2, 5)");
+    } else if (status_filter == "allowed") {
+        conditions.push_back("status IN (3, 4)");
+    } else if (status_filter == "clean") {
+        conditions.push_back("status = 0");
+    } else if (status_filter == "rule") {
+        conditions.push_back("status = 5");
+    }
+
+    // Detector filter: all | ai | regex | entropy | rule
+    if (detector_filter == "ai") {
+        conditions.push_back("(status = 1 OR reason LIKE '%AI%' OR reason LIKE '%Model%')");
+    } else if (detector_filter == "regex") {
+        conditions.push_back("(status = 2 AND (reason LIKE '%Regex%' OR reason LIKE '%Secret%' OR reason LIKE '%Pattern%'))");
+    } else if (detector_filter == "entropy") {
+        conditions.push_back("(status = 2 AND reason LIKE '%Entropy%')");
+    } else if (detector_filter == "rule") {
+        conditions.push_back("(status = 5 OR reason LIKE '%Rule%')");
+    }
+
+    // Extension / File Type filter: all | config | code | binary
+    if (ext_filter == "config") {
+        conditions.push_back("(file_path LIKE '%.env%' OR file_path LIKE '%.key' OR file_path LIKE '%.pem' OR file_path LIKE '%.json' OR file_path LIKE '%.yaml' OR file_path LIKE '%.yml' OR file_path LIKE '%.toml' OR file_path LIKE '%.conf')");
+    } else if (ext_filter == "code") {
+        conditions.push_back("(file_path LIKE '%.py' OR file_path LIKE '%.cpp' OR file_path LIKE '%.h' OR file_path LIKE '%.hpp' OR file_path LIKE '%.c' OR file_path LIKE '%.js' OR file_path LIKE '%.ts' OR file_path LIKE '%.go' OR file_path LIKE '%.rs')");
+    } else if (ext_filter == "binary") {
+        conditions.push_back("(file_path LIKE '%.pyd' OR file_path LIKE '%.dll' OR file_path LIKE '%.so' OR file_path LIKE '%.exe' OR file_path LIKE '%.bin' OR file_path LIKE '%.pak')");
+    }
+
+    // Search text filter
+    if (!search_text.empty()) {
+        conditions.push_back("(file_path LIKE ? OR reason LIKE ?)");
+        bind_strings.push_back("%" + search_text + "%");
+        bind_strings.push_back("%" + search_text + "%");
+    }
+
+    std::string where_clause = "";
+    if (!conditions.empty()) {
+        where_clause = " WHERE ";
+        for (size_t i = 0; i < conditions.size(); ++i) {
+            if (i > 0) where_clause += " AND ";
+            where_clause += conditions[i];
+        }
+    }
+
+    // Filtered count
+    std::string count_sql = "SELECT COUNT(*) FROM audit_entries" + where_clause + ";";
+    sqlite3_stmt* fcount_stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, count_sql.c_str(), -1, &fcount_stmt, nullptr) == SQLITE_OK) {
+        for (size_t i = 0; i < bind_strings.size(); ++i) {
+            sqlite3_bind_text(fcount_stmt, static_cast<int>(i + 1), bind_strings[i].c_str(), -1, SQLITE_TRANSIENT);
+        }
+        if (sqlite3_step(fcount_stmt) == SQLITE_ROW) {
+            result.filtered_count = static_cast<size_t>(sqlite3_column_int(fcount_stmt, 0));
+        }
+        sqlite3_finalize(fcount_stmt);
+    }
+
+    // Query rows with LIMIT and OFFSET
+    size_t q_limit = (limit == 0 || limit > 1000) ? 100 : limit;
+    std::string query_sql = "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason "
+                            "FROM audit_entries" + where_clause + " ORDER BY scanned_at DESC LIMIT " + std::to_string(q_limit) +
+                            " OFFSET " + std::to_string(offset) + ";";
+
+    sqlite3_stmt* q_stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, query_sql.c_str(), -1, &q_stmt, nullptr) == SQLITE_OK) {
+        for (size_t i = 0; i < bind_strings.size(); ++i) {
+            sqlite3_bind_text(q_stmt, static_cast<int>(i + 1), bind_strings[i].c_str(), -1, SQLITE_TRANSIENT);
+        }
+        while (sqlite3_step(q_stmt) == SQLITE_ROW) {
+            AuditIndexEntry e;
+            const char* fp = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 0));
+            e.file_path = fp ? fp : "";
+            const char* h = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 1));
+            e.blake3_hash = h ? h : "";
+            e.status = static_cast<core::AuditStatus>(sqlite3_column_int(q_stmt, 2));
+            e.line_number = sqlite3_column_int(q_stmt, 3);
+            const char* r = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 4));
+            e.reason = r ? r : "";
+            e.scanned_at = static_cast<uint64_t>(sqlite3_column_int64(q_stmt, 5));
+            const char* da = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 6));
+            e.decision_actor = da ? da : "";
+            const char* dr = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 7));
+            e.decision_reason = dr ? dr : "";
+            result.entries.push_back(e);
+        }
+        sqlite3_finalize(q_stmt);
+    }
+
+    return result;
+}
+
 } // namespace slug::ai

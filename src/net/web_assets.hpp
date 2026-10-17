@@ -144,10 +144,10 @@ public:
                     std::string dname = p.substr(0, slash);
                     dir_sizes[dname] += f.size;
                     if (seen_dirs.insert(dname).second) {
-                        items.push_back({true, dname, dname, 0, "folder", "AVAILABLE", "badge-available", "", "", false});
+                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
                     }
                 } else {
-                    items.push_back({false, p, p, f.size, "file", "AVAILABLE", "badge-available", "", f.file_blake3_hash, true});
+                    items.push_back({false, p, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true});
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -158,10 +158,10 @@ public:
                         std::string full_d = norm_sub + "/" + dname;
                         dir_sizes[full_d] += f.size;
                         if (seen_dirs.insert(full_d).second) {
-                            items.push_back({true, dname, full_d, 0, "folder", "AVAILABLE", "badge-available", "", "", false});
+                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
                         }
                     } else {
-                        items.push_back({false, rem, p, f.size, "file", "AVAILABLE", "badge-available", "", f.file_blake3_hash, true});
+                        items.push_back({false, rem, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true});
                     }
                 }
             }
@@ -179,16 +179,17 @@ public:
             std::string p = s.relative_path;
             std::string st_label = "BLOCKED";
             std::string badge_cls = "badge-quarantined";
+            std::string detail = (identity == "host_admin") ? s.reason : "Shielded by workspace policy";
 
             if (norm_sub.empty()) {
                 size_t slash = p.find('/');
                 if (slash != std::string::npos) {
                     std::string dname = p.substr(0, slash);
                     if (seen_dirs.insert(dname).second) {
-                        items.push_back({true, dname, dname, 0, "folder", st_label, badge_cls, s.reason, "", false});
+                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
                     }
                 } else {
-                    items.push_back({false, p, p, 0, "file", st_label, badge_cls, s.reason, "", false});
+                    items.push_back({false, p, p, 0, "file", st_label, badge_cls, detail, "", false});
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -198,10 +199,10 @@ public:
                         std::string dname = rem.substr(0, slash);
                         std::string full_d = norm_sub + "/" + dname;
                         if (seen_dirs.insert(full_d).second) {
-                            items.push_back({true, dname, full_d, 0, "folder", st_label, badge_cls, s.reason, "", false});
+                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
                         }
                     } else {
-                        items.push_back({false, rem, p, 0, "file", st_label, badge_cls, s.reason, "", false});
+                        items.push_back({false, rem, p, 0, "file", st_label, badge_cls, detail, "", false});
                     }
                 }
             }
@@ -802,7 +803,9 @@ public:
         const bench::FullBenchmarkReport& bench_rep,
         const std::vector<policy::SlugRule>& rules,
         const std::vector<ai::AuditIndexEntry>& audit_entries,
-        const std::vector<SessionState>& client_sessions)
+        const std::vector<SessionState>& client_sessions,
+        core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX,
+        core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA)
     {
         double blake3_speed = 0.0, sha256_speed = 0.0;
         for (const auto& h_item : bench_rep.hashes) {
@@ -1166,73 +1169,183 @@ public:
           << "  fetch('/api/admin/rules/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: ruleId }) })"
           << "    .then(r => r.json()).then(res => { if (res.status === 'ok') reloadRules(); else alert(res.message); });"
           << "}"
-          << "let cachedAudit = [];"
-          << "let filteredAudit = [];"
-          << "let auditRenderIndex = 0;"
-          << "const AUDIT_CHUNK_SIZE = 25;"
-          << "function reloadAudit() {"
-          << "  fetch('/api/admin/audit').then(r => r.json()).then(entries => {"
-          << "    cachedAudit = entries || [];"
-          << "    const badge = document.getElementById('audit-badge');"
-          << "    if (badge) badge.innerText = cachedAudit.length;"
-          << "    filterAudit();"
-          << "  }).catch(e => {});"
-          << "}"
-          << "function filterAudit() {"
-          << "  const q = (document.getElementById('audit-search')?.value || '').toLowerCase().trim();"
-          << "  filteredAudit = cachedAudit.filter(e => {"
-          << "    if (!q) return true;"
-          << "    return (e.file_path && e.file_path.toLowerCase().includes(q)) ||"
-          << "           (e.status && e.status.toLowerCase().includes(q)) ||"
-          << "           (e.reason && e.reason.toLowerCase().includes(q));"
+          << "let auditQueryState = { status: 'all', detector: 'all', ext: 'all', q: '', limit: 50, offset: 0, total: 0, filtered: 0 };"
+          << "function queryAudit(resetOffset) {"
+          << "  if (resetOffset) auditQueryState.offset = 0;"
+          << "  auditQueryState.status = document.getElementById('audit-filter-status')?.value || 'all';"
+          << "  auditQueryState.detector = document.getElementById('audit-filter-detector')?.value || 'all';"
+          << "  auditQueryState.ext = document.getElementById('audit-filter-ext')?.value || 'all';"
+          << "  auditQueryState.q = (document.getElementById('audit-search')?.value || '').trim();"
+          << "  auditQueryState.limit = parseInt(document.getElementById('audit-filter-limit')?.value || '50');"
+          << "  const params = new URLSearchParams({"
+          << "    status: auditQueryState.status, detector: auditQueryState.detector, ext: auditQueryState.ext,"
+          << "    q: auditQueryState.q, limit: auditQueryState.limit, offset: auditQueryState.offset"
           << "  });"
-          << "  auditRenderIndex = 0;"
-          << "  const tbody = document.getElementById('audit-tbody'); if (!tbody) return;"
-          << "  tbody.innerHTML = '';"
-          << "  if (filteredAudit.length === 0) {"
-          << "    tbody.innerHTML = '<tr><td colspan=\"5\" style=\"color:var(--text-muted); text-align:center; padding:14px;\">No quarantined or flagged files matching filter</td></tr>';"
-          << "    return;"
-          << "  }"
-          << "  appendAuditRows();"
-          << "}"
-          << "function appendAuditRows() {"
           << "  const tbody = document.getElementById('audit-tbody');"
-          << "  if (!tbody || auditRenderIndex >= filteredAudit.length) return;"
-          << "  const end = Math.min(filteredAudit.length, auditRenderIndex + AUDIT_CHUNK_SIZE);"
-          << "  let html = '';"
-          << "  for (let i = auditRenderIndex; i < end; i++) {"
-          << "    const e = filteredAudit[i];"
-          << "    let stColor = (e.status === 'CLEAN' || e.status === 'USER_ALLOWED' || e.status === 'MANUAL_ALLOWED') ? 'var(--success)' : 'var(--danger)';"
-          << "    let isAllowed = (e.status === 'USER_ALLOWED' || e.status === 'MANUAL_ALLOWED');"
-          << "    let actBtn = isAllowed"
-          << "      ? '<span style=\"color:var(--text-muted); font-size:11px;\">Whitelisted</span>'"
-          << "      : '<button class=\"btn btn-sm\" onclick=\"allowAuditFile(\\'' + escAttr(e.file_path) + '\\')\">Whitelist</button>';"
-          << "    html += '<tr><td><code style=\"word-break:break-all;\">' + esc(e.file_path) + '</code></td>'"
-          << "         + '<td><span style=\"color:' + stColor + '; font-weight:bold;\">' + esc(e.status) + '</span></td>'"
-          << "         + '<td>' + (e.line_number > 0 ? 'L' + e.line_number : '-') + '</td>'"
-          << "         + '<td style=\"font-size:11px;\">' + (esc(e.reason) || '-') + '</td>'"
-          << "         + '<td>' + actBtn + '</td></tr>';"
-          << "  }"
-          << "  tbody.insertAdjacentHTML('beforeend', html);"
-          << "  auditRenderIndex = end;"
+          << "  if (tbody) tbody.innerHTML = '<tr><td colspan=\"5\" style=\"text-align:center; padding:16px; color:var(--text-muted);\">Đang truy vấn cơ sở dữ liệu SQLite...</td></tr>';"
+          << "  fetch('/api/admin/audit/query?' + params.toString())"
+          << "    .then(r => r.json())"
+          << "    .then(res => {"
+          << "      if (res.status !== 'ok') {"
+          << "        if (tbody) tbody.innerHTML = '<tr><td colspan=\"5\" style=\"color:var(--danger); text-align:center; padding:12px;\">Lỗi truy vấn: ' + esc(res.message) + '</td></tr>';"
+          << "        return;"
+          << "      }"
+          << "      auditQueryState.total = res.total || 0;"
+          << "      auditQueryState.filtered = res.filtered || 0;"
+          << "      const badge = document.getElementById('audit-badge');"
+          << "      if (badge) badge.innerText = res.filtered;"
+          << "      const pageInfo = document.getElementById('audit-page-info');"
+          << "      if (pageInfo) {"
+          << "        const from = res.filtered === 0 ? 0 : auditQueryState.offset + 1;"
+          << "        const to = Math.min(res.filtered, auditQueryState.offset + (res.entries?.length || 0));"
+          << "        pageInfo.innerText = 'Hiển thị ' + from + ' - ' + to + ' / ' + res.filtered + ' bản ghi (Tổng SQLite: ' + res.total + ')';"
+          << "      }"
+          << "      const prevBtn = document.getElementById('audit-prev-btn');"
+          << "      const nextBtn = document.getElementById('audit-next-btn');"
+          << "      if (prevBtn) prevBtn.disabled = (auditQueryState.offset <= 0);"
+          << "      if (nextBtn) nextBtn.disabled = (auditQueryState.offset + auditQueryState.limit >= res.filtered);"
+          << "      if (!res.entries || res.entries.length === 0) {"
+          << "        if (tbody) tbody.innerHTML = '<tr><td colspan=\"5\" style=\"color:var(--text-muted); text-align:center; padding:16px;\">Không tìm thấy bản ghi kiểm toán nào khớp bộ lọc</td></tr>';"
+          << "        return;"
+          << "      }"
+          << "      let html = '';"
+          << "      res.entries.forEach(e => {"
+          << "        let stColor = (e.status === 'CLEAN' || e.status === 'USER_ALLOWED' || e.status === 'MANUAL_ALLOWED') ? 'var(--success)' : 'var(--danger)';"
+          << "        let isAllowed = (e.status === 'USER_ALLOWED' || e.status === 'MANUAL_ALLOWED');"
+          << "        let actBtn = isAllowed"
+          << "          ? '<span style=\"color:var(--text-muted); font-size:11px;\">Whitelisted</span>'"
+          << "          : '<button class=\"btn btn-sm\" onclick=\"allowAuditFile(\\\'' + escAttr(e.file_path) + '\\\'')\">Whitelist</button>';"
+          << "        html += '<tr><td><code style=\"word-break:break-all;\">' + esc(e.file_path) + '</code></td>'"
+          << "             + '<td><span style=\"color:' + stColor + '; font-weight:bold;\">' + esc(e.status) + '</span></td>'"
+          << "             + '<td>' + (e.line_number > 0 ? 'L' + e.line_number : '-') + '</td>'"
+          << "             + '<td style=\"font-size:11px;\">' + (esc(e.reason) || '-') + '</td>'"
+          << "             + '<td>' + actBtn + '</td></tr>';"
+          << "      });"
+          << "      if (tbody) tbody.innerHTML = html;"
+          << "    })"
+          << "    .catch(err => {"
+          << "      if (tbody) tbody.innerHTML = '<tr><td colspan=\"5\" style=\"color:var(--danger); text-align:center; padding:12px;\">Lỗi kết nối khi truy vấn audit</td></tr>';"
+          << "    });"
           << "}"
-          << "function onAuditScroll(el) {"
-          << "  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) appendAuditRows();"
+          << "function auditNextPage() {"
+          << "  if (auditQueryState.offset + auditQueryState.limit < auditQueryState.filtered) {"
+          << "    auditQueryState.offset += auditQueryState.limit;"
+          << "    queryAudit(false);"
+          << "  }"
+          << "}"
+          << "function auditPrevPage() {"
+          << "  if (auditQueryState.offset > 0) {"
+          << "    auditQueryState.offset = Math.max(0, auditQueryState.offset - auditQueryState.limit);"
+          << "    queryAudit(false);"
+          << "  }"
+          << "}"
+          << "function clearAuditRecords() {"
+          << "  if (!confirm('CẢNH BÁO XÓA DỮ LIỆU: Bạn có chắc chắn muốn xóa TOÀN BỘ lịch sử kiểm toán trong SQLite (.slug/index.db)?\\n\\nThao tác này sẽ dọn sạch bản ghi quét, KHÔNG xóa file của workspace hay rules.conf.')) return;"
+          << "  fetch('/api/admin/audit/clear', { method: 'POST' })"
+          << "    .then(r => r.json())"
+          << "    .then(res => {"
+          << "      if (res.status === 'ok') {"
+          << "        alert(res.message || 'Đã xóa sạch lịch sử kiểm toán.');"
+          << "        queryAudit(true);"
+          << "      } else {"
+          << "        alert('Lỗi: ' + (res.message || 'Không thể xóa'));"
+          << "      }"
+          << "    })"
+          << "    .catch(e => alert('Lỗi kết nối khi xóa dữ liệu'));"
+          << "}"
+          << "function runSecurityScan() {"
+          << "  const lvl = document.getElementById('admin-filter-level')?.value || 'level2';"
+          << "  const statusEl = document.getElementById('scan-status-msg');"
+          << "  if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = 'var(--text-accent)'; statusEl.innerText = 'Đang tiến hành quét bảo mật ở ' + lvl + '...'; }"
+          << "  fetch('/api/admin/scan/run', {"
+          << "    method: 'POST', headers: { 'Content-Type': 'application/json' },"
+          << "    body: JSON.stringify({ level: lvl })"
+          << "  })"
+          << "    .then(r => r.json())"
+          << "    .then(res => {"
+          << "      if (res.status === 'ok') {"
+          << "        if (statusEl) { statusEl.style.color = 'var(--success)'; statusEl.innerText = res.message; }"
+          << "        queryAudit(true);"
+          << "      } else {"
+          << "        if (statusEl) { statusEl.style.color = 'var(--danger)'; statusEl.innerText = 'Lỗi: ' + (res.message || 'Thất bại'); }"
+          << "      }"
+          << "    })"
+          << "    .catch(e => { if (statusEl) { statusEl.style.color = 'var(--danger)'; statusEl.innerText = 'Lỗi kết nối khi quét'; } });"
+          << "}"
+          << "function onAdminFilterChanged(lvl) {"
+          << "  const panel = document.getElementById('admin-ai-panel');"
+          << "  if (panel) panel.style.display = (lvl === 'level4') ? 'block' : 'none';"
+          << "}"
+          << "function loadAiConfig() {"
+          << "  fetch('/api/admin/ai/config')"
+          << "    .then(r => r.json())"
+          << "    .then(cfg => {"
+          << "      if (document.getElementById('ai-prov')) document.getElementById('ai-prov').value = cfg.ai_provider || 'ollama';"
+          << "      if (document.getElementById('ai-endpoint')) document.getElementById('ai-endpoint').value = cfg.ai_endpoint || 'http://localhost:11434';"
+          << "      if (document.getElementById('ai-model')) document.getElementById('ai-model').value = cfg.ai_model || 'deepseek-r1';"
+          << "      if (document.getElementById('ai-key')) document.getElementById('ai-key').value = cfg.ai_api_key || '';"
+          << "      onAiProvChanged();"
+          << "    }).catch(e => {});"
+          << "}"
+          << "function onAiProvChanged() {"
+          << "  const p = document.getElementById('ai-prov')?.value || 'ollama';"
+          << "  const ep = document.getElementById('ai-endpoint');"
+          << "  const m = document.getElementById('ai-model');"
+          << "  const kg = document.getElementById('ai-key-group');"
+          << "  if (p === 'ollama') {"
+          << "    if (ep && (!ep.value || ep.value.includes('openai') || ep.value.includes('googleapis'))) ep.value = 'http://localhost:11434';"
+          << "    if (m && (m.value === 'gpt-4o-mini' || m.value.startsWith('gemini'))) m.value = 'deepseek-r1';"
+          << "    if (kg) kg.style.display = 'none';"
+          << "  } else if (p === 'openai') {"
+          << "    if (ep && (!ep.value || ep.value.includes('localhost') || ep.value.includes('googleapis'))) ep.value = 'https://api.openai.com/v1';"
+          << "    if (m && (m.value === 'deepseek-r1' || m.value.startsWith('gemini'))) m.value = 'gpt-4o-mini';"
+          << "    if (kg) kg.style.display = 'block';"
+          << "  } else if (p === 'gemini') {"
+          << "    if (ep && (!ep.value || ep.value.includes('localhost') || ep.value.includes('openai'))) ep.value = 'https://generativelanguage.googleapis.com/v1beta';"
+          << "    if (m && (m.value === 'deepseek-r1' || m.value === 'gpt-4o-mini')) m.value = 'gemini-2.5-flash';"
+          << "    if (kg) kg.style.display = 'block';"
+          << "  }"
+          << "}"
+          << "function saveAiConfig() {"
+          << "  const p = document.getElementById('ai-prov')?.value || 'ollama';"
+          << "  const ep = document.getElementById('ai-endpoint')?.value || '';"
+          << "  const m = document.getElementById('ai-model')?.value || '';"
+          << "  const k = document.getElementById('ai-key')?.value || '';"
+          << "  fetch('/api/admin/ai/config', {"
+          << "    method: 'POST', headers: { 'Content-Type': 'application/json' },"
+          << "    body: JSON.stringify({ ai_provider: p, ai_endpoint: ep, ai_model: m, ai_api_key: k })"
+          << "  })"
+          << "    .then(r => r.json())"
+          << "    .then(res => alert(res.message || 'Đã lưu cấu hình AI'))"
+          << "    .catch(e => alert('Lỗi lưu cấu hình AI'));"
+          << "}"
+          << "function testAiConnectivity() {"
+          << "  const p = document.getElementById('ai-prov')?.value || 'ollama';"
+          << "  const ep = document.getElementById('ai-endpoint')?.value || '';"
+          << "  const m = document.getElementById('ai-model')?.value || '';"
+          << "  const k = document.getElementById('ai-key')?.value || '';"
+          << "  fetch('/api/admin/ai/test', {"
+          << "    method: 'POST', headers: { 'Content-Type': 'application/json' },"
+          << "    body: JSON.stringify({ ai_provider: p, ai_endpoint: ep, ai_model: m, ai_api_key: k })"
+          << "  })"
+          << "    .then(r => r.json())"
+          << "    .then(res => alert(res.message || 'Kiểm tra thành công'))"
+          << "    .catch(e => alert('Lỗi kết nối kiểm tra AI'));"
           << "}"
           << "function allowAuditFile(filePath) {"
-          << "  const reason = prompt('Reason for whitelisting false positive for:\\n' + filePath, 'Verified safe false positive');"
+          << "  const reason = prompt('Lý do cho phép (Whitelist) tệp tin:\\n' + filePath, 'Verified safe false positive');"
           << "  if (!reason) return;"
           << "  fetch('/api/admin/audit/allow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: filePath, reason: reason }) })"
-          << "    .then(r => r.json()).then(res => { if (res.status === 'ok') reloadAudit(); else alert(res.message); });"
+          << "    .then(r => r.json()).then(res => { if (res.status === 'ok') queryAudit(false); else alert(res.message); });"
           << "}"
           << "function allowAllAuditFiles() {"
-          << "  if (!confirm('Are you sure you want to whitelist all currently flagged false positives?')) return;"
+          << "  if (!confirm('Bạn có chắc muốn whitelist toàn bộ các tệp đang bị cảnh báo?')) return;"
           << "  fetch('/api/admin/audit/allow-all', { method: 'POST' })"
           << "    .then(r => r.json()).then(res => {"
-          << "      if (res.status === 'ok') reloadAudit();"
+          << "      if (res.status === 'ok') queryAudit(false);"
           << "      else alert(res.message || 'Failed to whitelist all');"
           << "    }).catch(e => alert('Network error'));"
-          << "}"
+          << "}
           << "function filterAuditLogs() {"
           << "  const q = (document.getElementById('logs-search')?.value || '').toLowerCase().trim();"
           << "  const entries = document.querySelectorAll('#audit-logs-container .log-entry');"
@@ -1251,7 +1364,7 @@ public:
           << "  const badge = document.getElementById('logs-badge');"
           << "  if (badge) badge.innerText = visibleCount;"
           << "}"
-          << "window.addEventListener('DOMContentLoaded', () => { runLiveBenchmark(); setInterval(runLiveBenchmark, 3500); reloadSessions(); setInterval(reloadSessions, 2500); reloadAudit(); });"
+          << "window.addEventListener('DOMContentLoaded', () => { runLiveBenchmark(); setInterval(runLiveBenchmark, 3500); reloadSessions(); setInterval(reloadSessions, 2500); loadAiConfig(); queryAudit(true); });"
           << "</script></head><body><div class='container'>"
           << "<div class='top-bar'>"
           << "<h1>Slug Workspace Admin &amp; Security Policy</h1>"
@@ -1266,6 +1379,8 @@ public:
           << "<p style='font-family:\"JetBrains Mono\", monospace; font-size:12px;'><strong>Port:</strong> " << port << "<br>"
           << "<strong>Suite:</strong> <span style='color:var(--pqc); font-weight:bold;'>" << core::suite_to_string(suite_id) << "</span><br>"
           << "<strong>Path:</strong> " << workspace_root.string() << "<br>"
+          << "<strong>Filter Level:</strong> <span style='color:var(--text-accent); font-weight:bold;'>" << core::filter_level_to_string(filter_level) << "</span><br>"
+          << "<strong>AI Provider:</strong> " << core::ai_model_to_string(ai_provider) << "<br>"
           << "<strong>AI Secret Shield:</strong> " << (ai_enabled ? "<span style='color:var(--success); font-weight:bold;'>ACTIVE</span>" : "OFF") << "</p>"
           << "</div>"
 
@@ -1421,14 +1536,66 @@ public:
         }
         h << "</tbody></table></div></div>"
 
-          << "<div class='card'><h3><span>Flagged &amp; Quarantined Files <span id='audit-badge' class='badge badge-quarantined' style='margin-left:4px;'>" << audit_entries.size() << "</span></span>"
+          << "<div class='card' style='margin-bottom:16px;'><h3><span>Flagged &amp; Quarantined Files <span id='audit-badge' class='badge badge-quarantined' style='margin-left:4px;'>" << audit_entries.size() << "</span></span>"
           << "<span style='display:flex; align-items:center; gap:6px;'>"
-          << "<input type='text' id='audit-search' class='table-search-input' placeholder='Filter file or reason...' oninput='filterAudit()' style='width:160px;'>"
+          << "<button class='btn-danger btn-sm' onclick='clearAuditRecords()' title='Xóa sạch an toàn toàn bộ bản ghi audit SQLite trong .slug/index.db'>Xóa Dữ Liệu Quét</button>"
           << "<button class='btn-sec btn-sm' onclick='allowAllAuditFiles()' title='Whitelist all currently flagged files'>Whitelist All</button>"
-          << "<button class='btn-sec btn-sm' onclick='reloadAudit()'>Refresh</button>"
+          << "<button class='btn-sec btn-sm' onclick='queryAudit(true)'>Làm Mới</button>"
           << "</span></h3>"
-          << "<div id='audit-scroll-box' class='table-scroll-container' style='max-height:280px;' onscroll='onAuditScroll(this)'>"
+          << "<div style='display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:#f6f8fa; border:1px solid var(--border-primary); padding:8px 10px; border-radius:var(--radius-sharp); margin-bottom:10px;'>"
+          << "<div style='display:flex; align-items:center; gap:4px;'>"
+          << "<label style='font-size:11px; font-weight:bold; color:var(--text-muted);'>Trạng Thái:</label>"
+          << "<select id='audit-filter-status' onchange='queryAudit(true)' class='input-select' style='width:auto; height:28px; padding:2px 6px; font-size:11px;'>"
+          << "<option value='all'>Tất cả trạng thái</option>"
+          << "<option value='blocked' selected>Chỉ tệp bị chặn (Blocked / Flagged)</option>"
+          << "<option value='clean'>Đã an toàn / Allowed (Clean)</option>"
+          << "</select>"
+          << "</div>"
+          << "<div style='display:flex; align-items:center; gap:4px;'>"
+          << "<label style='font-size:11px; font-weight:bold; color:var(--text-muted);'>Detector:</label>"
+          << "<select id='audit-filter-detector' onchange='queryAudit(true)' class='input-select' style='width:auto; height:28px; padding:2px 6px; font-size:11px;'>"
+          << "<option value='all'>Tất cả Detector</option>"
+          << "<option value='regex'>Regex Secret Guard</option>"
+          << "<option value='entropy'>Shannon Entropy</option>"
+          << "<option value='ai'>AI Model Guard</option>"
+          << "<option value='manual'>Manual Guard</option>"
+          << "</select>"
+          << "</div>"
+          << "<div style='display:flex; align-items:center; gap:4px;'>"
+          << "<label style='font-size:11px; font-weight:bold; color:var(--text-muted);'>Đuôi tệp:</label>"
+          << "<select id='audit-filter-ext' onchange='queryAudit(true)' class='input-select' style='width:auto; height:28px; padding:2px 6px; font-size:11px;'>"
+          << "<option value='all'>Tất cả (.all)</option>"
+          << "<option value='.env'>.env</option>"
+          << "<option value='.key'>.key / .pem</option>"
+          << "<option value='.json'>.json</option>"
+          << "<option value='.py'>.py</option>"
+          << "<option value='.cpp'>.cpp / .hpp</option>"
+          << "<option value='.txt'>.txt</option>"
+          << "</select>"
+          << "</div>"
+          << "<div style='display:flex; align-items:center; gap:4px; flex-grow:1;'>"
+          << "<input type='text' id='audit-search' class='table-search-input' placeholder='Tìm đường dẫn / lý do (Enter)...' onkeyup='if(event.key===\"Enter\") queryAudit(true);' style='width:100%; height:28px;'>"
+          << "</div>"
+          << "<div style='display:flex; align-items:center; gap:4px;'>"
+          << "<select id='audit-filter-limit' onchange='queryAudit(true)' class='input-select' style='width:auto; height:28px; padding:2px 6px; font-size:11px;'>"
+          << "<option value='25'>25 / trang</option>"
+          << "<option value='50' selected>50 / trang</option>"
+          << "<option value='100'>100 / trang</option>"
+          << "<option value='250'>250 / trang</option>"
+          << "</select>"
+          << "<button class='btn btn-sm' onclick='queryAudit(true)' style='height:28px;'>Lọc SQL</button>"
+          << "</div>"
+          << "</div>"
+          << "<div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11px;'>"
+          << "<span id='audit-page-info' style='color:var(--text-muted);'>Đang tải...</span>"
+          << "<div style='display:flex; gap:4px;'>"
+          << "<button id='audit-prev-btn' class='btn-sec btn-sm' onclick='auditPrevPage()' disabled>&laquo; Trước</button>"
+          << "<button id='audit-next-btn' class='btn-sec btn-sm' onclick='auditNextPage()' disabled>Sau &raquo;</button>"
+          << "</div>"
+          << "</div>"
+          << "<div id='audit-scroll-box' class='table-scroll-container' style='max-height:280px;'>"
           << "<table><thead><tr><th>File</th><th>Status</th><th>Line</th><th>Detector / Reason</th><th>Action</th></tr></thead><tbody id='audit-tbody'>";
+
 
         for (const auto& ae : audit_entries) {
             std::string st_str = core::audit_status_to_string(ae.status);
@@ -2173,7 +2340,9 @@ function loadHostedWorkspaces() {
           id: w.id || ('host-' + w.port),
           path: w.path || './',
           port: w.port,
-          suiteName: (w.suite === 'classical' || w.suite === '1') ? 'Mức 1: Classical Hardened (X25519 + Ed25519 + SHA-256)' : ((w.suite === 'modern' || w.suite === '2') ? 'Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3)' : 'Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203/204]'),
+          suite: (w.suite === '3' || w.suite === 'pqc') ? '3' : ((w.suite === '1' || w.suite === 'classical') ? '1' : '2'),
+          suiteName: (w.suite === 'classical' || w.suite === '1') ? 'Mức 1: Classical Hardened (X25519 + Ed25519 + SHA-256)' : ((w.suite === '3' || w.suite === 'pqc') ? 'Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203/204]' : 'Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3) [Mặc Định]'),
+          filter_level: w.filter_level || 'level2',
           filterMode: w.filter_mode || 'protected',
           filterName: w.filter_mode === 'raw' ? 'Raw (Tắt bảo vệ)' : (w.filter_mode === 'strict' ? 'Strict Isolation' : 'Protected (Slug Rule + Regex + AI)'),
           otp_rw: w.otp_rw || '-',
@@ -2886,27 +3055,27 @@ function renderHostedWorkspaces() {
             <div>
               <div class="host-box-title">
                 <span>${ICONS.shield} MỨC MẬT MÃ &amp; BỘ LỌC</span>
-                <span class="badge badge-pqc">${(w.suite === '3' || w.suite === 'pqc') ? 'PQC NATIVE (FIPS 203)' : ((w.suite === '2' || w.suite === 'modern') ? 'MODERN (BLAKE3 + X25519)' : 'CLASSICAL (X25519)')}</span>
+                <span id="suite-badge-${w.id}" class="badge ${(w.suite === '3' || w.suite === 'pqc') ? 'badge-pqc' : ''}" style="${(w.suite === '2' || w.suite === 'modern' || !w.suite) ? 'background:#ddf4ff; color:#0969da; border:1px solid rgba(9,105,218,0.3);' : ((w.suite === '1' || w.suite === 'classical') ? 'background:#fff8c5; color:#9a6700; border:1px solid rgba(154,103,0,0.3);' : '')}">${(w.suite === '3' || w.suite === 'pqc') ? 'PQC NATIVE (FIPS 203)' : ((w.suite === '1' || w.suite === 'classical') ? 'CLASSICAL (X25519)' : 'MODERN HYBRID (ML-KEM-768)')}</span>
               </div>
               
               <div style="margin-bottom:8px;">
                 <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CẤU HÌNH MẬT MÃ (CIPHER SUITE):</label>
-                <select class="input-select" style="width:100%; font-size:11px; padding:5px 8px; height:32px;" onchange="updateHostSuite('${w.id}', this.value)">
-                  <option value="3" ${(w.suite === '3' || w.suite === 'pqc') ? 'selected' : ''}>Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [Khuyên dùng - NIST]</option>
-                  <option value="2" ${(w.suite === '2' || w.suite === 'modern') ? 'selected' : ''}>Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3 + XChaCha20)</option>
+                <select id="suite-select-${w.id}" class="input-select" style="width:100%; font-size:11px; padding:5px 8px; height:32px;" onchange="updateHostSuite('${w.id}', this.value)">
+                  <option value="2" ${(w.suite === '2' || w.suite === 'modern' || !w.suite) ? 'selected' : ''}>Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3 + XChaCha20) [Mặc Định]</option>
+                  <option value="3" ${(w.suite === '3' || w.suite === 'pqc') ? 'selected' : ''}>Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203]</option>
                   <option value="1" ${(w.suite === '1' || w.suite === 'classical') ? 'selected' : ''}>Mức 1: Classical Hardened (X25519 + Ed25519 + SHA-256 + XChaCha20)</option>
                 </select>
               </div>
 
               <div>
-                <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CHẾ ĐỘ LỌC DỮ LIỆU (CỐ ĐỊNH THEO PHIÊN):</label>
+                <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CẤP ĐỘ LỌC BẢO MẬT (CỐ ĐỊNH THEO PHIÊN):</label>
                 <div style="background:#ffffff; border:1px solid var(--border-primary); padding:6px 10px; border-radius:2px; font-size:11px; display:flex; align-items:center; justify-content:space-between;">
                   <span style="font-weight:700; color:#0969da; display:inline-flex; align-items:center; gap:4px;">
-                    ${ICONS.lock} ${w.filterMode === 'include_ignored' ? 'Include-Ignored (Bỏ qua .gitignore, giữ Rule & Secret)' : (w.filterMode === 'none' ? 'None (Raw Transfer - Không lọc)' : 'Protected (Lọc .gitignore + Rules + Chặn Secret)')}
+                    ${ICONS.lock} ${(w.filter_level === 'level4') ? 'Mức 4: AI Model Deep Scan' : ((w.filter_level === 'level3') ? 'Mức 3: Shannon Entropy' : ((w.filter_level === 'level1') ? 'Mức 1: Rules & Gitignore' : 'Mức 2: Regex Secret Guard [Mặc Định]'))}
                   </span>
                   <span style="font-size:10px; color:var(--text-muted); background:#f6f8fa; padding:1px 6px; border:1px solid var(--border-primary); border-radius:2px;">Cố Định</span>
                 </div>
-                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">(Để chuyển sang mức lọc khác, hãy dừng host và tạo lại)</div>
+                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">(Lọc .gitignore + rules.conf + chặn Secret Key/Token)</div>
               </div>
             </div>
 
@@ -4591,8 +4760,8 @@ window.onload = function() {
           <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">4 Cấp Độ Lọc Dữ Liệu Bảo Mật (Filter Levels)</label>
           <select id="host-filter" class="input-select" onchange="onFilterLevelChanged(this.value)" style="height:38px; box-sizing:border-box; font-size:12px;">
             <option value="level1">Mức 1: Rules &amp; Gitignore (Chỉ lọc .gitignore &amp; rules.conf, không quét nội dung)</option>
-            <option value="level2">Mức 2: Regex Secret Guard (Mức 1 + Quét mẫu định danh Private Key, AWS, GitHub, JWT, .env)</option>
-            <option value="level3" selected>Mức 3: Shannon Entropy (Mức 2 + Đo entropy trên file mã nguồn, bỏ qua 100% binary/ảnh) [Khuyên Dùng]</option>
+            <option value="level2" selected>Mức 2: Regex Secret Guard (Mức 1 + Quét mẫu định danh Private Key, AWS, GitHub, JWT, .env) [Mặc Định / Khuyên Dùng]</option>
+            <option value="level3">Mức 3: Shannon Entropy (Mức 2 + Đo entropy trên file mã nguồn, bỏ qua 100% binary/ảnh)</option>
             <option value="level4">Mức 4: AI Model Scan (Mức 3 + Phân tích ngữ cảnh sâu bằng mô hình AI)</option>
           </select>
         </div>

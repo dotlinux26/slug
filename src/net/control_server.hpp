@@ -53,7 +53,7 @@ public:
                   uint64_t cert_ttl = 86400,
                   bool enable_ai = false,
                   core::FilterMode filter_mode = core::FilterMode::PROTECTED,
-                  core::FilterLevel filter_level = core::FilterLevel::LEVEL_3_ENTROPY,
+                  core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX,
                   core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA,
                   uint32_t totp_step = 60,
                   uint64_t workspace_ttl = 86400);
@@ -73,6 +73,15 @@ public:
     core::FilterMode filter_mode() const { return filter_mode_; }
     core::FilterLevel filter_level() const { return filter_level_; }
     core::AiModelProvider ai_provider() const { return ai_provider_; }
+    void set_filter_level(core::FilterLevel lvl) {
+        filter_level_ = lvl;
+        enable_ai_ = (lvl == core::FilterLevel::LEVEL_4_AI);
+        invalidate_manifest_cache();
+    }
+    void set_ai_provider(core::AiModelProvider p) {
+        ai_provider_ = p;
+        invalidate_manifest_cache();
+    }
     uint64_t cert_ttl() const { return cert_ttl_; }
     uint64_t workspace_ttl() const { return workspace_ttl_; }
     uint64_t started_at() const { return started_at_; }
@@ -114,7 +123,7 @@ private:
     core::SuiteID suite_id_;
     uint64_t cert_ttl_;
     bool enable_ai_;
-    core::FilterLevel filter_level_{core::FilterLevel::LEVEL_3_ENTROPY};
+    core::FilterLevel filter_level_{core::FilterLevel::LEVEL_2_REGEX};
     core::AiModelProvider ai_provider_{core::AiModelProvider::OLLAMA};
     uint32_t totp_step_{60};
     uint64_t workspace_ttl_{86400};

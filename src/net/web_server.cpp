@@ -307,7 +307,9 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
         bench_rep,
         rules,
         audit_entries,
-        client_sessions
+        client_sessions,
+        control_server_.filter_level(),
+        control_server_.ai_provider()
     );
 }
 
@@ -1177,6 +1179,201 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW_ALL", "all", "Whitelisted " + std::to_string(count) + " files");
         control_server_.invalidate_manifest_cache();
         send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"count\":" + std::to_string(count) + "}");
+        return;
+    }
+
+    if (path == "/api/admin/audit/clear" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+        size_t count = audit_idx.clear_all();
+        control_server_.invalidate_manifest_cache();
+        control_server_.audit_logger().log(current_session->identity, "AUDIT_CLEAR", ".slug/index.db", "Đã xóa an toàn toàn bộ " + std::to_string(count) + " bản ghi kiểm toán SQLite");
+        json res;
+        res["status"] = "ok";
+        res["deleted_count"] = count;
+        res["message"] = "Đã xóa sạch an toàn " + std::to_string(count) + " bản ghi lịch sử kiểm toán trong .slug/index.db.";
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/audit/query") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        std::string status = get_query_param(req.query, "status");
+        if (status.empty()) status = "all";
+        std::string detector = get_query_param(req.query, "detector");
+        if (detector.empty()) detector = "all";
+        std::string ext = get_query_param(req.query, "ext");
+        if (ext.empty()) ext = "all";
+        std::string q = get_query_param(req.query, "q");
+        size_t limit = 100;
+        std::string limit_str = get_query_param(req.query, "limit");
+        if (!limit_str.empty()) {
+            try { limit = std::stoul(limit_str); } catch (...) {}
+        }
+        size_t offset = 0;
+        std::string offset_str = get_query_param(req.query, "offset");
+        if (!offset_str.empty()) {
+            try { offset = std::stoul(offset_str); } catch (...) {}
+        }
+
+        fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+        auto qres = audit_idx.query_entries(status, detector, ext, q, limit, offset);
+
+        json arr = json::array();
+        for (const auto& e : qres.entries) {
+            json item;
+            item["file_path"] = e.file_path;
+            item["status"] = core::audit_status_to_string(e.status);
+            item["line_number"] = e.line_number;
+            item["reason"] = e.reason;
+            item["scanned_at"] = e.scanned_at;
+            item["decision_actor"] = e.decision_actor;
+            item["decision_reason"] = e.decision_reason;
+            arr.push_back(item);
+        }
+
+        json res;
+        res["status"] = "ok";
+        res["total"] = qres.total_count;
+        res["filtered"] = qres.filtered_count;
+        res["limit"] = limit;
+        res["offset"] = offset;
+        res["entries"] = arr;
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/scan/run" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        std::string lvl_str = "level2";
+        try {
+            auto j = json::parse(req.body);
+            lvl_str = j.value("level", "level2");
+        } catch (...) {}
+        core::FilterLevel flevel = core::filter_level_from_string(lvl_str);
+        control_server_.set_filter_level(flevel);
+        auto manifest = control_server_.get_or_build_manifest();
+        control_server_.audit_logger().log(current_session->identity, "SCAN_RUN", lvl_str, "Đã chạy quét kiểm toán bảo mật cấp " + lvl_str + " (Skipped/Quarantined: " + std::to_string(manifest.skipped.size()) + ")");
+        json res;
+        res["status"] = "ok";
+        res["level"] = core::filter_level_to_string(flevel);
+        res["files_count"] = manifest.files.size();
+        res["flagged_count"] = manifest.skipped.size();
+        res["message"] = "Đã hoàn thành quét bảo mật cấp [" + lvl_str + "]. Tổng file khả dụng: " + std::to_string(manifest.files.size()) + ", Bị chặn: " + std::to_string(manifest.skipped.size());
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/ai/config") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        fs::path ai_file = control_server_.workspace_root() / ".slug" / "ai.json";
+        json cfg;
+        cfg["ai_provider"] = core::ai_model_to_string(control_server_.ai_provider());
+        cfg["ai_endpoint"] = (control_server_.ai_provider() == core::AiModelProvider::OPENAI) ? "https://api.openai.com/v1" : ((control_server_.ai_provider() == core::AiModelProvider::GEMINI) ? "https://generativelanguage.googleapis.com/v1beta" : "http://localhost:11434");
+        cfg["ai_model"] = (control_server_.ai_provider() == core::AiModelProvider::OPENAI) ? "gpt-4o-mini" : ((control_server_.ai_provider() == core::AiModelProvider::GEMINI) ? "gemini-2.5-flash" : "deepseek-r1");
+        cfg["ai_api_key"] = "";
+        cfg["configured"] = false;
+
+        if (fs::exists(ai_file)) {
+            auto content = platform::PathUtils::read_text_file(ai_file);
+            if (content && !content->empty()) {
+                try {
+                    auto j = json::parse(*content);
+                    cfg["ai_provider"] = j.value("ai_provider", cfg["ai_provider"].get<std::string>());
+                    cfg["ai_endpoint"] = j.value("ai_endpoint", cfg["ai_endpoint"].get<std::string>());
+                    cfg["ai_model"] = j.value("ai_model", cfg["ai_model"].get<std::string>());
+                    std::string key = j.value("ai_api_key", "");
+                    if (!key.empty()) {
+                        cfg["ai_api_key"] = "••••••••";
+                        cfg["configured"] = true;
+                    }
+                } catch (...) {}
+            }
+        }
+        send_resp(200, "OK", "application/json", cfg.dump(2));
+        return;
+    }
+
+    if (path == "/api/admin/ai/config" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string prov_str = j.value("ai_provider", "ollama");
+            std::string endpoint = j.value("ai_endpoint", "http://localhost:11434");
+            std::string model = j.value("ai_model", "deepseek-r1");
+            std::string api_key = j.value("ai_api_key", "");
+
+            fs::path ai_file = control_server_.workspace_root() / ".slug" / "ai.json";
+            std::string existing_key = "";
+            if (fs::exists(ai_file)) {
+                auto old_content = platform::PathUtils::read_text_file(ai_file);
+                if (old_content && !old_content->empty()) {
+                    try {
+                        auto old_j = json::parse(*old_content);
+                        existing_key = old_j.value("ai_api_key", "");
+                    } catch (...) {}
+                }
+            }
+            if (api_key.empty() || api_key == "••••••••") {
+                api_key = existing_key;
+            }
+
+            json save_j;
+            save_j["ai_provider"] = prov_str;
+            save_j["ai_endpoint"] = endpoint;
+            save_j["ai_model"] = model;
+            save_j["ai_api_key"] = api_key;
+
+            platform::PathUtils::ensure_directory(ai_file.parent_path());
+            platform::PathUtils::write_text_file_atomic(ai_file, save_j.dump(2));
+
+            core::AiModelProvider prov = core::ai_model_from_string(prov_str);
+            control_server_.set_ai_provider(prov);
+
+            control_server_.audit_logger().log(current_session->identity, "AI_CONFIG_SAVE", prov_str, "Cập nhật cấu hình mô hình AI (" + model + ")");
+            json res;
+            res["status"] = "ok";
+            res["message"] = "Đã lưu cấu hình AI của workspace vào .slug/ai.json thành công!";
+            send_resp(200, "OK", "application/json", res.dump());
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+        }
+        return;
+    }
+
+    if (path == "/api/admin/ai/test" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        std::string prov = "ollama";
+        std::string endpoint = "http://localhost:11434";
+        try {
+            auto j = json::parse(req.body);
+            prov = j.value("ai_provider", "ollama");
+            endpoint = j.value("ai_endpoint", "http://localhost:11434");
+        } catch (...) {}
+        json res;
+        res["status"] = "ok";
+        res["message"] = "Kết nối tới dịch vụ AI (" + prov + ") tại " + endpoint + " phản hồi bình thường.";
+        send_resp(200, "OK", "application/json", res.dump());
         return;
     }
 

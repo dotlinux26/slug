@@ -51,6 +51,22 @@ public:
     bool is_flagged(const std::string& file_path) const;
     std::vector<AuditIndexEntry> list_flagged_or_all(bool only_flagged = false) const;
 
+    struct QueryResult {
+        size_t total_count{0};
+        size_t filtered_count{0};
+        std::vector<AuditIndexEntry> entries;
+    };
+
+    size_t clear_all();
+    QueryResult query_entries(
+        const std::string& status_filter = "all",
+        const std::string& detector_filter = "all",
+        const std::string& ext_filter = "all",
+        const std::string& search_text = "",
+        size_t limit = 100,
+        size_t offset = 0
+    ) const;
+
 private:
     std::filesystem::path index_file_;
     mutable std::mutex mutex_;

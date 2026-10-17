@@ -132,7 +132,7 @@ inline std::string filter_level_to_string(FilterLevel lvl) {
         case FilterLevel::LEVEL_3_ENTROPY: return "level3";
         case FilterLevel::LEVEL_4_AI:      return "level4";
     }
-    return "level3";
+    return "level2";
 }
 
 inline FilterLevel filter_level_from_string(std::string_view s) {
@@ -140,7 +140,7 @@ inline FilterLevel filter_level_from_string(std::string_view s) {
     if (s == "2" || s == "level2" || s == "regex") return FilterLevel::LEVEL_2_REGEX;
     if (s == "3" || s == "level3" || s == "entropy") return FilterLevel::LEVEL_3_ENTROPY;
     if (s == "4" || s == "level4" || s == "ai") return FilterLevel::LEVEL_4_AI;
-    return FilterLevel::LEVEL_3_ENTROPY;
+    return FilterLevel::LEVEL_2_REGEX;
 }
 
 // Mô hình AI áp dụng cho Mức 4 (AI Model Provider for Level 4)

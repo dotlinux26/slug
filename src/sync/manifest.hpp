@@ -46,7 +46,7 @@ public:
         uint8_t suite_id = 3,
         bool enable_ai = false,
         core::FilterMode filter_mode = core::FilterMode::PROTECTED,
-        core::FilterLevel filter_level = core::FilterLevel::LEVEL_3_ENTROPY,
+        core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX,
         core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA);
 };
 
