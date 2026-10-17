@@ -514,25 +514,55 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         const auto* rm = rules_mgr.match(rel);
         bool is_whitelisted = (rm && rm->action == policy::RuleAction::ALLOW);
 
+        std::string lower_fn = filename;
+        std::transform(lower_fn.begin(), lower_fn.end(), lower_fn.begin(), ::tolower);
+
         // STRICT ISOLATION: .slug metadata is strictly internal to Slug and NEVER quarantined as a user secret!
         if (lower == ".slug" || lower.starts_with(".slug/") || lower.find("/.slug/") != std::string::npos ||
-            platform::PathUtils::is_internal_slug_path(rel_path)) {
+            lower_fn == ".slug" || platform::PathUtils::is_internal_slug_path(rel_path)) {
             if (is_dir) {
                 it.disable_recursion_pending();
             }
             continue;
         }
 
-        if (lower == ".git" || lower.starts_with(".git/") || lower.find("/.git/") != std::string::npos) {
+        // Comprehensive Directory & Vendor Pruning
+        if (is_dir && (lower_fn == ".git" || lower_fn == "node_modules" || lower_fn == "_internal" ||
+                       lower_fn == "venv" || lower_fn == ".venv" || lower_fn == "env" ||
+                       lower_fn == "__pycache__" || lower_fn == "site-packages" || lower_fn == "vendor" ||
+                       lower_fn == "build" || lower_fn == "build_win" || lower_fn == "target" ||
+                       lower_fn == "dist" || lower_fn == "out" || lower_fn == "bin" || lower_fn == "obj" ||
+                       lower_fn == ".idea" || lower_fn == ".vscode")) {
+            it.disable_recursion_pending();
+            is_excluded = true;
+            excl_rule = "Môi trường thực thi / thư viện / mã nhị phân (" + filename + "/)";
+        } else if (lower == ".git" || lower.starts_with(".git/") || lower.find("/.git/") != std::string::npos) {
             is_excluded = true; excl_rule = "VCS internals (.git/)";
         } else if (lower == "node_modules" || lower.starts_with("node_modules/") || lower.find("/node_modules/") != std::string::npos) {
             is_excluded = true; excl_rule = "Dependencies (node_modules/)";
+        } else if (lower.find("/_internal/") != std::string::npos || lower.starts_with("_internal/") ||
+                   lower.find("/venv/") != std::string::npos || lower.starts_with("venv/") ||
+                   lower.find("/.venv/") != std::string::npos || lower.starts_with(".venv/") ||
+                   lower.find("/__pycache__/") != std::string::npos || lower.starts_with("__pycache__/") ||
+                   lower.find("/site-packages/") != std::string::npos ||
+                   lower.find("/vendor/") != std::string::npos || lower.starts_with("vendor/")) {
+            is_excluded = true; excl_rule = "Runtime/VirtualEnv/Vendor internals";
         } else if (lower == "build" || lower.starts_with("build/") || lower.find("/build/") != std::string::npos ||
                    lower == "build_win" || lower.starts_with("build_win/") ||
+                   lower == "dist" || lower.starts_with("dist/") || lower.find("/dist/") != std::string::npos ||
                    lower == "target" || lower.starts_with("target/")) {
             is_excluded = true; excl_rule = "Build output directory";
-        } else if (lower.ends_with(".obj") || lower.ends_with(".o") || lower.ends_with(".pdb") || lower.ends_with(".exe") || lower.ends_with(".dll")) {
-            is_excluded = true; excl_rule = "Compiled binary artifact";
+        } else if (lower.ends_with(".obj") || lower.ends_with(".o") || lower.ends_with(".pdb") ||
+                   lower.ends_with(".exe") || lower.ends_with(".dll") || lower.ends_with(".pyd") ||
+                   lower.ends_with(".so") || lower.ends_with(".dylib") || lower.ends_with(".bin") ||
+                   lower.ends_with(".dat") || lower.ends_with(".pak") || lower.ends_with(".pyc") ||
+                   lower.ends_with(".zip") || lower.ends_with(".tar") || lower.ends_with(".gz") ||
+                   lower.ends_with(".7z") || lower.ends_with(".iso") || lower.ends_with(".png") ||
+                   lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".gif") ||
+                   lower.ends_with(".ico") || lower.ends_with(".webp") || lower.ends_with(".pdf") ||
+                   lower.ends_with(".mp4") || lower.ends_with(".mp3") || lower.ends_with(".ttf") ||
+                   lower.ends_with(".woff") || lower.ends_with(".woff2")) {
+            is_excluded = true; excl_rule = "Compiled binary / Media asset";
         } else {
             if (rm && rm->action == policy::RuleAction::BLOCK) {
                 is_excluded = true;
@@ -663,23 +693,49 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
 
 static std::mutex g_audit_cache_mtx;
 static std::map<std::string, std::pair<uint64_t, nlohmann::json>> g_audit_cache;
+static std::set<std::string> g_audit_running;
 
 static nlohmann::json get_cached_workspace_audit(const std::filesystem::path& ws_path, bool force_fresh = false) {
     std::string key = ws_path.string();
     uint64_t now = core::Utils::current_timestamp();
-    if (!force_fresh) {
-        std::lock_guard<std::mutex> lk(g_audit_cache_mtx);
-        auto it = g_audit_cache.find(key);
-        if (it != g_audit_cache.end() && (now - it->second.first) < 45) {
-            return it->second.second;
-        }
-    }
-    auto result = perform_real_workspace_audit(ws_path);
     {
         std::lock_guard<std::mutex> lk(g_audit_cache_mtx);
-        g_audit_cache[key] = {now, result};
+        auto it = g_audit_cache.find(key);
+        if (!force_fresh && it != g_audit_cache.end() && (now - it->second.first) < 60) {
+            return it->second.second;
+        }
+        if (it != g_audit_cache.end()) {
+            // Cache exists but stale: return existing cache and refresh asynchronously!
+            if (g_audit_running.find(key) == g_audit_running.end()) {
+                g_audit_running.insert(key);
+                std::thread([ws_path, key]() {
+                    auto result = perform_real_workspace_audit(ws_path);
+                    std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
+                    g_audit_cache[key] = {core::Utils::current_timestamp(), result};
+                    g_audit_running.erase(key);
+                }).detach();
+            }
+            return it->second.second;
+        }
+
+        // First time request: launch background scanner, return fast placeholder immediately!
+        if (g_audit_running.find(key) == g_audit_running.end()) {
+            g_audit_running.insert(key);
+            std::thread([ws_path, key]() {
+                auto result = perform_real_workspace_audit(ws_path);
+                std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
+                g_audit_cache[key] = {core::Utils::current_timestamp(), result};
+                g_audit_running.erase(key);
+            }).detach();
+        }
     }
-    return result;
+    nlohmann::json placeholder;
+    placeholder["stats"] = {{"clean", 0}, {"quarantined", 0}, {"excluded", 0}};
+    placeholder["clean_files"] = nlohmann::json::array();
+    placeholder["quarantined_files"] = nlohmann::json::array();
+    placeholder["excluded_files"] = nlohmann::json::array();
+    placeholder["is_scanning"] = true;
+    return placeholder;
 }
 
 using namespace slug;
@@ -1190,7 +1246,7 @@ int cmd_add(int argc, char* argv[]) {
     return 0;
 }
 
-static nlohmann::json query_workspace_api(uint16_t port, const std::string& path = "/api/status", int timeout_ms = 800) {
+static nlohmann::json query_workspace_api(uint16_t port, const std::string& path = "/api/status", int timeout_ms = 400) {
     platform::TcpSocket sock;
     if (!sock.connect("127.0.0.1", port, timeout_ms)) {
         return nullptr;
@@ -1202,9 +1258,25 @@ static nlohmann::json query_workspace_api(uint16_t port, const std::string& path
     std::vector<uint8_t> buf(4096);
     std::string resp;
     while (true) {
-        int n = sock.receive(buf, 1000);
+        int n = sock.receive(buf, 250);
         if (n <= 0) break;
         resp.append(reinterpret_cast<char*>(buf.data()), n);
+        size_t body_pos = resp.find("\r\n\r\n");
+        if (body_pos != std::string::npos) {
+            size_t cl_pos = resp.find("Content-Length: ");
+            if (cl_pos == std::string::npos) cl_pos = resp.find("content-length: ");
+            if (cl_pos != std::string::npos && cl_pos < body_pos) {
+                size_t cl_end = resp.find("\r\n", cl_pos);
+                if (cl_end != std::string::npos) {
+                    try {
+                        size_t cl = std::stoull(resp.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
+                        if (resp.size() >= body_pos + 4 + cl) {
+                            break;
+                        }
+                    } catch (...) {}
+                }
+            }
+        }
     }
     size_t body_pos = resp.find("\r\n\r\n");
     if (body_pos == std::string::npos) return nullptr;
@@ -1215,7 +1287,7 @@ static nlohmann::json query_workspace_api(uint16_t port, const std::string& path
     }
 }
 
-static nlohmann::json post_workspace_api(uint16_t port, const std::string& path, const nlohmann::json& payload, int timeout_ms = 1200) {
+static nlohmann::json post_workspace_api(uint16_t port, const std::string& path, const nlohmann::json& payload, int timeout_ms = 600) {
     platform::TcpSocket sock;
     if (!sock.connect("127.0.0.1", port, timeout_ms)) {
         return nullptr;
@@ -1232,9 +1304,25 @@ static nlohmann::json post_workspace_api(uint16_t port, const std::string& path,
     std::vector<uint8_t> buf(4096);
     std::string resp;
     while (true) {
-        int n = sock.receive(buf, 1000);
+        int n = sock.receive(buf, 350);
         if (n <= 0) break;
         resp.append(reinterpret_cast<char*>(buf.data()), n);
+        size_t body_pos = resp.find("\r\n\r\n");
+        if (body_pos != std::string::npos) {
+            size_t cl_pos = resp.find("Content-Length: ");
+            if (cl_pos == std::string::npos) cl_pos = resp.find("content-length: ");
+            if (cl_pos != std::string::npos && cl_pos < body_pos) {
+                size_t cl_end = resp.find("\r\n", cl_pos);
+                if (cl_end != std::string::npos) {
+                    try {
+                        size_t cl = std::stoull(resp.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
+                        if (resp.size() >= body_pos + 4 + cl) {
+                            break;
+                        }
+                    } catch (...) {}
+                }
+            }
+        }
     }
     size_t body_pos = resp.find("\r\n\r\n");
     if (body_pos == std::string::npos) return nullptr;
