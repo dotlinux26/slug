@@ -31,15 +31,16 @@ Trong kỷ nguyên lập trình hiện đại với các trợ lý AI (Cursor, C
 ### 1.2. Chia Sẻ An Toàn Giữa Người Với Người (Không Lo Thừa Rác, Không Lo Nhầm Bí Mật)
 Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc đối tác:
 - **Không lo chia sẻ thừa file rác:** Tự động nhận diện phân tầng `.gitignore` của dự án, loại bỏ sạch sẽ các thư mục build nặng nề (`node_modules/`, `target/`, `build/`, file tạm).
-- **Không lo chia sẻ nhầm file bí mật:** Hệ thống **Slug Guard** kết hợp đa cơ chế phòng vệ phân định minh bạch:
-  - **Quy tắc cấu trúc dự án (`.gitignore` / `.slugignore`):** Tự động lọc bỏ các thư mục build rác và dependencies nặng nề.
-  - **Chính sách kiểm soát của Host (`.slug/rules.conf`):** Các quy tắc cấm hoặc cho phép cụ thể theo thư mục và phần mở rộng (`deny *.pem`, `deny *.key`, v.v.). Hỗ trợ luật ngoại lệ Whitelist bằng tiền tố `!` (ví dụ: `!.env.example`, `!*.example` vẫn được truyền ngay cả khi `.env*` bị chặn).
-  - **Smart Heuristic Regex & Shannon Entropy Guard:** Bộ lọc cục bộ 100% offline trong bộ nhớ, tính toán mật độ thông tin $H(X) \ge 4.0$ để phát hiện chuỗi token có độ ngẫu nhiên cao, private key mà không cần kết nối mạng.
-  - **AI Contextual Advisor (tùy chọn với `--ai`):** Hỗ trợ kết nối các mô hình cục bộ (Ollama) hoặc Cloud LLM trả lời qua schema JSON cấu trúc (`has_secret`, `reason`, `line`) để tham vấn ngữ cảnh, tuyệt đối không thay thế luật cứng của Slug Guard.
+- **Hệ thống phòng vệ 4 Cấp Độ Lọc (4 Filter Levels):**
+  - **Level 1 — Rules (`.gitignore` + `.slug/rules.conf`):** Lọc theo đường dẫn và chính sách cấu hình do Host chỉ định. Hỗ trợ Whitelist với tiền tố `!` (ví dụ: `!.env.example`, `!*.example`). Ngừng sử dụng `.slugignore` cũ.
+  - **Level 2 — Regex (Level 1 + Secret Detection):** Tự động phát hiện AWS/GitHub/Stripe keys, private keys, JWT, URLs chứa mật khẩu trong mã nguồn.
+  - **Level 3 — Entropy (Level 2 + Shannon Entropy):** Tính toán độ hỗn loạn $H(X) \ge 4.0$ trên các tệp mã nguồn/văn bản (`is_scannable_file`). Tự động miễn nhiễm hoàn toàn false positive cho tệp nhị phân, compiled, media (`.pyd`, `.dll`, `.png`, `.mp4`, `.zip`...).
+  - **Level 4 — AI (Level 3 + AI Contextual Advisor):** Kết nối LLM (Ollama / OpenAI / Gemini với cờ `--ai-model`) tham vấn ngữ cảnh mã, trả về schema JSON (`has_secret`, `reason`, `line`).
+- **Directory Visibility Invariant (Bất biến hiển thị cây thư mục):** Cấu trúc cây thư mục luôn được giữ nguyên trọn vẹn, không bao giờ tự ý tỉa cành hay ẩn file bị lọc. File chỉ có 2 trạng thái chuẩn hóa trên Explorer: `AVAILABLE` (màu xanh lá, được phép tải) hoặc `BLOCKED` (màu đỏ, bị chặn ở backend). Chỉ có metadata nội bộ (`.slug/`, `.git/`) là bị ẩn và bảo vệ bất biến.
 
 ### 1.3. Kiến Trúc Engine Viewing Nội Bộ (Zero Remote HTTP)
-- Trên mạng dây LAN/Internet **chỉ tồn tại kết nối nhị phân PQC an toàn lượng tử** (cổng `9443`). Tuyệt đối không phơi bày cổng Web HTTP ra ngoài Internet!
-- Giao diện Web chỉ là một **Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080`** của máy client (hoặc máy host). Mọi thao tác duyệt cây thư mục, tải file đơn, tải file nén ZIP toàn thư mục hay upload đều được tunnel mã hóa qua các frame PQC nhị phân. Không có bất kỳ byte HTTP lộ thiên nào trên mạng!
+- Trên mạng dây LAN/Internet **chỉ tồn tại kết nối nhị phân PQC an toàn lượng tử** (mặc định cổng `9443`). Tuyệt đối không phơi bày cổng Web HTTP ra ngoài Internet!
+- Giao diện Web chỉ là một **Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080`** của máy client và **Host Admin Dashboard tại `http://127.0.0.1:<port>/admin`**. Mọi thao tác duyệt cây thư mục, tải file đơn, tải file nén ZIP toàn thư mục hay upload đều được tunnel mã hóa qua các frame PQC nhị phân. Không có bất kỳ byte HTTP lộ thiên nào trên mạng!
 
 ---
 
@@ -153,16 +154,17 @@ SLUG THE ESSENTIAL COMMAND SUITE
   slug config [list|get|set]  Quản lý cấu hình toàn cục (~/.slug/config.json): default_suite, portal_port
 
 [HOST WORKSPACE]
-  slug add <path>             Khởi tạo và host workspace (-p, -s, -t, --ai, --filter-mode, --no-filter, -d)
+  slug add <path>             Khởi tạo và host workspace (-p, -s, -t, --filter-level <1-4>, --ai-model <ollama|openai|gemini>, --otp-step, --workspace-ttl, --include-ignored, --no-filter, -d)
+  slug host <path>            Bí danh tương đương với 'slug add'
   slug status                 Kiểm tra danh sách server đang chạy (-s rút gọn, -p <port>, --sessions, --flagged)
   slug totp [-p <port>]       Xem bảng 3 mã OTP phân quyền hoặc xuất mã nhanh (-r <role> --code-only)
   slug stop [-p <port>|-a]    Dừng server cụ thể hoặc toàn bộ server đang mở (-a, --all)
-  slug serve [-p <port>] [-w] Bảng thông số server; truyền cờ -w để mở Web Host Admin Dashboard nội bộ
+  slug serve [-p <port>] [-w] Bảng thông số server; truyền cờ -w để mở Web Host Admin Dashboard nội bộ (http://127.0.0.1:<port>/admin)
 
 [ACCESS CONTROL & SECURITY]
   slug session <list|kill>    Giám sát và hủy phiên kết nối của các client đang truy cập (-p <port>)
   slug user <add|mod|rm|list> Quản lý tài khoản phân quyền RBAC: -u <user>, -P <pass>, -r <rw|r|w>, -t <ttl>
-  slug audit <list|scan|allow>Quản lý các file nghi vấn bị Slug Guard chặn (list, scan, allow, recheck, clear)
+  slug audit <list|scan|allow>Quản lý các file nghi vấn bị Slug Guard chặn (list, scan, allow, recheck, clear; hỗ trợ --filter-level, --ai-model)
   slug rule <list|block|allow>Quản lý quy tắc lọc tệp .slug/rules.conf (hỗ trợ whitelist tiền tố '!')
 
 [CLIENT WORKSPACE SYNC]
@@ -312,6 +314,30 @@ Hệ thống tài liệu chuyên sâu được phân định chi tiết theo t�
 
 ---
 
-## 7. Giấy Phép Bản Quyền (License)
+## 7. Kiểm Định An Toàn Kênh Mật Mã Bằng Wireshark (Wire Packet Inspection Guide)
+
+Để chứng minh cam kết **"100% Zero-Plaintext Wire Encryption"** (tuyệt đối không lộ bản rõ tên file, nội dung code, hay header HTTP trên đường truyền), người dùng và giám khảo có thể sử dụng Wireshark để kiểm chứng trực tiếp gói tin mạng vật lý:
+
+### 7.1. Các Bộ Lọc Hiển Thị Wireshark (Display Filters)
+
+| Mục tiêu kiểm chứng | Wireshark Display Filter | Kết quả kỳ vọng |
+| :--- | :--- | :--- |
+| **1. Cô lập toàn bộ lưu lượng Slug** | `tcp.port == 9443` | Bắt được toàn bộ frame bắt tay PQC và các chunk dữ liệu mã hóa. |
+| **2. Kiểm tra rò rỉ HTTP bản rõ** | `tcp.port == 9443 && (http \|\| http2)` | **0 packet (Trống hoàn toàn)**. Xác nhận HTTP chỉ chạy trên loopback `127.0.0.1`, không bay ra LAN/Internet. |
+| **3. Truy lùng từ khóa nhạy cảm (Leak Hunter)** | `tcp.port == 9443 && (frame contains "GET " \|\| frame contains "POST " \|\| frame contains "HTTP/" \|\| frame contains "password" \|\| frame contains "token" \|\| frame contains "api_key" \|\| frame contains "secret")` | **0 packet**. Không có bất kỳ byte từ khóa nhạy cảm nào xuất hiện dưới dạng bản rõ. |
+| **4. Kiểm tra rò rỉ tên file và mã nguồn** | `tcp.port == 9443 && (frame contains "main.cpp" \|\| frame contains "include" \|\| frame contains "import" \|\| frame contains "def ")` | **0 packet**. Tên file, cấu trúc manifest và nội dung dữ liệu đều được bọc trong payload AEAD. |
+| **5. Nhận diện các khối dữ liệu AEAD** | `tcp.port == 9443 && tcp.len > 100` | Toàn bộ payload là byte ngẫu nhiên phân bổ đồng đều ($H(X) \approx 7.98\text{ bits/byte}$). |
+
+### 7.2. Quy Trình 3 Bước Thực Nghiệm Bắt Gói Tin
+1. **Khởi chạy bắt gói tin trên Wireshark:** Chọn card mạng Wi-Fi hoặc Ethernet đang kết nối.
+2. **Thực hiện truyền dữ liệu:** Chạy lệnh `slug pull` kéo một dự án có chứa nhiều file `.cpp`, `.py`, `.env.example`.
+3. **Phân tích dòng luồng TCP Stream:** Nhấp chuột phải vào một gói tin trong danh sách -> chọn **Follow -> TCP Stream**.
+   - Toàn bộ luồng dữ liệu hiển thị dưới dạng chuỗi byte nhị phân ngẫu nhiên thuần túy của mật mã XChaCha20-Poly1305.
+   - Kẻ tấn công đứng giữa mạng (Man-in-the-Middle) dù thu thập toàn bộ tệp `.pcapng` cũng hoàn toàn vô giá trị trước mật mã Hậu Lượng Tử NIST FIPS 203.
+   - File mẫu bắt gói tin thực tế sẵn có trong kho: [`docs/real_capture_from_a_to_b.pcapng`](docs/real_capture_from_a_to_b.pcapng).
+
+---
+
+## 8. Giấy Phép Bản Quyền (License)
 
 Dự án được phân phối dưới giấy phép mã nguồn mở **Apache License 2.0**. Xem chi tiết tại tệp [LICENSE](LICENSE).

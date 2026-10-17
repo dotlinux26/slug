@@ -160,11 +160,12 @@ In Suite 3, Slug uses NIST FIPS 203 (`ML-KEM-768`, formerly Kyber) for lattice-b
 ## 5. Quickstart: Ephemeral P2P Workspace Sharing
 
 ### Step 1: Host a Workspace on Machine A
-To share a folder `./my_project` on port `9443` using Suite 3 (PurePQC) and a session TTL of 4 hours:
+To share a folder `./my_project` on port `9443` using Suite 3 (PurePQC), Filter Level 3 (Entropy), and a workspace TTL of 4 hours:
 
 ```bash
-slug add ./my_project -p 9443 -s 3 --ttl 4h -ai --daemon
+slug host ./my_project -p 9443 -s 3 --workspace-ttl 4h --filter-level 3 --otp-step 60 --daemon
 ```
+*(Note: `slug host` is an official alias for `slug add`)*
 
 Terminal output:
 ```text
@@ -173,10 +174,9 @@ Terminal output:
 +----------------------------------------------------------------------------+
   Port:            9443
   Crypto Suite:    Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)
-  AI Secret Guard: ENABLED (Stateful BLAKE3 Audit)
-  Session TTL:     4h
-  One-Time TOTP:   49182305 (Rotates in 30s)
-  Directory Drop:  http://127.0.0.1:9443/drop
+  Filter Level:    Level 3: Entropy (Rules + Regex + Shannon Entropy)
+  Workspace TTL:   4h
+  One-Time TOTP:   49182305 (Rotates in 60s)
   Admin Dashboard: http://127.0.0.1:9443/admin
 +----------------------------------------------------------------------------+
 ```
@@ -267,17 +267,24 @@ slug diff ./local_copy -i 192.168.1.50 -p 9443 -o <TOTP>
 
 ---
 
-## 8. Stateful AI Secret Guard & Rules Engine
+## 8. 4-Level Filter Hierarchy & Directory Visibility Invariant
 
-When `-ai` is enabled, Slug inspects every file before transit to prevent secret leakage.
+Slug organizes filtering into four explicit cumulative levels:
 
-### Detection Heuristics:
-1. **Shannon Entropy Analysis**: Scans lines exceeding 4.5 bits/char entropy.
-2. **Regex Patterns**: Detects AWS keys, Stripe keys, GitHub tokens, Slack Webhooks, RSA/EC private keys.
-3. **Keyword Proximity**: Context analysis around `password`, `bearer`, `token`, `auth`.
+### Filter Levels:
+1. **Level 1 — Rules (`--filter-level 1`)**: Evaluates project `.gitignore` and host-defined `.slug/rules.conf` policies. No regex or entropy scanning.
+2. **Level 2 — Regex (`--filter-level 2`)**: Level 1 + automated secret regex scanning (AWS, GitHub, Stripe, Private Keys, JWTs, DB URLs).
+3. **Level 3 — Entropy (`--filter-level 3` - Default)**: Level 2 + Shannon Entropy analysis ($H(X) \ge 4.0$). Strictly applied to scannable text/code files only (`is_scannable_file`). Binary, compiled, media, and archive extensions (`.pyd`, `.dll`, `.exe`, `.png`, `.zip`) are automatically immune to false positives.
+4. **Level 4 — AI (`--filter-level 4 --ai-model <ollama|openai|gemini>`)**: Level 3 + contextual LLM advisory parsing.
 
-### Stateful Cache (`.slug/index.db`)
-Slug binds scan results to each file's BLAKE3 content hash. Unchanged files bypass repeated rescanning, reducing overhead to **0.017 μs** per file.
+### Directory Visibility Invariant:
+Slug preserves the entire workspace directory hierarchy in the Explorer. Files are categorized into two authoritative states:
+- `AVAILABLE` (Green): Clean and downloadable by authorized clients.
+- `BLOCKED` (Red): Denied at the backend; download requests are rejected.
+Internal metadata (`.slug/`, `.git/`) remains strictly hidden and protected.
+
+### Stateful SQLite Index (`.slug/index.db`)
+Slug binds scan results in an embedded SQLite 3.46.1 WAL database. Auto-healing automatically cleans legacy flags on non-scannable files on startup, and directory-level unblocking (`allow_folder`) applies immediately to all subfiles.
 
 ### Security Rules Configuration (`.slug/rules.conf`)
 You can define declarative blocking or allowlisting rules:
@@ -433,16 +440,19 @@ For penetration testers and security engineers transferring engagement data acro
 
 ```text
 WORKSPACE MANAGEMENT:
-  slug add <path> [-p <port>] [-s <1|2|3>] [--ttl <duration>] [-ai] [--daemon]
+  slug host <path> [-p <port>] [-s <1|2|3>] [--workspace-ttl <sec>] [--filter-level <1-4>] [--ai-model <ollama|openai|gemini>] [--otp-step <sec>] [--daemon]
+  slug add <path>   (Alias for slug host)
   slug list
-  slug stop -p <port>
+  slug stop -p <port> | -a
   slug status [--flagged]
+  slug serve -p <port> -w   (Opens Admin Dashboard at http://127.0.0.1:<port>/admin)
 
 TRANSFER & SYNCHRONIZATION:
   slug connect -i <ip> -p <port> -o <totp> [-u <user>] [-W <pass>]
-  slug pull <local_dir> -i <ip> -p <port> -o <totp> [-u <user>] [-W <pass>]
-  slug push <local_dir> <file> -i <ip> -p <port> [-u <user>] [-W <pass>]
-  slug diff <local_dir> -i <ip> -p <port> -o <totp>
+  slug pull <local_dir> -i <ip> -p <port> -o <totp> [--dry-run]
+  slug get <ip:port?otp=code> <remote_path> [local_dest]
+  slug push <file> -i <ip> -p <port> -o <totp> | -u <user>
+  slug ls [subpath]
 
 SECURITY POLICY & RULES:
   slug rule list
@@ -451,6 +461,7 @@ SECURITY POLICY & RULES:
   slug rule rm <rule_id>
 
 AI GUARD AUDIT:
+  slug audit scan <path> [--filter-level <1-4>] [--ai-model <provider>]
   slug audit list [-P <port>]
   slug audit allow <path> --reason "..." [-P <port>]
   slug audit recheck <path|--all> [-P <port>]
@@ -458,6 +469,8 @@ AI GUARD AUDIT:
 ENVSHIELD:
   slug env init [-s <1|2|3>]
   slug env run -- <command...>
+  slug env restore
+  slug env history
 
 BENCHMARKING & METRICS:
   slug bench [--quick] [--json]
@@ -466,3 +479,33 @@ INFORMATION:
   slug version
   slug help
 ```
+
+---
+
+## 13. Cryptographic Wire Verification with Wireshark
+
+To empirically verify that network packets are 100% encrypted without plaintext leaks:
+
+### 13.1. Display Filter Queries:
+```text
+# 1. Filter all Slug communications
+tcp.port == 9443
+
+# 2. Assert ZERO plaintext HTTP traffic over wire (Expected: 0 packets)
+tcp.port == 9443 && (http || http2)
+
+# 3. Assert ZERO plaintext keyword leaks (Expected: 0 packets)
+tcp.port == 9443 && (frame contains "GET " || frame contains "POST " || frame contains "HTTP/" || frame contains "password" || frame contains "token" || frame contains "secret" || frame contains "api_key")
+
+# 4. Assert ZERO plaintext filename/code leaks (Expected: 0 packets)
+tcp.port == 9443 && (frame contains "main.cpp" || frame contains "include" || frame contains "import" || frame contains "class " || frame contains "def ")
+
+# 5. Inspect encrypted binary AEAD stream
+tcp.port == 9443 && tcp.len > 100
+```
+
+### 13.2. Packet Analysis:
+- Right-click any packet in Wireshark and choose **Follow -> TCP Stream**.
+- All payload bytes appear as uniformly distributed random binary bytes ($H(X) \approx 7.98$ bits/byte). No file names, tickets, or secrets can be recovered by an on-path eavesdropper.
+- Reference capture file: [`docs/real_capture_from_a_to_b.pcapng`](docs/real_capture_from_a_to_b.pcapng).
+

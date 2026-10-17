@@ -29,12 +29,13 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
        └── Nạp biến môi trường thẳng vào RAM tiến trình khi chạy, không để plaintext trên đĩa
                                      |
                                      v
-  [BƯỚC 3: CHIA SẺ NỘI BỘ LAN / P2P THEO VAI TRÒ]
+  [BƯỚC 3: CHIA SẺ NỘI BỘ LAN / P2P THEO VAI TRÒ & 4 CẤP ĐỘ LỌC]
        slug add .  --->  slug pull -i <host> -p <port> -o <otp>
        ├── Tự động lọc bỏ rác build (node_modules/, target/, build/) theo .gitignore
-       ├── Hỗ trợ luật ngoại lệ Whitelist (!.env.example, !*.example)
-       ├── Tự động cách ly và ngăn chặn các file nhạy cảm đã bị cảnh báo ở Bước 1
-       └── Kênh truyền P2P mã hóa Hậu Lượng Tử (PQC), xác thực bằng mã OTP phân quyền 3 vai trò
+       ├── Hệ thống 4 cấp độ lọc: Level 1 (Rules), Level 2 (Regex), Level 3 (Entropy), Level 4 (AI)
+       ├── Hỗ trợ luật cấu hình của Host qua .slug/rules.conf và ngoại lệ Whitelist (!.env.example)
+       ├── Tự động bảo toàn cấu trúc cây thư mục (Directory Visibility Invariant: AVAILABLE / BLOCKED)
+       └── Kênh truyền P2P mã hóa Hậu Lượng Tử (PQC), xác thực bằng OTP xoay vòng linh hoạt hoặc RBAC
 ```
 
 ---

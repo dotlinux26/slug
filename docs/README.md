@@ -24,18 +24,20 @@ docs/
 ├── README.md              <-- (Tài liệu hiện tại) Tổng quan kiến trúc & Cẩm nang thẩm định giải pháp
 ├── 01-PROBLEM.md          <-- Đặt vấn đề thực tế: Bối cảnh LAN văn phòng, thu bài phòng lab & lỗ hổng của công cụ cũ
 ├── 02-SOLUTION.md         <-- Giải pháp kỹ thuật, Quy trình 3 bước & 4 kịch bản đời thường, so sánh đa chiều
-├── 03-AI-USAGE.md         <-- Vai trò thực tế của AI: Cố vấn ngữ cảnh (Advisory), Entropy Scanner & PQC EnvShield
-├── 04-ARCHITECTURE.md     <-- Đặc tả kiến trúc 5 tầng, Web Proxy cục bộ (Kiến trúc A), Giao thức Directional AEAD
-└── MODULE-MAP.md          <-- Bản đồ phân rã mã nguồn C++20 và hệ thống các chốt chặn kiểm duyệt (Gatekeepers)
+├── 03-AI-USAGE.md         <-- 4 Cấp độ lọc, Cố vấn ngữ cảnh (Advisory), Entropy Scanner & SQLite Auto-Healing
+├── 04-ARCHITECTURE.md     <-- Đặc tả 5 tầng, Directional AEAD, SQLite WAL, TTL đa tầng & Wireshark Packet Inspection
+├── MODULE-MAP.md          <-- Bản đồ phân rã mã nguồn C++20 và hệ thống các chốt chặn kiểm duyệt (Gatekeepers)
+└── TUTORIAL_VI.md         <-- Cẩm nang hướng dẫn sử dụng và triển khai thực chiến chi tiết bằng tiếng Việt
 ```
 
 | Tài liệu | Nội dung trọng tâm | Nhóm người đọc khuyến nghị |
 | :--- | :--- | :--- |
 | **[01-PROBLEM.md](01-PROBLEM.md)** | Phân tích thực trạng chuyển tệp LAN bị lãng phí băng thông WAN; bài toán thu bài tập phòng máy; lỗ hổng Plaintext của `python -m http.server`; sự cồng kềnh của FTP/SFTP; và rủi ro lộ API key khi dùng trợ lý AI. | Giám khảo, Trưởng nhóm kỹ thuật, Quản trị mạng |
 | **[02-SOLUTION.md](02-SOLUTION.md)** | Quy trình 3 bước tinh gọn; chi tiết 4 kịch bản đời thường (chuyển tệp nội bộ, thu bài sinh viên một chiều Write-Only, chia sẻ workspace sạch, bảo vệ bí mật với EnvShield); bảng so sánh toàn diện với các công cụ hiện hữu. | Giám khảo, Lập trình viên, Giảng viên |
-| **[03-AI-USAGE.md](03-AI-USAGE.md)** | Định vị chính xác vai trò của AI là Cố vấn phân tích ngữ cảnh (Contextual Advisor), không thần thánh hóa; bộ phân tích Shannon Entropy; cơ chế cache băm BLAKE3 (`index.db`) tiết kiệm tài nguyên; kỹ thuật nạp biến môi trường vào RAM. | Chuyên gia AI, Chuyên gia An toàn thông tin |
-| **[04-ARCHITECTURE.md](04-ARCHITECTURE.md)** | Đặc tả kiến trúc 5 tầng nghiêm ngặt; Mô hình Web UI Localhost Proxy (Kiến trúc A) đảm bảo 100% dữ liệu bay trên mạng là PQC AEAD; cơ chế dẫn xuất muối độc lập phân hướng (Directional Salts) chống Nonce-Reuse; giải pháp xuyên NAT. | Kỹ sư Hệ thống, Kiến trúc sư Phần mềm |
+| **[03-AI-USAGE.md](03-AI-USAGE.md)** | Định vị chính xác vai trò của AI là Cố vấn phân tích ngữ cảnh (Contextual Advisor); 4 cấp độ lọc tích lũy; bộ phân tích Shannon Entropy trên file scannable; SQLite auto-healing (`index.db`); kỹ thuật nạp biến môi trường vào RAM. | Chuyên gia AI, Chuyên gia An toàn thông tin |
+| **[04-ARCHITECTURE.md](04-ARCHITECTURE.md)** | Đặc tả kiến trúc 5 tầng nghiêm ngặt; Mô hình Web UI Localhost Proxy (Kiến trúc A); cơ chế dẫn xuất muối độc lập phân hướng (Directional Salts) chống Nonce-Reuse; SQLite WAL; Bất biến cây thư mục; Hướng dẫn bắt gói Wireshark. | Kỹ sư Hệ thống, Kiến trúc sư Phần mềm |
 | **[MODULE-MAP.md](MODULE-MAP.md)** | Bản đồ liên kết mã nguồn C++20 (`src/`), phân tích các chốt chặn kiểm duyệt dữ liệu tại tầng giao vận, tầng hệ thống tệp ảo (`SlugVFS Jail`) và tầng chính sách RBAC. | Lập trình viên thẩm định mã nguồn (Code Review) |
+| **[TUTORIAL_VI.md](TUTORIAL_VI.md)** | Cẩm nang hướng dẫn sử dụng thực chiến tiếng Việt: lệnh `slug host`, 4 cấp độ lọc, quản trị Admin Dashboard, bắt gói tin Wireshark và cheatsheet CLI. | Người dùng cuối, Lập trình viên, Giảng viên |
 
 ---
 

@@ -118,10 +118,12 @@ Slug cung cấp 3 bộ mật mã phù hợp với từng nhu cầu:
 ## 5. Khởi động nhanh: Chia sẻ & Đồng bộ Workspace
 
 ### Bước 1: Phía Máy Chủ (Host) mở chia sẻ thư mục
-Chia sẻ thư mục `./du_an` tại cổng `9443`, mã hóa Suite 3 (PurePQC), thời hạn sống (TTL) 24 tiếng, bật Slug Guard:
+Chia sẻ thư mục `./du_an` tại cổng `9443`, mã hóa Suite 3 (PurePQC), thời hạn sống (Workspace TTL) 24 tiếng, cấp độ lọc Level 3 (Entropy), chu kỳ OTP 60s:
 ```bash
-slug add ./du_an -p 9443 -s pqc -t 24h -d
+slug host ./du_an -p 9443 -s pqc -t 24h --filter-level 3 --otp-step 60 -d
 ```
+*(Lệnh `slug host` là bí danh tương đương với `slug add`)*
+
 Màn hình xuất hiện bảng thông số và bộ 3 mã OTP phân quyền:
 ```text
 +----------------------------------------------------------------------------+
@@ -129,9 +131,9 @@ Màn hình xuất hiện bảng thông số và bộ 3 mã OTP phân quyền:
 | Path:            D:/du_an                                                  |
 | Port:            9443                                                      |
 | Crypto Suite:    Suite 3: PurePQC (BLAKE3/ML-DSA-65/ML-KEM-768/XChaCha)   |
-| AI Secret Guard: ON                                                        |
-| Session TTL:     24h                                                       |
-| Role OTPs (Rotates in 30s):                                                |
+| Filter Level:    Level 3: Entropy (Rules + Regex + Shannon Entropy)        |
+| Workspace TTL:   24h                                                       |
+| Role OTPs (Rotates in 60s):                                                |
 |   [rw] Read-Write OTP: 12822565 (Full Sync & Web Dropbox)                  |
 |   [r]  Read-Only OTP:  08796195 (Read/Pull/View files only)                |
 |   [w]  Write-Only OTP: 70788146 (Blind Drop/Upload only)                   |
@@ -163,14 +165,14 @@ Trình duyệt tự mở `http://127.0.0.1:8080/`. Nhập IP `192.168.1.105:9443
 ## 6. Cơ chế xác thực: 3 Mã OTP phân quyền & RBAC Ephemeral
 
 ### 6.1. Bộ ba mã OTP phân quyền (Role-Based One-Time Tokens)
-Slug sinh 3 mã OTP 8 chữ số phân quyền độc lập, xoay vòng mỗi 30–60 giây:
+Slug sinh 3 mã OTP 8 chữ số phân quyền độc lập, chu kỳ xoay vòng cấu hình được (`--otp-step 30|60|120|300|600`, mặc định 60s):
 - **`[rw]` Read-Write OTP:** Quyền cao nhất, cho phép duyệt cây thư mục, kéo toàn bộ workspace và đẩy sửa đổi lên.
 - **`[r]` Read-Only OTP:** Quyền chỉ đọc, chỉ cho phép tải file hoặc pull về máy, cấm ghi sửa đổi.
 - **`[w]` Write-Only OTP:** Quyền hộp thư một chiều (Blind Drop), chỉ cho phép tải file lên máy chủ, cấm hoàn toàn xem danh sách thư mục hoặc đọc file.
 - **Cơ chế Burn-On-Use:** Mã OTP là vé dùng 1 lần cho từng thiết bị cá nhân; sau khi bắt tay thành công, mã đó lập tức bị hủy bỏ để chống phát lại.
 
-### 6.2. Tài khoản phân quyền RBAC cho nhóm / lớp học đông người
-Khi cần cho cả lớp 40–50 sinh viên cùng nộp bài đồng thời:
+### 6.2. Quản trị tài khoản RBAC & Admin Dashboard Thống Nhất
+Mỗi workspace có một trang Admin chuyên trách tại `http://127.0.0.1:<port>/admin`:
 ```bash
 # Tạo tài khoản chung quyền Ghi [w] có thời hạn 4 giờ:
 slug user add -u sinhvien -P 123456 -r w -t 4h -p 9443
@@ -178,6 +180,7 @@ slug user add -u sinhvien -P 123456 -r w -t 4h -p 9443
 # Xem danh sách tài khoản đang kích hoạt:
 slug user list -p 9443
 ```
+- Khi chỉnh sửa mật khẩu hoặc xóa tài khoản, hệ thống tự động thu hồi ngay lập tức (`revoke_sessions_by_identity`) toàn bộ các phiên kết nối đang mở của tài khoản đó.
 
 ---
 
@@ -194,25 +197,29 @@ Slug không truyền lại toàn bộ dữ liệu nếu file chỉ sửa đổi 
 
 ---
 
-## 8. Bộ lọc bảo mật: Slug Guard, Whitelist & Cố vấn AI
+## 8. Hệ Thống 4 Cấp Độ Lọc & Bất Biến Cây Thư Mục
 
-### 8.1. Slug Guard (100% Offline, Deterministic Core)
-- **Tự động áp dụng `.gitignore`:** Loại bỏ sạch sẽ các thư mục build rác (`node_modules/`, `target/`, `build/`, `*.log`).
-- **Phân tích Heuristic & Shannon Entropy:** Đo độ hỗn loạn $H(X) \ge 4.0$ để phát hiện API token, private key và tự động cách ly (`Quarantined`).
-- **BLAKE3 Content Cache (`.slug/index.db`):** Tra cứu kết quả quét chỉ mất **0.015 μs**, không tốn CPU quét lại các file không đổi.
+### 8.1. 4 Cấp Độ Lọc Tích Lũy (4 Filter Levels)
+Slug phân tách rõ ràng cơ chế lọc thành 4 cấp độ lựa chọn linh hoạt:
+- **Level 1 — Rules (`--filter-level 1`):** Áp dụng `.gitignore` và quy tắc Host cấu hình trong `.slug/rules.conf`. Không quét regex và entropy.
+- **Level 2 — Regex (`--filter-level 2`):** Level 1 + quét mẫu phát hiện secrets, API keys (AWS, GitHub, Stripe), private keys, JWT tokens.
+- **Level 3 — Entropy (`--filter-level 3` - Khuyến nghị):** Level 2 + phân tích Shannon Entropy $H(X) \ge 4.0$ trên các tệp văn bản/code (`is_scannable_file`). Tự động bỏ qua file nhị phân, `.pyd`, `.dll`, media, zip để loại bỏ triệt để false positive.
+- **Level 4 — AI (`--filter-level 4 --ai-model <ollama|openai|gemini>`):** Level 3 + cố vấn ngữ cảnh LLM hỗ trợ thẩm định mã nguồn nghi vấn.
 
-### 8.2. Hỗ trợ Whitelist ngoại lệ (`!.env.example`)
-Slug Guard hỗ trợ tiền tố chấm than `!` theo chuẩn `.gitignore`:
+### 8.2. Directory Visibility Invariant (Bất biến hiển thị cây thư mục)
+Toàn bộ cây thư mục được giữ nguyên vẹn trên Explorer, người dùng chỉ thấy 2 trạng thái chuẩn hóa:
+- **`AVAILABLE` (Xanh lá):** File sạch, sẵn sàng tải xuống.
+- **`BLOCKED` (Đỏ):** File bị chính sách hoặc scanner chặn, cấm tải ở backend.
+
+### 8.3. Hỗ trợ Whitelist ngoại lệ (`!.env.example`) và Trình Soạn Thảo Quy Tắc
+Cấu hình quy tắc tại `.slug/rules.conf` hoặc trực tiếp trên giao diện Admin Dashboard (`http://127.0.0.1:<port>/admin`):
 ```text
-# Trong .slug/rules.conf hoặc trên Web Command Center:
+# Chặn toàn bộ file môi trường nhưng chừa lại file mẫu
 .env*
 !.env.example
 !*.example
 ```
-Các file khớp luật `!` sẽ được đánh dấu `Whitelisted / Clean` và cho phép truyền tải an toàn.
-
-### 8.3. Slug AI Contextual Advisor (Tùy chọn với `--ai`)
-Khi truyền cờ `--ai` và có cấu hình Ollama hoặc Cloud API, Slug AI gửi đoạn code mẫu để nhận về schema JSON cấu trúc (`has_secret`, `reason`, `line`). Slug AI chỉ đóng vai trò cố vấn ngữ cảnh hỗ trợ người dùng, **tuyệt đối không ghi đè hoặc thay thế luật cứng của Slug Guard**.
+Khi Host lưu quy tắc mới, hệ thống tự động giải phóng cờ trong SQLite index và xóa manifest cache, cập nhật trạng thái hiển thị ngay lập tức.
 
 ---
 
@@ -282,16 +289,16 @@ Kết quả đo đạc thực tế trên CPU phổ thông:
 | :--- | :--- |
 | `slug` | Mở ngay Web Viewing Engine trên `http://127.0.0.1:8080/` (Aliases: `slug portal`, `slug web`) |
 | `slug shortcut` | Tạo lối tắt Desktop Windows (`Slug Workspace.lnk`) mở 1-chạm ẩn cửa sổ console |
-| `slug add <path> -p 9443 -s pqc -t 1d --ai -d` | Khởi tạo trạm chia sẻ workspace an toàn lượng tử chạy ngầm |
+| `slug host <path>` | Khởi tạo trạm host (hỗ trợ `--filter-level <1-4>`, `--ai-model <provider>`, `--otp-step`, `--workspace-ttl`, `-d`) |
 | `slug status` | Xem danh sách các workspace đang host, cổng, PID và trạng thái OTP |
 | `slug totp [-p <port>]` | Xem bảng 3 mã OTP phân quyền (`[rw]`, `[r]`, `[w]`) hoặc lấy mã nhanh |
 | `slug stop [-p <port>\|-a]` | Dừng server trên cổng chỉ định hoặc dừng toàn bộ server |
-| `slug serve -p <port> -w` | Mở giao diện Web Host Admin Dashboard trên loopback máy chủ |
+| `slug serve -p <port> -w` | Mở giao diện Web Host Admin Dashboard trên loopback máy chủ (`http://127.0.0.1:<port>/admin`) |
 | `slug connect -i <ip> -p <port> -o <otp>` | Xác thực và lưu chứng chỉ phiên vào danh bạ kết nối |
 | `slug pull -i <ip> -p <port> -o <otp> --to <dir>` | Đồng bộ vi sai toàn bộ workspace về thư mục cục bộ (kèm kế hoạch preview) |
 | `slug get <IP:PORT?otp=CODE> <remote_path> [dest]` | Tải ĐÚNG 1 file đơn lẻ cụ thể từ xa về máy |
 | `slug push <file> -i <ip> -p <port> -o <otp>\|-u <u>` | Đẩy tệp lên trạm từ xa (hộp thư nộp bài hoặc cập nhật mã nguồn) |
-| `slug ls` | Duyệt danh sách file từ xa với trạng thái (Available, Blocked, Quarantined) |
+| `slug ls` | Duyệt danh sách file từ xa với trạng thái (`AVAILABLE`, `BLOCKED`) |
 | `slug user add -u <user> -P <pass> -r <rw\|r\|w> -t <ttl>` | Quản lý tài khoản phân quyền RBAC cho nhóm hoặc lớp học |
 | `slug session <list\|kill <id>>` | Giám sát và hủy các phiên client đang kết nối |
 | `slug audit <list\|scan\|allow\|recheck>` | Quản lý các file bị cách ly bởi Slug Guard; phê duyệt ngoại lệ Whitelist |
@@ -304,3 +311,32 @@ Kết quả đo đạc thực tế trên CPU phổ thông:
 | `slug completion <bash\|zsh>` | Sinh script gợi ý lệnh tự động cho shell (Tab completion) |
 | `slug version` | Hiển thị thông tin phiên bản, giấy phép Apache-2.0 và chi tiết build |
 | `slug uninstall [-y]` | Gỡ cài đặt hoàn toàn Slug khỏi hệ thống máy tính |
+
+---
+
+## 13. Hướng Dẫn Kiểm Tra An Toàn Mật Mã Bằng Wireshark
+
+Để chứng minh dữ liệu bay trên mạng vật lý được bảo vệ 100% bằng mật mã Hậu Lượng Tử (PQC AEAD) và **không có bất kỳ byte bản rõ nào**:
+
+### 13.1. Các Bộ Lọc Wireshark Trực Quan (Display Filters)
+
+1. **Lọc cổng giao tiếp của Slug:**
+   ```text
+   tcp.port == 9443
+   ```
+2. **Kiểm tra rò rỉ HTTP bản rõ (Kỳ vọng: 0 packets):**
+   ```text
+   tcp.port == 9443 && (http || http2)
+   ```
+3. **Quét tìm chuỗi nhạy cảm hoặc header HTTP (Kỳ vọng: 0 packets):**
+   ```text
+   tcp.port == 9443 && (frame contains "GET " || frame contains "POST " || frame contains "HTTP/" || frame contains "password" || frame contains "token" || frame contains "api_key" || frame contains "secret")
+   ```
+4. **Kiểm tra rò rỉ tên file hoặc mã nguồn (Kỳ vọng: 0 packets):**
+   ```text
+   tcp.port == 9443 && (frame contains "main.cpp" || frame contains "include" || frame contains "import" || frame contains "class " || frame contains "def ")
+   ```
+5. **Xem luồng dữ liệu (TCP Stream):**
+   - Click phải vào bất kỳ gói tin nào -> **Follow -> TCP Stream**.
+   - Toàn bộ payload hiển thị dưới dạng byte nhị phân ngẫu nhiên thuần túy với Shannon Entropy cao ($H(X) \approx 7.98$ bits/byte), xác nhận không có bất kỳ rò rỉ bản rõ nào. File pcap mẫu có sẵn tại [`docs/real_capture_from_a_to_b.pcapng`](real_capture_from_a_to_b.pcapng).
+

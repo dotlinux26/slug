@@ -38,13 +38,16 @@ Slug tiếp cận AI theo một triết lý kỹ thuật thực dụng và có k
 
 ## 2. Mô Hình 3 Tầng Phân Loại Bảo Vệ Dữ Liệu (3-Tier Protection Model)
 
-Slug phân định rạch ròi giữa **Quy tắc lọc cấu trúc (Filter)**, **Chính sách của chủ máy (Policy)**, và **Kiểm duyệt bí mật (Slug Guard & AI)**:
+Slug phân định rạch ròi thành **Hệ thống 4 Cấp Độ Lọc Tích Lũy (Cumulative Filter Levels)**:
 
-| Tầng | Tên Cơ Chế | Nguồn Cấu Hình | Trạng Thái Hiển Thị (Status) | Ý Nghĩa Kỹ Thuật |
-| :---: | :--- | :--- | :--- | :--- |
-| **1** | **Workspace Filter** | `.gitignore` (phân tầng theo thư mục) | `Excluded (gitignore)` | Lọc bỏ các file rác phát sinh trong quá trình build (`node_modules/`, `target/`, `*.o`, `*.log`). Không phải cơ chế bảo mật mà là bộ lọc cấu trúc dự án. |
-| **2** | **Host Sharing Policy** | `.slug/rules.conf` | `Blocked (policy: <lý do>)` | Chính sách kiểm soát do chủ máy định nghĩa (chặn theo đuôi `.pem`, `.key`, `.sqlite`, hoặc chặn cứng tên file `.env`). Có hiệu lực ưu tiên cao nhất, hỗ trợ Whitelist với tiền tố `!`. |
-| **3** | **Secret Audit** | Slug Guard (Regex & Shannon Entropy) + Slug AI (Optional) | `Quarantined (Slug Guard: <lý do>)` | Động cơ Slug Guard phát hiện chuỗi khóa bí mật, token có entropy cao hoặc file môi trường. Tự động cách ly khỏi manifest và khóa chặt tại VFS Jail. |
+| Cấp | Cơ chế tích lũy | Nguồn cấu hình | Hành vi bắt buộc |
+| :---: | :--- | :--- | :--- |
+| **Level 1** | **Rules** | `.gitignore` + `.slug/rules.conf` | Lọc theo đường dẫn và quy tắc Host chỉ định, hỗ trợ Whitelist (`!.env.example`). Không quét Regex hay Entropy. |
+| **Level 2** | **Regex** | Level 1 + Mẫu nhận diện Secret | Tự động phát hiện AWS/GitHub/Stripe keys, Private Keys, JWT, URLs chứa password. |
+| **Level 3** | **Entropy** | Level 2 + Shannon Entropy | Tính toán $H(X) \ge 4.0$ **chỉ trên tệp văn bản/code (`is_scannable_file`)**. Miễn nhiễm hoàn toàn false positive cho `.pyd`, binary, video, ảnh, archive. |
+| **Level 4** | **AI** | Level 3 + AI Contextual Advisor | Kết nối LLM (Ollama / OpenAI / Gemini) phân tích ngữ cảnh, trả về schema JSON (`has_secret`, `reason`, `line`). |
+
+- **Directory Visibility Invariant:** Trên giao diện Explorer của người dùng cuối, toàn bộ cây thư mục được giữ nguyên vẹn với 2 trạng thái chuẩn hóa: `AVAILABLE` (màu xanh lá) và `BLOCKED` (màu đỏ). Lý do chi tiết (`RULE_BLOCKED`, `SECRET_DETECTED`, `ENTROPY_FLAGGED`) được chuyển vào bảng quản trị của Host.
 
 ---
 
@@ -52,22 +55,23 @@ Slug phân định rạch ròi giữa **Quy tắc lọc cấu trúc (Filter)**, 
 
 Hệ thống bảo vệ cốt lõi của Slug (`src/ai/stateful_audit.hpp`, `src/ai/scanner.cpp`, `src/policy/rules.cpp`) hoạt động như một trạm kiểm soát dữ liệu tự động ngay tại tầng giao vận.
 
-### 3.1. Hai Tầng Phòng Thủ Xác Định Của Slug Guard (Deterministic Defense)
-1. **Quét Mẫu Heuristic & Regex Chuẩn Xác:**
+### 3.1. Cơ Chế Phòng Thủ Xác Định Của Slug Guard (Deterministic Defense)
+1. **Quét Mẫu Heuristic & Regex Chuẩn Xác (Level 2):**
    * **Nhận diện chuyên sâu file môi trường:** Tự động phát hiện `.env`, `.env.local`, `.env.production` và các biến thể (loại trừ an toàn các file mẫu tài liệu như `.env.example`, `.env.sample`, `.env.template`).
    * **Nhận diện Unquoted & Quoted Token:** Quét các dòng gán biến `KEY=VALUE` hoặc `KEY: VALUE` cho các từ khóa nhạy cảm (`api_key`, `secret`, `token`, `password`, `auth`) ngay cả khi không đặt trong dấu ngoặc kép.
    * **Mẫu định danh nhà cung cấp phổ biến:** OpenAI (`sk-proj-...`, `sk-...`), Stripe (`sk_live_...`), GitHub (`ghp_...`), AWS (`AKIA...`), Private Key Headers (`-----BEGIN ... PRIVATE KEY-----`).
-2. **Phân Tích Độ Hỗn Loạn Toán Học (Shannon Entropy Analyzer):**
-   * Với các chuỗi secret được sinh ngẫu nhiên (không có tiền tố cố định), Slug Guard tính toán độ hỗn loạn Shannon:
+2. **Phân Tích Độ Hỗn Loạn Toán Học Có Chọn Lọc (Shannon Entropy Analyzer - Level 3):**
+   * **Bộ lọc tệp có thể quét (`is_scannable_file`):** Loại trừ tuyệt đối toàn bộ file nhị phân, compiled, media, nén (`.pyd`, `.dll`, `.exe`, `.bin`, `.pak`, `.so`, `.png`, `.jpg`, `.mp4`, `.zip`, `.iso`...).
+   * **Tính toán Shannon Entropy:** Chỉ áp dụng cho các file văn bản/mã nguồn:
      $$H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
-   * Bất kỳ giá trị nào có độ dài $\ge 20$ ký tự và entropy $H(X) \ge 4.0$ bits/byte sẽ bị nghi vấn là khóa mật mã sinh ngẫu nhiên và đưa vào diện cách ly.
+   * Bất kỳ chuỗi nào dài $\ge 20$ ký tự có $H(X) \ge 4.0$ bits/byte sẽ được đánh dấu cảnh báo.
 
-### 3.2. Bộ Nhớ Đệm Trạng Thái BLAKE3 (`.slug/index.db`)
-Để không làm chậm tiến trình làm việc khi dự án có hàng chục nghìn tệp:
-* Mỗi file được định danh bằng mã băm nội dung BLAKE3 (32 bytes).
-* Trạng thái quét (`CLEAN`, `AI_FLAGGED`, `USER_ALLOWED`) được lưu vào tệp chỉ mục JSON nguyên tử (`.slug/index.db`) kết hợp cấu trúc băm in-memory (`std::unordered_map`).
-* Khi file không đổi nội dung (khớp BLAKE3 hash), thời gian kiểm tra là **0 ms**, hoàn toàn không tốn CPU quét lại.
-* Khi nội dung file thay đổi, hash thay đổi, hệ thống sẽ tự động kích hoạt quét lại.
+### 3.2. Cơ Sở Dữ Liệu Chỉ Mục SQLite 3.46.1 WAL (`.slug/index.db`)
+Để xử lý mượt mà dự án có hàng chục nghìn tệp:
+* Tệp `.slug/index.db` sử dụng SQLite nhúng trực tiếp với chế độ **WAL (Write-Ahead Logging)**, triệt tiêu lỗi khóa bảng giữa Web Admin và CLI.
+* **Cơ chế Tự Động Chữa Lành (Auto-Healing):** Ngay khi khởi động, hệ thống tự động xóa sạch các cờ lỗi cũ trên các tệp non-scannable (`.pyd`, `.dll`, `.png`...), khôi phục ngay trạng thái sạch.
+* **Khớp tiền tố mở khóa thư mục (`allow_folder`):** Khi Host thêm luật ALLOW cho thư mục, lệnh SQL unblock tức thì các file con `(file_path = ? OR file_path LIKE ? || '/%')` và xóa manifest cache, phản hồi trạng thái `AVAILABLE` ngay trong 0ms.
+* Mỗi file được kiểm tra qua BLAKE3 hash; nếu hash không đổi, kết quả trả về tức thì $O(1)$ mà không tốn CPU quét lại.
 
 ---
 

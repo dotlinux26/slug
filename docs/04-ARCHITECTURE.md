@@ -32,10 +32,10 @@ Slug được xây dựng theo nguyên tắc phân lớp đơn hướng nghiêm 
                                           |
                                           v
 +-----------------------------------------------------------------------------------+
-| TẦNG 4: CHÍNH SÁCH BẢO MẬT & KIỂM DUYỆT (POLICY, RBAC & AI AUDIT ENGINE)          |
-|  ├── ACL & TotpManager (src/core/acl*)  : 3-Role TOTP (rw/r/w), Single-Use Burn   |
+| TẦNG 4: CHÍNH SÁCH BẢO MẬT & KIỂM DUYỆT (POLICY, RBAC & 4-LEVEL FILTER)          |
+|  ├── ACL & TotpManager (src/core/acl*)  : RBAC (rw/r/w), Configurable TTL Step    |
 |  ├── PolicyEngine (src/policy/*)        : .gitignore phân tầng + .slug/rules.conf |
-|  └── Stateful AI Guard (src/ai/*)       : Heuristic + Shannon Entropy + index.db  |
+|  └── Stateful Guard (src/ai/*)          : 4 Cấp độ lọc + SQLite index.db (WAL)    |
 +-----------------------------------------+-----------------------------------------+
                                           |
                                           v
@@ -238,15 +238,93 @@ Kiến trúc mật mã của Slug không dừng lại ở việc gọi API thư 
 ```
 
 ### 6.1. Bộ Nhớ Đệm Chỉ Mục Kiểm Toán Trạng Thái (`.slug/index.db`)
-- **Bản chất lưu trữ:** Mặc dù mang phần mở rộng `.db`, tệp này là một cấu trúc dữ liệu JSON được Slug tuần tự hóa nguyên tử (Atomic Write).
-- **Tối ưu tra cứu 0ms:** Khi nạp vào RAM, toàn bộ mục kiểm toán được tổ chức thành bảng băm `std::unordered_map`. Khi một tệp trong dự án được truy vấn, Slug chỉ cần băm nhanh nội dung bằng BLAKE3 (vài micro-giây) rồi so khớp hash trong bảng băm với độ phức tạp thời gian **$O(1)$**; nếu hash không đổi, kết quả trả về ngay lập tức mà không cần phân tích lại Regex hay Entropy.
-- **Tính toàn vẹn (Atomic Swap):** Quá trình lưu chỉ mục sử dụng cơ chế ghi tệp tạm thời rồi đổi tên nguyên tử (`atomic rename`), đảm bảo tệp chỉ mục không bao giờ bị hỏng dù hệ điều hành bị mất điện hoặc tiến trình bị tắt đột ngột.
+- **Bản chất lưu trữ:** Tệp `.slug/index.db` được quản lý bởi engine SQLite 3.46.1 nhúng trực tiếp dưới dạng C-amalgamation độc lập (`third_party/sqlite/sqlite3.c`), không đòi hỏi bất kỳ thư viện ngoài nào (100% zero-dependency).
+- **Cơ chế WAL Mode (Write-Ahead Logging):** Slug kích hoạt `PRAGMA journal_mode=WAL` và `PRAGMA synchronous=NORMAL`, cho phép các tiến trình đọc (Web Portal, CLI list) và tiến trình ghi (Scanner, Host Admin) hoạt động đồng thời mà không bị khóa bảng (`database is locked`).
+- **Tối ưu tra cứu $O(1)$:** Kết hợp giữa SQLite database trên đĩa và bảng băm `std::unordered_map` trong RAM. Mỗi tệp được kiểm tra qua BLAKE3 hash; nếu hash không thay đổi, Slug trả về trạng thái ngay lập tức (0ms).
+- **Cơ chế Tự Động Chữa Lành (Auto-Healing):** Khi nạp database, hệ thống tự động chạy truy vấn dọn dẹp các cờ lỗi lịch sử trên các file nhị phân, compiled hoặc media (như `.pyd`, `.dll`, `.png`), khôi phục trạng thái sạch tức thì.
+- **Mở khóa theo phân cấp thư mục (`allow_folder`):** Khi Host thêm một quy tắc ALLOW cho thư mục (ví dụ `ALLOW path apps/marknote/_internal/`), truy vấn SQL mở khóa tức thời toàn bộ các tệp con:
+  $$\text{WHERE } (\text{file\_path} = ? \text{ OR } \text{file\_path LIKE } ? \parallel \text{'/{\%}'})$$
+  đồng thời kích hoạt xóa cache manifest để tái đánh giá tức thì mà không cần khởi động lại server.
 
 ### 6.2. Nhật Ký Kiểm Toán Nối Đuôi An Toàn (`.slug/audit.log`)
 - Được lưu theo định dạng **JSON Lines (JSONL)**: Mỗi sự kiện kiểm toán (`AI_UPLOAD_BLOCKED`, `FILE_DOWNLOAD`, `DECISION_OVERRIDE`...) là một dòng JSON độc lập.
-- **Loại bỏ nguy cơ Khóa Bảng (Zero Database Lock):** Thay vì phải điều phối khóa ghi (Write Lock / Mutex) phức tạp của các engine SQL truyền thống (thường sinh ra lỗi `database is locked` khi nhiều luồng Web Server và CLI cùng ghi), Slug ghi nối đuôi trực tiếp ở cấp độ hệ thống tệp với hiệu năng I/O tối đa.
+- **Ghi nối đuôi thời gian thực (O(1)):** Ghi tuần tự không phụ thuộc transaction dài, đảm bảo vết kiểm toán không bị gián đoạn hay mất mát khi crash.
 
 ### 6.3. Sổ Đăng Bạ Workspace Toàn Cục (`~/.slug/registry.json`)
 - Đặt tại thư mục người dùng (`$HOME/.slug/`), đóng vai trò như một Service Registry cục bộ.
 - Cho phép lệnh `slug list` và Web Portal tra cứu tức thì toàn bộ các workspace đang được chia sẻ, kiểm tra trạng thái sống còn của tiến trình nền (`ProcessUtils::is_process_alive`), và tự động thanh lọc các workspace của tiến trình đã kết thúc mà không để lại rác tài nguyên.
+
+---
+
+## 7. Bất Biến Hiển Thị Cây Thư Mục & Hệ Thống 4 Cấp Độ Lọc
+
+### 7.1. Directory Visibility Invariant (Bất biến hiển thị)
+> **Nguyên tắc cốt lõi:** Slug không bao giờ tự ý tỉa cành, cắt bỏ hay giấu file/thư mục khỏi cây thư mục chỉ vì chúng bị `.gitignore`, rules hoặc scanner đánh dấu. Cấu trúc dự án phải luôn được bảo toàn nguyên vẹn.
+
+| Trạng thái | Hiển thị Explorer | Tải file qua mạng | Ý nghĩa kỹ thuật |
+| :--- | :---: | :---: | :--- |
+| `AVAILABLE` | Có | Được phép tải | Vượt qua các chốt kiểm duyệt chính sách và bảo mật. |
+| `BLOCKED` | Có | Bị từ chối | Bị chặn bởi `.gitignore`, rule của Host, hoặc bộ quét secret. |
+| `.slug/`, `.git/` | Không hiển thị | Tuyệt đối cấm | Thư mục metadata nội bộ, được bảo vệ ở tầng thấp nhất (`is_internal_slug_path`). |
+
+Mọi thao tác cấm tải được cưỡng chế trực tiếp tại backend (`vfs_.read_file`, `get_chunk`). Frontend không bao giờ quyết định quyền truy cập dữ liệu.
+
+### 7.2. Định Nghĩa 4 Cấp Độ Lọc Tích Lũy (4 Filter Levels)
+
+```text
+Level 1: Rules (.gitignore + .slug/rules.conf)
+    └── Level 2: Regex (Bổ sung bộ mẫu phát hiện Secret / Token / Private Key / JWT)
+            └── Level 3: Entropy (Bổ sung Shannon Entropy H(X) >= 4.0 trên scannable text/code)
+                    └── Level 4: AI (Bổ sung Contextual LLM Advisor: Ollama / OpenAI / Gemini)
+```
+
+- **Tách biệt với Scope Override:** Các cờ `--include-ignored` và `--no-filter` chỉ là tùy chọn phạm vi chia sẻ (scope), tuyệt đối không bao giờ làm vô hiệu hóa xác thực, mã hóa AEAD, RBAC, chống path traversal hoặc bảo vệ thư mục metadata `.slug/`.
+
+---
+
+## 8. Hệ Thống Phân Cấp 4 Loại TTL & Quản Trị Vòng Đời Phiên (Session Lifecycle)
+
+Slug xây dựng mô hình thời gian sống (TTL) 4 tầng độc lập và chặt chẽ:
+
+1. **OTP Step TTL (Chu kỳ xoay vòng mã xác thực):** Cấu hình linh hoạt qua `--otp-step <seconds>` (30s, 60s, 120s, 300s, 600s). Tự hủy vé ngay sau khi bắt tay thành công.
+2. **Workspace TTL (Thời hạn sống của trạm host):** Cấu hình qua `--workspace-ttl <seconds>`. Khi hết hạn, bộ dọn dẹp `check_expired_workspaces()` tự động thu hồi tài nguyên và đóng trạm host an toàn.
+3. **User TTL (Thời hạn hiệu lực tài khoản RBAC):** Lưu trong `.slug/acl.db` (`expires_at = now + ttl`). Khi quá hạn, user bị từ chối đăng nhập.
+4. **Session TTL (Thời hạn phiên kết nối client):** Ràng buộc theo nguyên tắc:
+   $$\text{SessionTTL} = \min(\text{CertTTL}, \text{UserRemainingTTL})$$
+   Đảm bảo một phiên kết nối không bao giờ tồn tại lâu hơn thời hạn tài khoản.
+
+- **Thu Hồi Phiên Tức Thì (Immediate Session Revocation):** Khi Host sửa mật khẩu, đổi quyền hoặc xóa tài khoản, hệ thống lập tức kích hoạt `revoke_sessions_by_identity` ngắt kết nối toàn bộ các client đang online của user đó.
+- **Trạng thái hiển thị rành mạch:** Admin Dashboard phân định chính xác huy hiệu `ACTIVE (Còn sống)`, `EXPIRED (Đã hết hạn)` và `REVOKED (Đã hủy)`, triệt tiêu hoàn toàn trạng thái lai sai lệch.
+
+---
+
+## 9. Kiểm Định An Toàn Kênh Mật Mã Bằng Wireshark (Deep Packet Inspection)
+
+Mọi gói tin truyền qua mạng giữa Client và Host (trên cổng `9443`) đều được mã hóa hoàn toàn bằng **ML-KEM-768 + XChaCha20-Poly1305 AEAD**. Dưới đây là bộ truy vấn Wireshark chính xác để kiểm chứng:
+
+### 9.1. Bộ Lọc Hiển Thị (Display Filters) Kiểm Tra Bảo Mật
+
+```text
+# 1. Bắt toàn bộ luồng dữ liệu của Slug
+tcp.port == 9443
+
+# 2. Chứng minh KHÔNG có HTTP bản rõ trên mạng (Kỳ vọng: 0 packets)
+tcp.port == 9443 && (http || http2)
+
+# 3. Quét tìm bản rõ từ khóa nhạy cảm / headers (Kỳ vọng: 0 packets)
+tcp.port == 9443 && (frame contains "GET " || frame contains "POST " || frame contains "HTTP/" || frame contains "password" || frame contains "token" || frame contains "secret" || frame contains "api_key")
+
+# 4. Quét tìm bản rõ tên file hoặc nội dung code (Kỳ vọng: 0 packets)
+tcp.port == 9443 && (frame contains "main.cpp" || frame contains "include" || frame contains "import" || frame contains "class " || frame contains "def ")
+
+# 5. Phân tích các khối dữ liệu mã hóa nhị phân
+tcp.port == 9443 && tcp.len > 100
+```
+
+### 9.2. Phân Tích Thực Tế Dòng Luồng TCP Stream
+Khi nhấp chuột phải vào một gói tin và chọn **Follow -> TCP Stream**:
+- **Khung bắt tay (Handshake Frame):** Ciphertext ML-KEM-768 (1088 bytes) và Public Key (1184 bytes) có phân bổ entropy ngẫu nhiên cao.
+- **Khung dữ liệu (Data Frames):** Từng chunk 64 KiB được bọc trong 16-byte Poly1305 Auth Tag, Nonce độc lập phân hướng và ciphertext.
+- **Kết luận:** Dù kẻ tấn công đứng cùng mạng Wi-Fi và dump toàn bộ gói tin bằng `tcpdump` hay `Wireshark`, 100% dữ liệu thu được chỉ là ciphertext ngẫu nhiên thuần túy, bảo vệ tuyệt đối tính riêng tư của dữ liệu người dùng. Mẫu capture thực tế: [`docs/real_capture_from_a_to_b.pcapng`](real_capture_from_a_to_b.pcapng).
+
 
