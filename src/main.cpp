@@ -3866,6 +3866,8 @@ int cmd_portal(int argc, char* argv[]) {
                     send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
                 }
                 return;
+            }
+
             if (path == "/api/workspace/users/add" && method == "POST") {
                 try {
                     auto j = nlohmann::json::parse(body);
