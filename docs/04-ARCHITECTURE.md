@@ -208,3 +208,45 @@ Kiến trúc mật mã của Slug không dừng lại ở việc gọi API thư 
 #### 5. Cơ Chế Xác Thực Đa Lớp: Vé Phiên Dùng 1 Lần (TOTP / Ephemeral Ticket)
 - Trước khi nâng cấp lên kênh PQC AEAD đầy đủ, Slug xác thực người dùng bằng mã OTP 8 chữ số (chu kỳ xoay vòng 30 giây, tự hủy ngay khi xác thực thành công) hoặc vé phiên có chữ ký số.
 - Phân tách quyền hạn rõ ràng thành 3 mức cố định tại tầng VFS: `READ_WRITE` (`[rw]`), `READ_ONLY` (`[r]`), và `WRITE_ONLY` (`[w]`), ngăn ngừa triệt để mọi hành vi lạm quyền hoặc vượt ranh giới tài nguyên.
+
+---
+
+## 6. Kiến Trúc Lưu Trữ & Chỉ Mục Trạng Thái (Zero-Dependency State & Indexing Engine)
+
+Để kiên định với triết lý **Zero-Dependency Portable Binary** (~8 MB, chạy ngay trên mọi máy tính mà không cần cài đặt runtime hay cơ sở dữ liệu ngoài), Slug chủ động chọn mô hình lưu trữ phân tầng hướng hiệu năng cao (tương tự triết lý thiết kế của Git `.git/index` và Docker container metadata):
+
+```text
++---------------------------------------------------------------------------------+
+| KIẾN TRÚC LƯU TRỮ VÀ QUẢN LÝ DỮ LIỆU SLUG (ZERO-DEPENDENCY STORAGE ARCHITECTURE) |
++---------------------------------------------------------------------------------+
+|                                                                                 |
+| 1. IN-MEMORY HASH INDEX (RAM O(1) Lookup - 0ms Cache Hit)                       |
+|    std::unordered_map<string, AuditIndexEntry>                                  |
+|    - Ánh xạ đường dẫn -> BLAKE3 hash -> AuditStatus (CLEAN / FLAGGED / ALLOWED) |
+|                                                                                 |
+| 2. ATOMIC FLAT-FILE PERSISTENCE (.slug/index.db)                                |
+|    Định dạng: Atomic JSON Document (ghi ra .tmp rồi đổi tên nguyên tử)          |
+|    - Miễn nhiễm hoàn toàn trước rủi ro hỏng file (file corruption) khi crash    |
+|                                                                                 |
+| 3. APPEND-ONLY EVENT LOGGING (.slug/audit.log)                                  |
+|    Định dạng: JSON Lines (JSONL) Streaming Log                                  |
+|    - Ghi nối đuôi O(1) thời gian thực, triệt tiêu hoàn toàn Database Lock       |
+|                                                                                 |
+| 4. GLOBAL WORKSPACE REGISTRY (~/.slug/registry.json)                            |
+|    - Quản lý danh bạ port, PID, TTL, Filter Mode và dọn rác tiến trình chết    |
++---------------------------------------------------------------------------------+
+```
+
+### 6.1. Bộ Nhớ Đệm Chỉ Mục Kiểm Toán Trạng Thái (`.slug/index.db`)
+- **Bản chất lưu trữ:** Mặc dù mang phần mở rộng `.db`, tệp này là một cấu trúc dữ liệu JSON được Slug tuần tự hóa nguyên tử (Atomic Write).
+- **Tối ưu tra cứu 0ms:** Khi nạp vào RAM, toàn bộ mục kiểm toán được tổ chức thành bảng băm `std::unordered_map`. Khi một tệp trong dự án được truy vấn, Slug chỉ cần băm nhanh nội dung bằng BLAKE3 (vài micro-giây) rồi so khớp hash trong bảng băm với độ phức tạp thời gian **$O(1)$**; nếu hash không đổi, kết quả trả về ngay lập tức mà không cần phân tích lại Regex hay Entropy.
+- **Tính toàn vẹn (Atomic Swap):** Quá trình lưu chỉ mục sử dụng cơ chế ghi tệp tạm thời rồi đổi tên nguyên tử (`atomic rename`), đảm bảo tệp chỉ mục không bao giờ bị hỏng dù hệ điều hành bị mất điện hoặc tiến trình bị tắt đột ngột.
+
+### 6.2. Nhật Ký Kiểm Toán Nối Đuôi An Toàn (`.slug/audit.log`)
+- Được lưu theo định dạng **JSON Lines (JSONL)**: Mỗi sự kiện kiểm toán (`AI_UPLOAD_BLOCKED`, `FILE_DOWNLOAD`, `DECISION_OVERRIDE`...) là một dòng JSON độc lập.
+- **Loại bỏ nguy cơ Khóa Bảng (Zero Database Lock):** Thay vì phải điều phối khóa ghi (Write Lock / Mutex) phức tạp của các engine SQL truyền thống (thường sinh ra lỗi `database is locked` khi nhiều luồng Web Server và CLI cùng ghi), Slug ghi nối đuôi trực tiếp ở cấp độ hệ thống tệp với hiệu năng I/O tối đa.
+
+### 6.3. Sổ Đăng Bạ Workspace Toàn Cục (`~/.slug/registry.json`)
+- Đặt tại thư mục người dùng (`$HOME/.slug/`), đóng vai trò như một Service Registry cục bộ.
+- Cho phép lệnh `slug list` và Web Portal tra cứu tức thì toàn bộ các workspace đang được chia sẻ, kiểm tra trạng thái sống còn của tiến trình nền (`ProcessUtils::is_process_alive`), và tự động thanh lọc các workspace của tiến trình đã kết thúc mà không để lại rác tài nguyên.
+
