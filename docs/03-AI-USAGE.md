@@ -62,10 +62,10 @@ Hệ thống bảo vệ cốt lõi của Slug (`src/ai/stateful_audit.hpp`, `src
      $$H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
    * Bất kỳ giá trị nào có độ dài $\ge 20$ ký tự và entropy $H(X) \ge 4.0$ bits/byte sẽ bị nghi vấn là khóa mật mã sinh ngẫu nhiên và đưa vào diện cách ly.
 
-### 3.2. Bộ Nhớ Đệm Trạng Thái BLAKE3 (`.slug/index.db`)
+### 3.2. Bộ Nhớ Đệm Trạng Thái BLAKE3 (`.slug/audit_index.json`)
 Để không làm chậm tiến trình làm việc khi dự án có hàng chục nghìn tệp:
 * Mỗi file được định danh bằng mã băm nội dung BLAKE3 (32 bytes).
-* Trạng thái quét (`CLEAN`, `AI_FLAGGED`, `USER_ALLOWED`) được lưu vào SQLite/B-Tree index.
+* Trạng thái quét (`CLEAN`, `AI_FLAGGED`, `USER_ALLOWED`) được lưu vào chỉ mục JSON nguyên tử (`.slug/audit_index.json`) kết hợp cấu trúc băm in-memory (`std::unordered_map`).
 * Khi file không đổi nội dung (khớp BLAKE3 hash), thời gian kiểm tra là **0 ms**, hoàn toàn không tốn CPU quét lại.
 * Khi nội dung file thay đổi, hash thay đổi, hệ thống sẽ tự động kích hoạt quét lại.
 
