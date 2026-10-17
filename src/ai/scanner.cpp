@@ -44,6 +44,17 @@ bool AiScanner::is_scannable_file(const std::filesystem::path& path) {
     for (auto& c : fname) c = static_cast<char>(std::tolower(c));
     for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
+    // Absolute exclusion for binary, compiled, compressed, and media files
+    static const std::vector<std::string> binary_exts = {
+        ".pyd", ".dll", ".exe", ".bin", ".pak", ".so", ".dylib", ".obj", ".o",
+        ".class", ".pyc", ".dat", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp",
+        ".svg", ".mp4", ".mp3", ".pdf", ".zip", ".tar", ".gz", ".7z", ".iso",
+        ".ttf", ".woff", ".woff2", ".wasm", ".pdb", ".lib", ".a", ".node"
+    };
+    for (const auto& be : binary_exts) {
+        if (ext == be) return false;
+    }
+
     // Support .env and variants (.env.local, .env.production, etc.)
     if (fname == ".env" || fname.rfind(".env.", 0) == 0 || ext == ".env") {
         return true;
@@ -81,6 +92,10 @@ static double calculate_entropy(std::string_view s) {
 ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_view content, bool deep) const {
     ScanFinding finding;
     finding.detector = "Smart Regex Guard";
+
+    if (!is_scannable_file(file_path)) {
+        return finding;
+    }
 
     std::string fname = std::filesystem::path(file_path).filename().string();
     for (auto& c : fname) c = static_cast<char>(std::tolower(c));
@@ -384,6 +399,11 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
 }
 
 ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_view content, bool deep) const {
+    if (!is_scannable_file(file_path)) {
+        ScanFinding safe;
+        safe.has_secret = false;
+        return safe;
+    }
     if (provider_ == ProviderType::LOCAL_OLLAMA) {
         return scan_ollama(file_path, content);
     }

@@ -3,10 +3,11 @@
 #include "src/core/types.hpp"
 #include <string>
 #include <vector>
-#include <map>
 #include <mutex>
 #include <filesystem>
 #include <optional>
+
+struct sqlite3;
 
 namespace slug::ai {
 
@@ -24,6 +25,12 @@ struct AuditIndexEntry {
 class StatefulAuditIndex {
 public:
     explicit StatefulAuditIndex(std::filesystem::path index_file = {});
+    ~StatefulAuditIndex();
+
+    StatefulAuditIndex(const StatefulAuditIndex&) = delete;
+    StatefulAuditIndex& operator=(const StatefulAuditIndex&) = delete;
+    StatefulAuditIndex(StatefulAuditIndex&& other) noexcept;
+    StatefulAuditIndex& operator=(StatefulAuditIndex&& other) noexcept;
 
     bool load();
     bool save() const;
@@ -34,6 +41,9 @@ public:
 
     void update_entry(const AuditIndexEntry& entry);
     bool allow_file(const std::string& file_path, const std::string& reason, const std::string& actor = "user");
+    bool allow_folder(const std::string& folder_path, const std::string& reason, const std::string& actor = "user");
+    bool allow_all(const std::string& reason = "Whitelisted all by admin", const std::string& actor = "user");
+    bool clear_flagged_for_path(const std::string& path);
     bool block_file(const std::string& file_path, const std::string& reason, const std::string& actor = "user");
     bool remove_entry(const std::string& file_path);
 
@@ -44,7 +54,10 @@ public:
 private:
     std::filesystem::path index_file_;
     mutable std::mutex mutex_;
-    std::map<std::string, AuditIndexEntry> entries_;
+    sqlite3* db_{nullptr};
+
+    void init_sqlite();
+    void close_sqlite();
 };
 
 } // namespace slug::ai

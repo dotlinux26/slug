@@ -13,6 +13,12 @@ add_definitions(
     -DBLAKE3_NO_SSE41
     -DBLAKE3_NO_AVX2
     -DBLAKE3_NO_AVX512
+    -DSQLITE_DQS=0
+    -DSQLITE_THREADSAFE=1
+    -DSQLITE_DEFAULT_MEMSTATUS=0
+    -DSQLITE_OMIT_DEPRECATED
+    -DSQLITE_OMIT_PROGRESS_CALLBACK
+    -DSQLITE_OMIT_SHARED_CACHE
 )
 
 include_directories(
@@ -21,6 +27,7 @@ include_directories(
 )
 
 set(SLUG_SOURCES
+    third_party/sqlite/sqlite3.c
     third_party/blake3/blake3.c
     third_party/blake3/blake3_portable.c
     third_party/blake3/blake3_dispatch.c
@@ -93,7 +100,7 @@ elseif(APPLE)
 else()
     # Linux / POSIX
     find_package(OpenSSL REQUIRED)
-    target_link_libraries(slug PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread)
+    target_link_libraries(slug PRIVATE OpenSSL::SSL OpenSSL::Crypto pthread ${CMAKE_DL_LIBS})
 
     if(SLUG_BUILD_STATIC)
         target_link_options(slug PRIVATE -static -static-libgcc -static-libstdc++)

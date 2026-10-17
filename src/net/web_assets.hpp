@@ -144,10 +144,10 @@ public:
                     std::string dname = p.substr(0, slash);
                     dir_sizes[dname] += f.size;
                     if (seen_dirs.insert(dname).second) {
-                        items.push_back({true, dname, dname, 0, "folder", "Available", "badge-available", "", "", false});
+                        items.push_back({true, dname, dname, 0, "folder", "AVAILABLE", "badge-available", "", "", false});
                     }
                 } else {
-                    items.push_back({false, p, p, f.size, "file", "Available", "badge-available", "", f.file_blake3_hash, true});
+                    items.push_back({false, p, p, f.size, "file", "AVAILABLE", "badge-available", "", f.file_blake3_hash, true});
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -158,10 +158,10 @@ public:
                         std::string full_d = norm_sub + "/" + dname;
                         dir_sizes[full_d] += f.size;
                         if (seen_dirs.insert(full_d).second) {
-                            items.push_back({true, dname, full_d, 0, "folder", "Available", "badge-available", "", "", false});
+                            items.push_back({true, dname, full_d, 0, "folder", "AVAILABLE", "badge-available", "", "", false});
                         }
                     } else {
-                        items.push_back({false, rem, p, f.size, "file", "Available", "badge-available", "", f.file_blake3_hash, true});
+                        items.push_back({false, rem, p, f.size, "file", "AVAILABLE", "badge-available", "", f.file_blake3_hash, true});
                     }
                 }
             }
@@ -174,26 +174,11 @@ public:
             }
         }
 
-        // Process skipped / filtered / quarantined files
+        // Process skipped / filtered / quarantined files (Standardized to BLOCKED)
         for (const auto& s : manifest.skipped) {
             std::string p = s.relative_path;
-            std::string st_label = "Excluded";
-            std::string badge_cls = "badge-excluded";
-            if (s.status == "AI_FLAGGED" || s.status == "SMART_FILTER_FLAGGED") {
-                st_label = "Quarantined";
-                badge_cls = "badge-quarantined";
-            } else if (s.status == "MANUAL_BLOCKED") {
-                st_label = "Blocked (Manual Guard)";
-                badge_cls = "badge-blocked";
-            } else if (s.status == "RULE_OR_GITIGNORE_BLOCKED") {
-                if (s.reason.find("gitignore") != std::string::npos) {
-                    st_label = "Excluded";
-                    badge_cls = "badge-excluded";
-                } else {
-                    st_label = "Blocked";
-                    badge_cls = "badge-blocked";
-                }
-            }
+            std::string st_label = "BLOCKED";
+            std::string badge_cls = "badge-quarantined";
 
             if (norm_sub.empty()) {
                 size_t slash = p.find('/');
@@ -903,7 +888,7 @@ public:
           << "}"
           << "function formatSec(s, exp) {"
           << "  if (exp === 0) return 'Permanent (∞)';"
-          << "  if (s <= 0) return 'Expired';"
+          << "  if (s <= 0) return '0s';"
           << "  if (s >= 86400) return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';"
           << "  if (s >= 3600) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';"
           << "  return s + 's';"
@@ -993,8 +978,9 @@ public:
           << "      if (!users || users.length === 0) { tbody.innerHTML = '<tr><td colspan=\"4\" style=\"color:var(--text-muted);\">No user accounts configured</td></tr>'; return; }"
           << "      let html = '';"
           << "      users.forEach(u => {"
-          << "        let status = (u.expires_at === 0) ? '<span style=\"color:var(--success);\">Permanent (∞)</span>' :"
-          << "                     (u.is_expired ? '<span style=\"color:var(--danger);\">Expired</span>' : '<span style=\"color:var(--success);\">Active (' + formatSec(u.remaining_sec, u.expires_at) + ')</span>');"
+          << "        let isExp = u.is_expired || (u.expires_at > 0 && u.remaining_sec <= 0);"
+          << "        let status = (u.expires_at === 0) ? '<span class=\"badge badge-available\">Permanent (∞)</span>' :"
+          << "                     (isExp ? '<span class=\"badge\" style=\"background:#ffebe9; color:#cf222e; border:1px solid rgba(207,34,46,0.3);\">EXPIRED</span>' : '<span class=\"badge badge-available\">ACTIVE (' + formatSec(u.remaining_sec, u.expires_at) + ')</span>');"
           << "        html += '<tr><td><strong>' + esc(u.username) + '</strong></td><td><span class=\"role-tag\">' + esc(u.role) + '</span></td><td>' + status + '</td>'"
           << "             + '<td><button class=\"btn-sec btn-sm\" onclick=\"openEditModal(\\'' + escAttr(u.username) + '\\', \\'' + escAttr(u.role) + '\\')\">Edit</button> '"
           << "             + '<button class=\"btn-danger btn-sm\" onclick=\"deleteUser(\\'' + escAttr(u.username) + '\\')\">Delete</button></td></tr>';"
@@ -1379,14 +1365,14 @@ public:
           << "<option value='rw'>[rw] Read-Write (Full Sync &amp; Upload)</option>"
           << "<option value='w'>[w] Write-Only (Blind Drop only)</option>"
           << "</select></div>"
-          << "<div class='form-group'><label>Update TTL</label>"
+          << "<div class='form-group'><label>Cập Nhật / Gia Hạn Thời Hạn Sống (TTL)</label>"
           << "<select id='edit-ttl' class='input-select'>"
-          << "<option value='-1'>Keep existing expiration</option>"
-          << "<option value='3600'>1 Hour (1h)</option>"
-          << "<option value='14400'>4 Hours (4h)</option>"
-          << "<option value='86400'>24 Hours (1d)</option>"
-          << "<option value='604800'>7 Days (7d)</option>"
-          << "<option value='0'>Permanent (∞ no expiry)</option>"
+          << "<option value='-1'>Giữ nguyên mốc thời gian hiện tại (Keep current expiration)</option>"
+          << "<option value='3600'>Gia hạn thêm 1 giờ (+1h từ bây giờ)</option>"
+          << "<option value='14400'>Gia hạn thêm 4 giờ (+4h từ bây giờ)</option>"
+          << "<option value='86400' selected>Gia hạn thêm 24 giờ (+24h từ bây giờ)</option>"
+          << "<option value='604800'>Gia hạn thêm 7 ngày (+7d từ bây giờ)</option>"
+          << "<option value='0'>Vĩnh viễn (Permanent ∞ - Không bao giờ hết hạn)</option>"
           << "</select></div>"
           << "<div style='display:flex; justify-content:flex-end; gap:8px; margin-top:16px;'>"
           << "<button type='button' class='btn-sec' onclick='closeEditModal()'>Cancel</button>"
@@ -2632,7 +2618,7 @@ function runFullAiScanForWorkspace() {
 
 function switchRole(role) {
   currentRole = role;
-  const tabs = ['client', 'host', 'env', 'ai', 'bench', 'config'];
+  const tabs = ['client', 'host', 'env', 'bench', 'config'];
   tabs.forEach(t => {
     const btn = document.getElementById('tab-btn-' + t);
     const sec = document.getElementById('section-' + t);
@@ -2705,20 +2691,6 @@ function renderHostedWorkspaces() {
   if (countTitle) countTitle.textContent = hostedWorkspaces.length;
   if (!container) return;
 
-  // Preserve open admin drawers and active subtabs across re-renders
-  const openDrawers = {};
-  const activeSubtabs = {};
-  hostedWorkspaces.forEach(w => {
-    const d = document.getElementById('admin-drawer-' + w.id);
-    if (d && (d.style.display === 'block' || window.getComputedStyle(d).display === 'block')) {
-      openDrawers[w.id] = true;
-      ['audit', 'peers', 'users', 'rules', 'log'].forEach(t => {
-        const el = document.getElementById(`subtab-${w.id}-${t}`);
-        if (el && el.style.display === 'block') activeSubtabs[w.id] = t;
-      });
-    }
-  });
-
   if (hostedWorkspaces.length === 0) {
     container.innerHTML = '<div style="text-align:center; padding:32px; background:#f6f8fa; border:1px dashed var(--border-primary); border-radius:var(--radius-sharp); color:var(--text-muted); font-size:13px;">Chưa có thư mục nào đang chia sẻ trực tiếp. Hãy chọn thư mục ở trên hoặc khôi phục từ danh sách đã từng host bên dưới.</div>';
     return;
@@ -2737,10 +2709,9 @@ function renderHostedWorkspaces() {
             <span class="badge" style="background:#eaeef2; color:#1f2328; flex-shrink:0;">Cổng: ${w.port}</span>
           </div>
           <div style="display:flex; gap:8px; flex-shrink:0;">
-            <button class="btn btn-sm" onclick="browseHostedWorkspace('${w.port}', '${w.admin_ticket || 'local_admin'}')">${ICONS.folder} Duyệt Thư Mục Này</button>
-            <button class="btn-sec btn-sm" data-path="${(w.path || '').replace(/"/g, '&quot;')}" onclick="openInExplorerFromAttr(this)" title="Mở thư mục này trực tiếp trong Windows Explorer / File Manager">${ICONS.folder} Mở Explorer</button>
-            <button class="btn-sec btn-sm" onclick="toggleAdminPanel('${w.id}')">${ICONS.settings} Quản Trị (Admin)</button>
-            <button class="btn-danger btn-sm" onclick="stopHost('${w.id}')">${ICONS.power} Dừng Host</button>
+            <button class="btn btn-sm" onclick="window.open('http://127.0.0.1:' + '${w.port}' + '/admin', '_blank')">${ICONS.shield} Quản Trị &amp; Duyệt (Admin Dashboard)</button>
+            <button class="btn-sec btn-sm" data-path="${(w.path || '').replace(/"/g, '&quot;')}" onclick="openInExplorerFromAttr(this)" title="Mở thư mục này trực tiếp trong Windows Explorer">${ICONS.folder} Mở Explorer</button>
+            <button class="btn-danger btn-sm" onclick="stopHost('${w.id}')">${ICONS.power} Dừng Trạm</button>
           </div>
         </div>
         <div class="host-body">
@@ -2849,198 +2820,9 @@ function renderHostedWorkspaces() {
           </div>
         </div>
 
-        <!-- Admin Console Drawer -->
-        <div class="admin-drawer" id="admin-drawer-${w.id}">
-          <div class="admin-tabs">
-            <button class="admin-tab-btn active" onclick="switchAdminTab('${w.id}', 'audit', this)">${ICONS.shield} Slug Guard</button>
-            <button class="admin-tab-btn" onclick="switchAdminTab('${w.id}', 'peers', this)">${ICONS.users} Peers Kết Nối (${(w.peers||[]).length})</button>
-            <button class="admin-tab-btn" onclick="switchAdminTab('${w.id}', 'users', this)">${ICONS.user} Tài Khoản Ephemeral RBAC (${(w.users||[]).length})</button>
-            <button class="admin-tab-btn" onclick="switchAdminTab('${w.id}', 'rules', this)">${ICONS.edit} Bộ Quy Tắc Lọc</button>
-            <button class="admin-tab-btn" onclick="switchAdminTab('${w.id}', 'log', this)">${ICONS.terminal} Nhật Ký Hoạt Động</button>
-          </div>
-
-          <div id="subtab-${w.id}-audit">
-            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:14px;">
-              <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
-                <div style="font-size:11px; color:var(--text-muted); font-weight:600;">TỆP SẠCH (CLEAN)</div>
-                <div style="font-size:22px; font-weight:700; color:#1a7f37;" id="stat-clean-${w.id}">${w.auditStats ? w.auditStats.clean : 0}</div>
-                <div style="font-size:10px; color:var(--text-muted);">Sẵn sàng chia sẻ qua PQC channel</div>
-              </div>
-              <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
-                <div style="font-size:11px; color:var(--text-muted); font-weight:600;">CÁCH LY SECRET (BLOCKED)</div>
-                <div style="font-size:22px; font-weight:700; color:#cf222e;" id="stat-quarantined-${w.id}">${w.auditStats ? w.auditStats.quarantined : 0}</div>
-                <div style="font-size:10px; color:#cf222e;">Bị chặn bởi Slug Regex &amp; Slug AI</div>
-              </div>
-              <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
-                <div style="font-size:11px; color:var(--text-muted); font-weight:600;">BỊ BỎ QUA DO RULE</div>
-                <div style="font-size:22px; font-weight:700; color:#656d76;" id="stat-excluded-${w.id}">${w.auditStats ? w.auditStats.excluded : 0}</div>
-                <div style="font-size:10px; color:var(--text-muted);">Bị loại trừ bởi Slug Rule</div>
-              </div>
-            </div>
-
-            <div style="margin-bottom:14px;">
-              <div style="font-size:12px; font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
-                <span style="display:inline-flex; align-items:center; gap:6px;">${ICONS.shield} Tệp Tin Nhạy Cảm Bị Cách Ly Trong RAM Shield (${(w.quarantinedFiles || []).length})</span>
-                <span style="font-size:11px; color:#cf222e;">Bảo vệ chống rò rỉ secret ra mạng</span>
-              </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Tên Tệp</th>
-                    <th>Dung Lượng</th>
-                    <th>Tầng Bắt</th>
-                    <th>Lý Do Cách Ly</th>
-                    <th>Thao Tác</th>
-                  </tr>
-                </thead>
-                <tbody id="quarantine-tbody-${w.id}">
-                  ${(w.quarantinedFiles && w.quarantinedFiles.length > 0) ? w.quarantinedFiles.map(f => `
-                    <tr>
-                      <td><strong style="color:${f.unquarantined ? '#1a7f37' : '#cf222e'};">${f.name}</strong></td>
-                      <td><code>${f.size}</code></td>
-                      <td>
-                        <span class="badge" style="background:#fff8c5; color:#9a6700;">Slug Regex</span>
-                        <span class="badge" style="background:#fbefff; color:#8250df;">Slug AI</span>
-                      </td>
-                      <td style="font-size:11px; color:var(--text-muted);">${f.reason}</td>
-                      <td>
-                        <button class="${f.unquarantined ? 'btn-sec' : 'btn'} btn-xs" onclick="toggleUnquarantine('${w.id}', '${f.name}')">
-                          ${f.unquarantined ? ICONS.lock + ' Tái Cách Ly (Block)' : ICONS.unlock + ' Gỡ Cách Ly (Allow Secret)'}
-                        </button>
-                      </td>
-                    </tr>
-                  `).join('') : '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:10px;">Không có tệp bí mật nào bị cách ly.</td></tr>'}
-                </tbody>
-              </table>
-            </div>
-
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-              <button class="btn-sec btn-sm" onclick="rescanSelectedWorkspace(); showToast('Đã cập nhật danh sách tệp mới nhất!');">${ICONS.refresh} Cập Nhật Danh Sách Tệp</button>
-              <span style="font-size:11px; color:var(--text-muted);">💡 Cần cấu hình AI hoặc kiểm toán sâu từng tệp? <a href="javascript:void(0)" onclick="switchRole('ai')" style="color:#0969da; text-decoration:underline; font-weight:600;">Sang Tab 3 (AI Security Guard) để kiểm toán chi tiết</a></span>
-            </div>
-          </div>
-
-          <div id="subtab-${w.id}-peers" style="display:none;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Tên Máy / IP</th>
-                  <th>Xác Thực</th>
-                  <th>Kênh Mật Mã</th>
-                  <th>Thời Điểm Nối</th>
-                  <th>Dữ Liệu Đã Truyền</th>
-                  <th>Hành Động</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${(w.peers && w.peers.length > 0) ? w.peers.map(p => `
-                  <tr>
-                    <td><strong>${escapeHtml(p.name || p.identity || 'Peer')}</strong> (${escapeHtml(p.ip || p.remote_endpoint || 'LAN')})</td>
-                    <td><span class="badge" style="background:#ddf4ff; color:#0969da;">${escapeHtml(p.authType || p.auth_type || 'TOTP [RW]')}</span></td>
-                    <td><span class="badge badge-pqc">${escapeHtml(p.suite || w.suiteName || 'ML-KEM-768 + ML-DSA-65')}</span></td>
-                    <td>${escapeHtml(p.connectedAt || p.created_at || 'Vừa xong')}</td>
-                    <td><code>${escapeHtml(p.transferred || 'Active (Live)')}</code></td>
-                    <td><button class="btn-danger btn-xs" onclick="kickPeer('${w.id}', '${p.id || p.session_id}')">${ICONS.stop} Ngắt Kết Nối</button></td>
-                  </tr>
-                `).join('') : '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:16px;">Không có thiết bị khách (Peer) nào đang kết nối. (Chủ trạm Host Admin nằm ngoài danh sách này).</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Tab Quản Lý Tài Khoản Ephemeral RBAC Của Workspace Này -->
-          <div id="subtab-${w.id}-users" style="display:none;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
-              <div style="font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px;">
-                ${ICONS.user} <span>Quản Lý Tài Khoản Người Dùng &amp; Phân Quyền Ephemeral RBAC (${(w.users || []).length})</span>
-              </div>
-              <div style="display:flex; gap:8px;">
-                <button class="btn btn-xs" onclick="openAddUserModal('${w.id}')">${ICONS.plus} Tạo Tài Khoản Mới</button>
-                <button class="btn-sec btn-xs" onclick="renderHostedWorkspaces(); switchAdminTab('${w.id}','users')">${ICONS.refresh} Làm Mới</button>
-              </div>
-            </div>
-            <div style="font-size:11px; color:var(--text-muted); margin-bottom:10px; font-family:'JetBrains Mono', monospace;">
-              Quản lý các tài khoản cố định hoặc tạm thời (Ephemeral) cấp riêng cho workspace này. <strong>Một tài khoản có thể được đăng nhập đồng thời bởi nhiều máy trạm.</strong>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Tên Tài Khoản</th>
-                  <th>Phân Quyền (RBAC Role)</th>
-                  <th>Trạng Thái / Thời Hạn (TTL)</th>
-                  <th>Thời Gian Tạo</th>
-                  <th>Thao Tác</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${(w.users && w.users.length > 0) ? w.users.map(u => `
-                  <tr>
-                    <td><div style="display:flex; align-items:center; gap:8px;">${ICONS.user}<strong>${u.username}</strong></div></td>
-                    <td><span class="role-tag">${u.roleName || ('[' + u.role.toUpperCase() + ']')}</span></td>
-                    <td><span class="badge ${u.revoked ? 'badge-offline' : 'badge-live'}">${u.revoked ? ICONS.lock + ' Đã Thu Hồi' : '<span class=\"status-dot\"></span> ' + u.status}</span></td>
-                    <td><code style="font-size:11px; color:var(--text-muted);">${u.createdAt}</code></td>
-                    <td>
-                      <button class="btn-sec btn-xs" onclick="openEditUserModal('${w.id}', '${u.username}')">${ICONS.edit} Sửa</button>
-                      <button class="btn-danger btn-xs" onclick="deleteUser('${w.id}', '${u.username}')">${ICONS.trash} Xóa</button>
-                    </td>
-                  </tr>
-                `).join('') : '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:12px;">Chưa có tài khoản nào trong workspace này.</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Tab Chỉnh Sửa Bộ Quy Tắc Lọc -->
-          <div id="subtab-${w.id}-rules" style="display:none;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-              <div style="font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px;">
-                ${ICONS.edit} <span>Bộ Quy Tắc Lọc</span>
-              </div>
-              <div style="display:flex; gap:6px;">
-                <button type="button" class="btn-sec btn-xs" id="toggle-raw-btn-${w.id}" onclick="toggleRulesRawView('${w.id}')">Xem / Sửa Dạng Text</button>
-                <button type="button" class="btn btn-xs" onclick="saveWorkspaceRules('${w.id}')">${ICONS.check} Lưu &amp; Áp Dụng</button>
-              </div>
-            </div>
-
-            <!-- Nút Chọn Mẫu Quy Tắc Phổ Biến -->
-            <div style="margin-bottom:8px;">
-              <div style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:4px;">Chọn nhanh mẫu phổ biến:</div>
-              <div style="display:flex; flex-wrap:wrap; gap:4px;">
-                ${['node_modules/', 'target/', 'build/', 'dist/', '.git/', '*.tmp', '*.log', '*.iso', '*.zip', 'venv/', '__pycache__/', '.env*'].map(p => `
-                  <button type="button" class="btn-sec btn-xs" id="preset-${w.id}-${p.replace(/[^a-zA-Z0-9]/g, '_')}" onclick="togglePresetRule('${w.id}', '${p}')" style="font-size:11px; padding:2px 7px; font-family:'JetBrains Mono', monospace;">+ ${p}</button>
-                `).join('')}
-              </div>
-            </div>
-
-            <!-- Nhập Mẫu Quy Tắc Mới -->
-            <div style="display:flex; gap:6px; margin-bottom:10px;">
-              <input type="text" id="new-rule-input-${w.id}" class="input-text" placeholder="Nhập mẫu cần loại trừ (ví dụ: *.bak, cache/, temp/)..." onkeydown="if(event.key==='Enter'){event.preventDefault();addRuleFromInput('${w.id}');}" style="flex:1; height:32px; font-size:11px; font-family:'JetBrains Mono', monospace;">
-              <button type="button" class="btn-sec btn-xs" onclick="addRuleFromInput('${w.id}')" style="height:32px; padding:0 12px; font-weight:600;">+ Thêm</button>
-            </div>
-
-            <!-- Container Hiển Thị Các Chip Quy Tắc Đang Áp Dụng -->
-            <div style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:4px;">Quy tắc đang có hiệu lực (bấm &times; để xóa):</div>
-            <div id="rules-chips-container-${w.id}" style="display:flex; flex-wrap:wrap; gap:6px; min-height:36px; padding:8px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:2px; margin-bottom:8px;"></div>
-
-            <!-- Textarea soạn thảo trực tiếp (ẩn mặc định) -->
-            <textarea id="rules-editor-${w.id}" class="input-text" style="display:none; width:100%; height:110px; font-family:'JetBrains Mono', monospace; font-size:11px; line-height:1.5; resize:vertical; padding:8px;" oninput="syncRulesToHost('${w.id}', this.value.split('\\n').map(r=>r.trim()).filter(r=>r&&!r.startsWith('#')))" placeholder="node_modules/&#10;target/&#10;build/&#10;.git/&#10;*.tmp">${w.customRules || 'node_modules/\ntarget/\nbuild/\ndist/\n.git/\n*.tmp\n*.log\n*.iso\n*.zip'}</textarea>
-          </div>
-
-          <div id="subtab-${w.id}-log" style="display:none;">
-            <div style="background:#1f2328; color:#e6edf3; padding:10px; font-size:11px; border-radius: 2px; max-height:160px; overflow-y:auto; line-height:1.6; font-family:'JetBrains Mono', monospace;">
-              ${(w.logs || []).map(l => `<div>&gt; ${l}</div>`).join('')}
-            </div>
-          </div>
-        </div>
       </div>
     `;
   }).join('');
-
-  // Restore open drawers, active subtabs, and render rule chips
-  hostedWorkspaces.forEach(w => renderRuleChips(w.id));
-  Object.keys(openDrawers).forEach(id => {
-    const d = document.getElementById('admin-drawer-' + id);
-    if (d) d.style.display = 'block';
-    if (activeSubtabs[id]) switchAdminTab(id, activeSubtabs[id]);
-  });
 }
 
 function renderInactiveWorkspaces() {
@@ -3430,6 +3212,11 @@ function getNextFreePort() {
   return p;
 }
 
+function onFilterLevelChanged(lvl) {
+  const box = document.getElementById('ai-model-box');
+  if (box) box.style.display = (lvl === 'level4') ? 'block' : 'none';
+}
+
 function startHosting(e) {
   e.preventDefault();
   const pathInp = (document.getElementById('host-path')?.value || '').trim();
@@ -3444,6 +3231,9 @@ function startHosting(e) {
 
   const sSelect = document.getElementById('host-suite');
   const fSelect = document.getElementById('host-filter');
+  const otpTtl = parseInt(document.getElementById('host-otp-ttl')?.value) || 60;
+  const wsTtl = parseInt(document.getElementById('host-ttl')?.value) || 86400;
+  const aiModel = document.getElementById('host-ai-model')?.value || 'ollama';
 
   showToast(`Đang khởi động chia sẻ workspace trên cổng ${port}...`);
   fetch('/api/host/start', {
@@ -3454,7 +3244,9 @@ function startHosting(e) {
       port: port,
       suite: sSelect.value,
       filter: fSelect.value,
-      ttl: parseInt(document.getElementById('host-ttl')?.value) || 7200
+      ai_model: aiModel,
+      otp_step: otpTtl,
+      ttl: wsTtl
     })
   })
   .then(r => r.json())
@@ -4721,17 +4513,14 @@ window.onload = function() {
       ${ICONS.send} <span>2. Chia Sẻ</span>
       <span class="tab-badge" id="hosted-count">0</span>
     </button>
-    <button class="role-tab-btn" id="tab-btn-ai" onclick="switchRole('ai')">
-      ${ICONS.shield} <span>3. AI Security Guard</span>
-    </button>
     <button class="role-tab-btn" id="tab-btn-env" onclick="switchRole('env')">
-      ${ICONS.lock} <span>4. EnvShield &amp; Vault</span>
+      ${ICONS.lock} <span>3. EnvShield &amp; Vault</span>
     </button>
     <button class="role-tab-btn" id="tab-btn-bench" onclick="switchRole('bench')">
-      ${ICONS.zap} <span>5. Benchmark PQC</span>
+      ${ICONS.zap} <span>4. Benchmark PQC</span>
     </button>
     <button class="role-tab-btn" id="tab-btn-config" onclick="switchRole('config')">
-      ${ICONS.settings} <span>6. Cấu Hình &amp; Lệnh CLI</span>
+      ${ICONS.settings} <span>5. Cấu Hình &amp; Lệnh CLI</span>
     </button>
   </div>
 
@@ -4883,25 +4672,46 @@ window.onload = function() {
           </div>
         </div>
 
-        <div class="form-group" style="margin-bottom:4px;">
-          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Chế Độ Lọc Dữ Liệu Slug Guard</label>
-          <select id="host-filter" class="input-select" style="height:38px; box-sizing:border-box; font-size:12px;">
-            <option value="protected" selected>Protected (Lọc rác .gitignore + Chặn secret qua Regex &amp; AI)</option>
-            <option value="include_ignored">Include-Ignored (Gửi cả build artifacts, chỉ chặn secret)</option>
-            <option value="none">None (Gửi toàn bộ, không lọc - Thận trọng!)</option>
+        <div class="form-group" style="margin-bottom:8px;">
+          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">4 Cấp Độ Lọc Dữ Liệu Bảo Mật (Filter Levels)</label>
+          <select id="host-filter" class="input-select" onchange="onFilterLevelChanged(this.value)" style="height:38px; box-sizing:border-box; font-size:12px;">
+            <option value="level1">Mức 1: Rules &amp; Gitignore (Chỉ lọc .gitignore &amp; rules.conf, không quét nội dung)</option>
+            <option value="level2">Mức 2: Regex Secret Guard (Mức 1 + Quét mẫu định danh Private Key, AWS, GitHub, JWT, .env)</option>
+            <option value="level3" selected>Mức 3: Shannon Entropy (Mức 2 + Đo entropy trên file mã nguồn, bỏ qua 100% binary/ảnh) [Khuyên Dùng]</option>
+            <option value="level4">Mức 4: AI Model Scan (Mức 3 + Phân tích ngữ cảnh sâu bằng mô hình AI)</option>
           </select>
         </div>
 
-        <div class="form-group" style="margin-bottom:8px;">
-          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Thời Gian Sống Phiên / OTP (Session TTL) <span style="color:var(--text-muted); font-weight:normal;">* Tối đa 24h</span></label>
-          <select id="host-ttl" class="input-select" style="height:38px; box-sizing:border-box; font-size:12px;">
-            <option value="1800">30 phút (0.5h)</option>
-            <option value="3600">1 giờ (1h)</option>
-            <option value="7200" selected>2 giờ (2h) [Mặc Định / Khuyên Dùng]</option>
-            <option value="14400">4 giờ (4h)</option>
-            <option value="28800">8 giờ (8h)</option>
-            <option value="86400">24 giờ (24h) [Tối đa cho phép]</option>
+        <div id="ai-model-box" class="form-group" style="display:none; margin-bottom:8px; background:#f6f8fa; border:1px solid #54aeff; padding:10px; border-radius:2px;">
+          <label style="font-size:11px; font-weight:700; color:#0969da; margin-bottom:4px; display:block;">🤖 Chọn Mô Hình AI (Áp dụng cho Mức 4):</label>
+          <select id="host-ai-model" class="input-select" style="height:36px; box-sizing:border-box; font-size:12px; background:#fff;">
+            <option value="ollama" selected>Ollama Local (DeepSeek-R1 / CodeLlama - Offline an toàn)</option>
+            <option value="openai">OpenAI Cloud (GPT-4o-mini / GPT-4o)</option>
+            <option value="gemini">Google Gemini Cloud (Gemini 2.5 Flash)</option>
           </select>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:8px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Chu Kỳ Đổi Mã OTP (TOTP Step)</label>
+            <select id="host-otp-ttl" class="input-select" style="height:38px; box-sizing:border-box; font-size:12px;">
+              <option value="30">30 giây</option>
+              <option value="60" selected>60 giây (1 phút) [Khuyên dùng]</option>
+              <option value="120">120 giây (2 phút)</option>
+              <option value="300">300 giây (5 phút)</option>
+              <option value="600">600 giây (10 phút)</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Thời Gian Sống Workspace (Workspace TTL)</label>
+            <select id="host-ttl" class="input-select" style="height:38px; box-sizing:border-box; font-size:12px;">
+              <option value="3600">1 giờ (1h)</option>
+              <option value="14400">4 giờ (4h)</option>
+              <option value="86400" selected>24 giờ (1 ngày) [Mặc Định]</option>
+              <option value="604800">7 ngày (7d)</option>
+              <option value="0">Vĩnh viễn (Permanent ∞)</option>
+            </select>
+          </div>
         </div>
 
         <button type="submit" class="btn" style="height:42px; width:100%; justify-content:center; font-size:13px; font-weight:700; background:#1a7f37; border-color:#1a7f37;">
@@ -4933,307 +4743,7 @@ window.onload = function() {
     </div>
   </div>
 
-  <!-- ==================== [SECTION 3: AI SECURITY GUARD] ==================== -->
-  <div id="section-ai" style="display:none;">
-    <!-- 1. KIỂM TOÁN TỆP SÂU BẤT KỲ (slug audit scan) - ĐƯA LÊN TRÊN CÙNG -->
-    <div class="card" id="single-file-audit-card" style="margin-bottom:14px;">
-      <h3>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${ICONS.shield} <span>Kiểm Toán Sâu Tệp Bất Kỳ (slug audit scan &lt;file&gt;)</span>
-        </div>
-      </h3>
-      <div class="form-group" style="margin-bottom:0;">
-        <label>Đường Dẫn File Cần Quét Sâu (File Path)</label>
-        <div style="display:flex; gap:8px; align-items:stretch;">
-          <input type="text" id="audit-scan-path" class="input-text" value="" placeholder="Bắt buộc: Bấm 'Chọn Tệp...' hoặc nhập đường dẫn file cần quét..." style="flex:1; height:36px;">
-          <input type="file" id="audit-file-picker" style="display:none;" onchange="handleAuditFileSelected(this)">
-          <button type="button" class="btn-sec btn-sm" onclick="document.getElementById('audit-file-picker').click()" style="height:36px; padding:0 14px; white-space:nowrap; flex-shrink:0; display:inline-flex; align-items:center; gap:6px; border-radius:var(--radius-sharp); cursor:pointer;" title="Duyệt và chọn tệp từ máy tính">
-            ${ICONS.folder} <span>Chọn Tệp (Browse...)</span>
-          </button>
-          <button type="button" class="btn btn-sm" onclick="runAuditScanFile()" style="height:36px; padding:0 16px; white-space:nowrap; flex-shrink:0; display:inline-flex; align-items:center; gap:6px; border-radius:var(--radius-sharp); cursor:pointer;">
-            ${ICONS.shield} <span>Quét Sâu File Này</span>
-          </button>
-        </div>
-      </div>
-      <pre id="audit-scan-out" style="display:none; background:#1f2328; color:#e6edf3; padding:12px; border-radius:var(--radius-sharp); font-size:11px; margin-top:10px; line-height:1.6;"></pre>
-    </div>
-
-    <!-- 2. KIỂM TOÁN THƯ MỤC CHIA SẺ HOẶC BẤT KỲ (ĐỒNG BỘ 1 THẺ DUY NHẤT) -->
-    <div class="card" id="audit-results-card" style="margin-bottom:14px;">
-      <h3>
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          ${ICONS.shield} <span>Kiểm Toán Thư Mục Chia Sẻ hoặc bất kỳ... (Slug Guard)</span>
-        </div>
-        <div style="display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <div style="display:inline-flex; align-items:center; gap:6px;">
-            <label for="quick-audit-mode-select" style="font-size:11px; font-weight:700; color:var(--text-main); margin:0;">Chế Độ Quét:</label>
-            <select id="quick-audit-mode-select" class="input-select" onchange="onQuickAuditModeChange(this.value)" style="height:30px; font-size:11px; font-weight:600; padding:2px 8px; width:auto; border-radius:2px; background:#ddf4ff; color:#0969da; border:1px solid #54aeff;">
-              <option value="local_heuristic">1. 100% Offline (Rule + Regex + Shannon Entropy)</option>
-              <option value="local_ollama" selected>2. Local GPU (Rule + Regex + Entropy + Ollama GPU)</option>
-              <option value="cloud_groq">3. Cloud AI (Groq Llama-3.3-70B)</option>
-              <option value="cloud_gemini">4. Cloud AI (Google Gemini 2.0 Flash)</option>
-              <option value="cloud_openai">5. Cloud AI (OpenAI GPT-4o-mini)</option>
-              <option value="cloud_openrouter">6. Cloud AI (OpenRouter)</option>
-              <option value="custom_cloud">7. Custom AI Endpoint</option>
-            </select>
-          </div>
-          <button type="button" class="btn btn-sm" onclick="rescanSelectedWorkspace()" style="height:30px; display:inline-flex; align-items:center; gap:6px;">${ICONS.refresh} <span>Quét Lại</span></button>
-        </div>
-      </h3>
-
-      <!-- Chọn Vùng Thư Mục & Trạm Host Cần Kiểm Toán (Tích Hợp Trong Thẻ) -->
-      <div style="background:#f6f8fa; border:1px solid #d0d7de; border-radius:var(--radius-sharp); padding:10px 12px; margin-bottom:14px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
-          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin:0; display:inline-flex; align-items:center; gap:6px;">
-            ${ICONS.folder} <span>Trạm Host / Workspace Mục Tiêu:</span>
-          </label>
-          <span style="font-size:11px; color:var(--text-muted);">Đang kiểm toán: <strong id="audit-current-target-label" style="color:#0969da;">Chưa chọn thư mục nào</strong></span>
-        </div>
-        <select id="audit-target-workspace" class="input-select" onchange="switchAuditWorkspace(this.value)" style="height:34px; box-sizing:border-box; width:100%;">
-          <option value="custom" selected>-- Quét Thư Mục Tùy Chọn Khác Trên Máy --</option>
-        </select>
-        <div id="custom-workspace-path-sec" style="display:block; margin-top:8px;">
-          <div style="display:flex; gap:8px; align-items:stretch;">
-            <input type="text" id="custom-audit-path" class="input-text" style="flex:1; height:34px; box-sizing:border-box; font-size:12px;" value="" placeholder="Bắt buộc: Bấm 'Chọn Thư Mục Máy...' hoặc nhập đường dẫn...">
-            <input type="file" id="dir-picker-custom-audit-path" webkitdirectory directory style="display:none;" onchange="handleDirInputSelected(this, 'custom-audit-path')">
-            <button type="button" class="btn-sec" onclick="chooseLocalSaveLocation('custom-audit-path')" style="height:34px !important; box-sizing:border-box; padding:0 14px; font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;">
-              ${ICONS.folder} Chọn Thư Mục Máy...
-            </button>
-            <button type="button" class="btn" onclick="setCustomAuditWorkspace()" style="height:34px !important; box-sizing:border-box; padding:0 14px; font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;">
-              ${ICONS.check} Áp Dụng &amp; Quét
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- BỘ QUY TẮC LỌC (SLUG GUARD FILTER RULES) -->
-      <div style="background:#fff; border:1px solid #d0d7de; border-radius:var(--radius-sharp); padding:14px; margin-bottom:14px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-          <div style="font-weight:700; font-size:13px; display:inline-flex; align-items:center; gap:8px; color:var(--text-main);">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-            <span>Bộ Quy Tắc Lọc</span>
-          </div>
-          <div style="display:flex; gap:8px;">
-            <button type="button" class="btn-sec btn-xs" id="btn-toggle-rules-text" onclick="toggleRulesTextView()">
-              Xem / Sửa Dạng Text
-            </button>
-            <button type="button" class="btn btn-xs" onclick="saveAndApplyRules()" style="background:#0969da; color:#fff;">
-              ${ICONS.check} Lưu &amp; Áp Dụng
-            </button>
-          </div>
-        </div>
-
-        <!-- CHỌN NHANH MẪU PHỔ BIẾN -->
-        <div style="margin-bottom:10px;">
-          <div style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.3px;">
-            CHỌN NHANH MẪU PHỔ BIẾN:
-          </div>
-          <div style="display:flex; flex-wrap:wrap; gap:6px;" id="quick-preset-chips">
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('node_modules/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ node_modules/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('target/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ target/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('build/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ build/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('dist/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ dist/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.git/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ .git/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.tmp')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.tmp</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.log')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.log</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.iso')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.iso</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.zip')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.zip</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('venv/')">+ venv/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('__pycache__/')">+ __pycache__/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.env*')">+ .env*</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.idea/')">+ .idea/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.vscode/')">+ .vscode/</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.tar.gz')">+ *.tar.gz</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.exe')">+ *.exe</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.dll')">+ *.dll</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.bak')">+ *.bak</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.key')">+ *.key</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.pem')">+ *.pem</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('!.env.example')" style="color:#1a7f37; background:#dafbe1; border-color:#82e596; font-weight:700;">+ !.env.example (Whitelist)</button>
-            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('!*.example')" style="color:#1a7f37; background:#dafbe1; border-color:#82e596; font-weight:700;">+ !*.example (Whitelist)</button>
-          </div>
-          <div style="font-size:11px; color:#656d76; margin-top:8px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:var(--radius-sharp); padding:6px 10px; display:flex; align-items:center; gap:8px;">
-            <span style="color:#1a7f37;">${ICONS.shield}</span>
-            <span><strong>Mẹo Whitelist &amp; file .env:</strong> Thêm tiền tố <code>!</code> để tạo ngoại lệ Whitelist (ví dụ: <code>!.env.example</code> sẽ cho phép chia sẻ file mẫu ngay cả khi đang chặn <code>.env*</code>). Để mã hóa và chia sẻ file .env thật an toàn, hãy chuyển sang <strong><a href="javascript:void(0)" onclick="switchRole('env')" style="color:#0969da; text-decoration:underline;">[Tab 4: EnvShield &amp; Vault]</a></strong>.</span>
-          </div>
-        </div>
-
-        <!-- NHẬP MẪU MỚI -->
-        <div id="rules-builder-view">
-          <div style="display:flex; gap:8px; margin-bottom:10px;">
-            <input type="text" id="custom-rule-input" class="input-text" placeholder="Nhập mẫu loại trừ (vd: *.bak) hoặc cho phép/whitelist với dấu ! (vd: !.env.example)..." style="flex:1; height:34px; font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomRule();}">
-            <button type="button" class="btn-sec" onclick="addCustomRule()" style="height:34px; padding:0 16px; font-size:12px; white-space:nowrap;">+ Thêm</button>
-          </div>
-
-          <!-- QUY TẮC ĐANG CÓ HIỆU LỰC -->
-          <div>
-            <div style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.3px;">
-              QUY TẮC ĐANG CÓ HIỆU LỰC (BẤM &times; ĐỂ XÓA):
-            </div>
-            <div id="active-rules-container" style="display:flex; flex-wrap:wrap; gap:6px; min-height:28px;">
-              <!-- Rendered by JS -->
-            </div>
-          </div>
-        </div>
-
-        <!-- DẠNG TEXT (RAW .slugignore / rules.conf) -->
-        <div id="rules-text-view" style="display:none; margin-top:8px;">
-          <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Chỉnh sửa trực tiếp dạng plain-text (.slugignore / quy tắc lọc - mỗi dòng một quy tắc):</div>
-          <textarea id="rules-raw-textarea" class="input-text" style="width:100%; height:130px; font-family:'JetBrains Mono', monospace; font-size:12px; padding:8px; box-sizing:border-box; resize:vertical;"></textarea>
-        </div>
-      </div>
-
-      <!-- 3 Thẻ Thống Kê (Clean, Blocked, Excluded) -->
-      <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:14px;">
-        <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
-          <div style="font-size:11px; color:var(--text-muted); font-weight:600;">TỆP SẠCH (CLEAN)</div>
-          <div style="font-size:22px; font-weight:700; color:#1a7f37;" id="audit-stat-clean">0</div>
-          <div style="font-size:10px; color:var(--text-muted);">Sẵn sàng chia sẻ qua PQC channel</div>
-        </div>
-        <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
-          <div style="font-size:11px; color:var(--text-muted); font-weight:600;">CÁCH LY SECRET (BLOCKED)</div>
-          <div style="font-size:22px; font-weight:700; color:#cf222e;" id="audit-stat-quarantined">0</div>
-          <div style="font-size:10px; color:#cf222e;">Bị chặn bởi Slug Regex &amp; Slug AI</div>
-        </div>
-        <div style="background:#fff; border:1px solid #d0d7de; padding:12px; border-radius:var(--radius-sharp);">
-          <div style="font-size:11px; color:var(--text-muted); font-weight:600;">BỊ BỎ QUA DO RULE</div>
-          <div style="font-size:22px; font-weight:700; color:#656d76;" id="audit-stat-excluded">0</div>
-          <div style="font-size:10px; color:var(--text-muted);">Bị loại trừ bởi Slug Rule</div>
-        </div>
-      </div>
-
-      <!-- Bộ Lọc Chế Độ Xem Danh Sách Tệp -->
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:gap:8px;">
-        <div style="display:flex; gap:6px;">
-          <button type="button" class="btn-sec btn-xs active" id="audit-btn-view-quarantine" onclick="switchAuditFileView('quarantine')">
-            ${ICONS.lock} Tệp Tin Cách Ly (<span id="audit-count-quarantine">0</span>)
-          </button>
-          <button type="button" class="btn-sec btn-xs" id="audit-btn-view-clean" onclick="switchAuditFileView('clean')">
-            ${ICONS.check} Tệp Hợp Lệ Sạch (<span id="audit-count-clean">0</span>)
-          </button>
-          <button type="button" class="btn-sec btn-xs" id="audit-btn-view-excluded" onclick="switchAuditFileView('excluded')">
-            ${ICONS.folder} Bị Bỏ Qua Do Rule (<span id="audit-count-excluded">0</span>)
-          </button>
-        </div>
-        <span style="font-size:11px; color:#cf222e; font-weight:600;" id="audit-view-hint">Bảo vệ chống rò rỉ secret ra mạng</span>
-      </div>
-
-      <!-- Bảng Danh Sách Tệp -->
-      <div style="overflow-x:auto;">
-        <table>
-          <thead>
-            <tr>
-              <th>Tên Tệp</th>
-              <th>Dung Lượng</th>
-              <th>Tầng Bắt / Phân Loại</th>
-              <th>Lý Do / Chi Tiết</th>
-              <th>Thao Tác</th>
-            </tr>
-          </thead>
-          <tbody id="audit-files-tbody">
-            <!-- Render động bằng JS -->
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- 3. THIẾT LẬP AI SECURITY GUARD & KẾT QUẢ QUÉT (TÍCH HỢP 1 THẺ DUY NHẤT) -->
-    <div class="card">
-      <h3>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${ICONS.shield} <span>Thiết Lập AI Security Guard &amp; Stateful Audit (slug audit)</span>
-        </div>
-        <button class="btn btn-sm" onclick="saveAiConfig()">${ICONS.check} Lưu Cấu Hình AI</button>
-      </h3>
-
-      <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap:16px;">
-        <div class="form-group">
-          <label>Nhà Cung Cấp AI (AI Provider Engine)</label>
-          <select id="ai-provider" class="input-select" onchange="onAiProviderChange()">
-            <option value="local_heuristic">1. Local Heuristic (Smart Regex &amp; Shannon Entropy - 100% Offline)</option>
-            <option value="local_ollama" selected>2. Local AI (Ollama Local Daemon - Chạy Trên GPU Cục Bộ)</option>
-            <option value="cloud_groq">3. Cloud AI: Groq Cloud (Llama-3.3-70B - Siêu Nhanh)</option>
-            <option value="cloud_gemini">4. Cloud AI: Google Gemini (gemini-2.0-flash)</option>
-            <option value="cloud_openrouter">5. Cloud AI: OpenRouter (Đa mô hình)</option>
-            <option value="cloud_openai">6. Cloud AI: OpenAI (gpt-4o-mini)</option>
-            <option value="custom_cloud">7. Custom OpenAI-Compatible Endpoint</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label>Tên Mô Hình (AI Model Name)</label>
-          <input type="text" id="ai-model" class="input-text" value="qwen2.5-coder:7b" placeholder="Ví dụ: qwen2.5-coder:7b, llama-3.3-70b-versatile, gemini-2.0-flash" oninput="syncFieldsToJson()">
-        </div>
-      </div>
-
-      <div class="form-grid" style="grid-template-columns: 1.5fr 1fr; gap:16px;">
-        <div class="form-group">
-          <label>Đường Dẫn Endpoint API (API Endpoint URL)</label>
-          <input type="text" id="ai-endpoint" class="input-text" value="http://127.0.0.1:11434" placeholder="http://127.0.0.1:11434" oninput="syncFieldsToJson()">
-        </div>
-
-        <div class="form-group" id="ai-apikey-group">
-          <label>Khóa API Bí Mật (API Key / Auth Token)</label>
-          <input type="password" id="ai-apikey" class="input-text" placeholder="gsk_... hoặc AIzaSy... (Để trống nếu dùng Ollama nội bộ)" oninput="syncFieldsToJson()">
-        </div>
-      </div>
-
-      <!-- Trình Xem & Chỉnh Sửa Trực Tiếp Cấu Hình JSON (Two-Way Sync & Multi-Schema Support) -->
-      <div class="form-group" style="margin-top:10px; margin-bottom:14px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
-          <label style="margin-bottom:0; font-weight:700; color:var(--text-main); display:inline-flex; align-items:center; gap:6px;">
-            ${ICONS.terminal} <span>Cấu Hình JSON Tổng Quát (.slug/ai_config.json / Two-Way Sync)</span>
-          </label>
-          <div style="display:flex; gap:6px; flex-wrap:wrap;">
-            <button type="button" class="btn-sec btn-xs" onclick="setAiPreset('canonical')">Chuẩn Slug</button>
-            <button type="button" class="btn-sec btn-xs" onclick="setAiPreset('ollama')">Mẫu Ollama</button>
-            <button type="button" class="btn-sec btn-xs" onclick="setAiPreset('openai')">Mẫu OpenAI / Groq</button>
-            <button type="button" class="btn-sec btn-xs" onclick="setAiPreset('custom')">Custom JSON</button>
-            <button type="button" class="btn-sec btn-xs" onclick="formatAiJson()">${ICONS.edit} Format JSON</button>
-            <button type="button" class="btn-sec btn-xs" onclick="copyText(document.getElementById('ai-json-config').value, 'Cấu hình AI JSON')">${ICONS.copy} Copy JSON</button>
-          </div>
-        </div>
-        <textarea id="ai-json-config" class="input-text" style="width:100%; height:160px; font-family:'JetBrains Mono', monospace; font-size:11px; line-height:1.5; resize:vertical; padding:10px; background:#f6f8fa;" oninput="syncJsonToFields()" placeholder="{}"></textarea>
-        
-        <!-- Gợi ý định dạng JSON gọn gàng -->
-        <div style="margin-top:6px; padding:8px 12px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:var(--radius-sharp); font-size:11px; line-height:1.5; color:var(--text-muted);">
-          💡 <strong>Gợi ý:</strong> Chọn nhanh mẫu (<strong>Chuẩn Slug</strong>, <strong>Ollama</strong>, <strong>OpenAI</strong>, <strong>Custom JSON</strong>) hoặc dán trực tiếp JSON từ nhà cung cấp bất kỳ để tự động nhận diện &amp; đồng bộ.
-        </div>
-      </div>
-
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding-top:12px; border-top:1px solid var(--border-primary); flex-wrap:wrap; gap:8px;">
-        <div style="display:flex; gap:8px;">
-          <button type="button" class="btn-sec btn-sm" onclick="testAiConnection()">${ICONS.refresh} Thử Nghiệm Kết Nối (Ping AI)</button>
-          <button type="button" class="btn btn-sm" onclick="testAiScanSample()">${ICONS.shield} Chạy Quét Thử Nghiệm Mẫu</button>
-        </div>
-        <div id="ai-status-msg" style="font-size:12px; font-family:'JetBrains Mono', monospace;"></div>
-      </div>
-
-      <!-- Kết Quả Kiểm Tra Bảo Mật Của AI Guard (Tích Hợp Trực Tiếp Trong Thẻ Cấu Hình) -->
-      <div id="ai-test-output-container" style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid var(--border-primary);">
-        <div style="font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:8px; display:flex; align-items:center; gap:6px;">
-          ${ICONS.shield} <span>Kết Quả Kiểm Tra Bảo Mật Của AI Guard:</span>
-        </div>
-        <div id="ai-test-output" style="background:#1f2328; color:#e6edf3; padding:12px; border-radius:var(--radius-sharp); font-size:12px; font-family:'JetBrains Mono', monospace; line-height:1.6; white-space:pre-wrap; border:1px solid #30363d;"></div>
-      </div>
-    </div>
-
-    <!-- 4. THAO TÁC QUẢN TRỊ BỘ ĐỆM CÁCH LY -->
-    <div class="card">
-      <h3>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${ICONS.settings} <span>Thao Tác Quản Trị Quá Trình Kiểm Toán Toàn Diện</span>
-        </div>
-      </h3>
-      <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        <button class="btn-sec btn-sm" onclick="runAuditRecheckAll()">${ICONS.refresh} Tái Kiểm Tra Secret Đã Cách Ly (slug audit recheck --all)</button>
-        <button class="btn-sec btn-sm" onclick="runAuditAllowAll()">${ICONS.unlock} Gỡ Cách Ly Toàn Bộ Cho Phép Transit (slug audit allow --all)</button>
-        <button class="btn-danger btn-sm" onclick="runAuditClear()">${ICONS.trash} Xóa Trắng Bộ Đệm (slug audit clear)</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ==================== [SECTION 4: ENVSHIELD & CENTRAL VAULT] ==================== -->
+  <!-- ==================== [SECTION 3: ENVSHIELD & CENTRAL VAULT] ==================== -->
   <div id="section-env" style="display:none;">
     <div class="card">
       <h3>

@@ -892,6 +892,14 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
             policy::RulesManager mgr(rules_file);
             if (mgr.add_rule(id, act, type, val)) {
+                if (act == policy::RuleAction::ALLOW) {
+                    fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+                    ai::StatefulAuditIndex audit_idx(idx_file);
+                    audit_idx.load();
+                    audit_idx.allow_folder(val, "Allowed by rule " + id, current_session->identity);
+                    audit_idx.allow_file(val, "Allowed by rule " + id, current_session->identity);
+                }
+                control_server_.invalidate_manifest_cache();
                 control_server_.audit_logger().log(current_session->identity, "RULE_ADD", val, "Added " + act_str + " rule");
                 send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"Rule added successfully\"}");
             } else {

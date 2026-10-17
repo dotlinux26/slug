@@ -174,6 +174,7 @@ bool AclManager::update_user(const std::string& username, const std::string& new
         if (new_ttl_seconds.has_value()) {
             uint64_t now = Utils::current_timestamp();
             it->second.expires_at = (*new_ttl_seconds > 0) ? (now + *new_ttl_seconds) : 0;
+            it->second.revoked = false;
         }
     }
     return save();

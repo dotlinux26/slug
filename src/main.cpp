@@ -612,10 +612,25 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         std::string_view sv(reinterpret_cast<const char*>(data->data()), data->size());
         double entropy = compute_shannon_entropy(sv);
 
+        bool is_scannable = ai::AiScanner::is_scannable_file(p);
+        auto entry_opt = audit_idx.get_entry(rel);
+
+        // If file is binary / compiled / media and was previously flagged by high-entropy false positive, heal it!
+        if (!is_scannable && entry_opt &&
+            (entry_opt->status == core::AuditStatus::SMART_FILTER_FLAGGED || entry_opt->status == core::AuditStatus::AI_FLAGGED)) {
+            audit_idx.remove_entry(rel);
+            entry_opt = std::nullopt;
+        }
+
         bool allowed = false;
         bool is_manual_blocked = false;
-        auto entry_opt = audit_idx.get_entry(rel);
-        if (entry_opt) {
+
+        if (is_whitelisted) {
+            if (entry_opt && (entry_opt->status == core::AuditStatus::SMART_FILTER_FLAGGED || entry_opt->status == core::AuditStatus::AI_FLAGGED)) {
+                audit_idx.allow_file(rel, "Quy tắc Whitelist: " + (rm ? rm->value : "ALLOW"), "host_admin");
+            }
+            allowed = true;
+        } else if (entry_opt) {
             if (entry_opt->status == core::AuditStatus::USER_ALLOWED || 
                 (entry_opt->status == core::AuditStatus::CLEAN && entry_opt->decision_actor == "user")) {
                 allowed = true;
@@ -638,7 +653,7 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         if (allowed) {
             std::string reason = (entry_opt && !entry_opt->decision_reason.empty()) 
                 ? entry_opt->decision_reason 
-                : ((entry_opt && !entry_opt->reason.empty()) ? entry_opt->reason : "Gỡ chặn & cho phép bởi Quản Trị Viên (Host Admin)");
+                : ((entry_opt && !entry_opt->reason.empty()) ? entry_opt->reason : ("Cho phép bởi Quản Trị Viên (Rule: " + (rm ? rm->value : "Whitelist") + ")"));
             allowed_files.push_back(nlohmann::json{
                 {"name", rel},
                 {"size", core::Utils::format_size(sz)},
@@ -646,6 +661,19 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
                 {"reason", reason},
                 {"unquarantined", true}
             });
+            continue;
+        }
+
+        // If not scannable (binary, pyd, dll, png, svg...), skip entropy detection completely!
+        if (!is_scannable) {
+            if (clean.size() < 250) {
+                clean.push_back(nlohmann::json{
+                    {"name", rel},
+                    {"size", core::Utils::format_size(sz)},
+                    {"status", "Clean"},
+                    {"note", "Tệp nhị phân / tài nguyên an toàn (Binary / Asset safe)"}
+                });
+            }
             continue;
         }
 
@@ -3866,10 +3894,7 @@ int cmd_portal(int argc, char* argv[]) {
                     platform::PathUtils::ensure_directory(slug_dir);
 
                     std::filesystem::path rules_file = slug_dir / "rules.conf";
-                    std::filesystem::path ignore_file = std::filesystem::path(target_dir) / ".slugignore";
-
                     platform::PathUtils::write_text_file_atomic(rules_file, raw_content);
-                    platform::PathUtils::write_text_file_atomic(ignore_file, raw_content);
 
                     nlohmann::json res;
                     res["status"] = "ok";
@@ -3889,16 +3914,17 @@ int cmd_portal(int argc, char* argv[]) {
                     uint16_t wport = static_cast<uint16_t>(j.value("port", 9443));
                     std::string suite_str = j.value("suite", "2");
                     std::string filter_str = j.value("filter", "protected");
-                    uint64_t wttl = j.value("ttl", 7200ULL);
-                    // Strictly cap session/OTP TTL between 60s and 24 hours (86400s)
-                    wttl = std::clamp<uint64_t>(wttl, 60ULL, 86400ULL);
+                    uint64_t wttl = j.value("ttl", 86400ULL);
+                    // 0 means Permanent (∞). If positive, ensure not below 60s
+                    if (wttl > 0 && wttl < 60ULL) wttl = 60ULL;
 
                     core::SuiteID suite = core::suite_from_string(suite_str);
                     core::FilterMode fmode = core::filter_mode_from_string(filter_str);
+                    bool enable_ai = (filter_str == "level4" || j.value("enable_ai", false));
 
                     uint16_t assigned_port = wport;
                     bool ok = core::WorkspaceManager::instance().add_workspace(
-                        wpath, wport, suite, wttl, true, fmode, &assigned_port
+                        wpath, wport, suite, wttl, enable_ai, fmode, &assigned_port
                     );
                     nlohmann::json res;
                     res["status"] = ok ? "ok" : "error";

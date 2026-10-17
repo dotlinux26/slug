@@ -183,12 +183,16 @@ WorkspaceManifest ManifestBuilder::build(
         }
 
         // Step 1: Policy evaluation (Rules + Gitignore)
+        bool is_explicitly_allowed_by_rule = false;
         if (filter_mode != core::FilterMode::NONE) {
             bool ignore_gi = (filter_mode == core::FilterMode::INCLUDE_IGNORED);
             auto decision = policy_engine.evaluate(rel, false, {}, ignore_gi);
             if (!decision.is_allowed) {
                 manifest.skipped.push_back({proto_path, decision.reason, "RULE_OR_GITIGNORE_BLOCKED"});
                 continue;
+            }
+            if (!decision.matched_rule_id.empty() && decision.matched_rule_id != "gitignore") {
+                is_explicitly_allowed_by_rule = true;
             }
         }
 
@@ -221,9 +225,21 @@ WorkspaceManifest ManifestBuilder::build(
             current_hash = crypto::Blake3::hash_hex(*file_data);
         }
 
-        // Step 2: Stateful AI & Smart Filter Audit evaluation (only active when enable_ai is true and filter_mode != NONE)
-        if (enable_ai && filter_mode != core::FilterMode::NONE) {
+        // Step 2: Stateful AI & Smart Filter Audit evaluation
+        if (is_explicitly_allowed_by_rule) {
+            // Explicit rule in .slug/rules.conf has highest authority - heal any previous flags
+            if (audit_index.is_flagged(proto_path)) {
+                audit_index.allow_file(proto_path, "Explicitly allowed by rule", "rule");
+            }
+        } else if (enable_ai && filter_mode != core::FilterMode::NONE) {
             core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
+
+            // Automatically heal false positives on non-scannable files (binaries, .pyd, images, etc.)
+            if ((cached_status == core::AuditStatus::AI_FLAGGED || cached_status == core::AuditStatus::SMART_FILTER_FLAGGED) &&
+                !ai::AiScanner::is_scannable_file(entry.path())) {
+                audit_index.remove_entry(proto_path);
+                cached_status = core::AuditStatus::UNKNOWN;
+            }
 
             if (cached_status == core::AuditStatus::AI_FLAGGED) {
                 auto e = audit_index.get_entry(proto_path);
