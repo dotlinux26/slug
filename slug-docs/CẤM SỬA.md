@@ -541,4 +541,38 @@ Khi hoàn tất, báo cáo theo cấu trúc:
     - Sửa câu SQL trong `list_flagged_or_all`: chuẩn hóa thành `WHERE status IN (2, 5, 6)` (chỉ lấy đúng các tệp bị cách ly bởi AI Guard, Manual/Policy Rule và Smart Regex).
     - Sửa `query_entries`: hỗ trợ cả `blocked` và `quarantined` ánh xạ về `status IN (2, 5, 6)`; ánh xạ `clean` về `status = 1`; ánh xạ `allowed` / `whitelisted` về `status = 4`; ánh xạ `rule` / `manual` về `status = 5`.
     - Sửa điều kiện detector filter để `status = 1` không bị nhận diện nhầm thành AI.
-    - Cập nhật `web_server.cpp` khi khởi tạo trang Admin Dashboard gọi `list_flagged_or_all(true)` thay vì `false`, đảm bảo bảng ban đầu chỉ hiển thị tệp bị cách ly, loại bỏ hoàn toàn các tệp CLEAN khỏi bảng `Flagged & Quarantined Files`.
+    - Cập nhật `web_server.cpp` khi khởi tạo trang Admin Dashboard gọi `list_flagged_or_all(true)` thay vì `false`, đảm bảo bảng ban đầu chỉ hiển thị tệp bị cách ly, loại bỏ hoàn toàn các tệp CLEAN khỏi bảng `Flagged & Quarantined Files`.
+
+### Hạng mục Khắc Phục Lỗi Logic Client Linux, Quản Lý Phiên Kết Nối, Phân Quyền RBAC & Giới Hạn Tải Nén ZIP
+- [x] **Khắc phục lỗi xác thực vai trò người dùng (RBAC User Authentication)**:
+  - **Nguyên nhân**: `SlugClient::authenticate_user` trước đây gán cứng yêu cầu quyền `"rw"`, khiến các tài khoản được cấp quyền chỉ đọc (`r`) hoặc chỉ ghi (`w`) như `r/r`, `w/w` luôn bị máy chủ từ chối với thông báo `[AUTH_USER_FAIL] ... Invalid credentials or expired`.
+  - **Khắc phục**: Chuyển tham số `required_role` trong `AclManager::authenticate` thành `std::optional<Role>`, mặc định kiểm tra hợp lệ tài khoản và thời hạn mà không áp đặt vai trò; cập nhật `control_server.cpp` và `SlugClient` cho phép người dùng đăng nhập tự do với bất kỳ vai trò hợp lệ nào (`r`, `w`, `rw`).
+- [x] **Khắc phục triệt để lỗi bỏ qua thu hồi phiên (Kill Session Bypass)**:
+  - **Nguyên nhân**:
+    - Khi Admin bấm "Thu hồi phiên (Kill Session)", `ControlServer::revoke_session` chỉ đánh dấu `is_revoked = true` trong map nội bộ của ControlServer mà không báo hiệu sang `WebServer` để hủy `session_ticket`.
+    - Vòng lặp `http_tunnel` trong `ControlServer` trước đây không kiểm tra trạng thái của `cur_session_id`, khiến client vẫn gửi được các request tunneled HTTP.
+    - Trong `WebServer::dispatch_http_core`, điều kiện `is_localhost` trước đây bao gồm cả `tunneled_session_id > 0`, và khi phát hiện cookie bị hủy, hệ thống tự động gán quyền `host_admin` cho localhost loopback thay vì chặn truy cập.
+  - **Khắc phục**:
+    - `ControlServer::revoke_session` và `revoke_sessions_by_identity` đồng bộ ngay lập tức sang `WebServer` qua `revoke_session_by_ticket` và `revoke_sessions_by_identity`.
+    - Vòng lặp `http_tunnel` kiểm tra nghiêm ngặt `get_session(cur_session_id)`. Nếu phiên đã bị thu hồi hoặc hết hạn, gửi ngay HTTP 401 Session Revoked và ngắt kết nối socket (`break`).
+    - `WebServer::dispatch_http_core` tách bạch `is_tunneled` và `is_localhost`. Thiết lập Strict Gatekeeper: nếu phiên đã bị thu hồi, trả về ngay HTTP 401 Unauthorized kèm trang cảnh báo tiếng Việt và xóa sạch cookie, tuyệt đối không bao giờ nhận `host_admin`.
+    - `cmd_portal` tại client khi nhận phản hồi 401 hoặc Session Revoked qua HTTP tunnel tự động reset `client` và xóa bản ghi kết nối khỏi `ConnectionManager`.
+- [x] **Sửa tận gốc lỗi Pull và Upload trên client Linux khi kết nối máy chủ Windows qua PQC Portal**:
+  - **Nguyên nhân**:
+    - Khi người dùng truy cập web Portal tại client (`http://127.0.0.1:8080/drop`), các endpoint thực thi hệ thống tệp cục bộ `/api/pull/execute`, `/api/pull/dry-run`, `/api/fs/upload-local-path` trước đây bị forward qua kênh `tunnel_http` sang máy chủ Windows.
+    - Hệ quả: Máy chủ Windows nhận đường dẫn Linux (vd `/home/nguyenduccanh/...`), tự tạo thư mục và ghi toàn bộ 3727 tệp lên đĩa của máy chủ Windows rồi báo thành công, trong khi đĩa của client Linux không hề có tệp nào; tương tự, tải tệp từ máy client lên bị máy chủ báo lỗi `Đường dẫn không tồn tại trên máy`.
+  - **Khắc phục**:
+    - Bổ sung xử lý trực tiếp ngay tại local client bên trong `cmd_portal` (`src/main.cpp`):
+      * `GET /api/pull/dry-run`: Lấy manifest từ trạm từ xa qua `g_portal.client->fetch_manifest()`, tính toán kế hoạch vi sai FastCDC/BLAKE3 ngay trên thư mục đích của máy client và trả kết quả dry-run.
+      * `POST /api/pull/execute`: Gọi trực tiếp `g_portal.client->pull(target_dir, opts, nullptr, manifest_opt)`, kéo toàn bộ các tệp vi sai từ xa về ghi trực tiếp vào đúng thư mục đích trên đĩa của máy client.
+      * `POST /api/fs/upload-local-path`: Đọc tệp/thư mục cục bộ từ đĩa của client và đẩy lên workspace từ xa qua `g_portal.client->push()`.
+      * Các thao tác `/api/fs/pick-file`, `/api/fs/pick-folder`, `/api/fs/open-folder`, `/api/fs/open-file` được xử lý native ngay trên hệ điều hành của client.
+- [x] **Khắc phục lỗi nén ZIP trực tiếp thư mục dung lượng lớn (441 MB)**:
+  - **Nguyên nhân**: Kênh mã hóa khung lượng tử AEAD (`AeadFrameChannel`) áp đặt giới hạn bảo vệ tối đa 16 MB/frame (`cipher_len > 16*1024*1024`). Việc nén toàn bộ thư mục 441 MB vào một khối ZIP đơn khối trong bộ nhớ vượt quá giới hạn khung, khiến socket ngắt kết nối và client nhận lỗi `Error: Remote Post-Quantum workspace failed to respond`.
+  - **Khắc phục**: Trong `WebServer` `/download-folder`, tính toán trước tổng dung lượng thư mục. Nếu vượt quá 12 MB, trả về mã HTTP 413 Payload Too Large với giao diện thông báo tiếng Việt rõ ràng, giải thích giới hạn đóng gói của kênh khung AEAD và hướng dẫn người dùng chuyển sang sử dụng tính năng "ĐỒNG BỘ THƯ MỤC VỀ MÁY BẠN (PULL)" để đồng bộ toàn bộ workspace an toàn với phân luồng vi sai và mã băm BLAKE3.
+- [x] **Chuẩn hóa danh sách các kết nối gần đây (Recent Connections - Tab 1)**:
+  - **Nguyên nhân**: Khi kết nối qua `/api/portal/connect`, các trường `ci.workspace`, `ci.identity`, `ci.auth_type`, `ci.expires_at` trước đây không được ghi nhận vào `ConnectionInfo`, dẫn đến việc hiển thị thời hạn `Permanent (∞)` sai lệch, mất tên workspace và loại xác thực.
+  - **Khắc phục**:
+    - Lưu đầy đủ thông tin định danh (`identity`), loại xác thực (`auth_type`), tên workspace và timestamp hết hạn (`expires_at`) vào `.slug/connections.json`.
+    - Hiển thị rõ ràng huy hiệu xác thực: `TOTP [rw]`, `Acc: <username>`, và đồng hồ đếm ngược `Còn HH:MM:SS` với thuộc tính `data-exp`, tự động trừ lùi thời gian sống theo từng giây trong thời gian thực.
+    - Khi người dùng bấm "Duyệt Thư Mục" vào một kết nối đã bị thu hồi hoặc hết hạn, `/api/portal/open` tự động xóa kết nối đã chết khỏi danh sách và trả về thông báo lỗi rõ ràng.

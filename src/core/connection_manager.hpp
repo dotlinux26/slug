@@ -20,6 +20,7 @@ struct ConnectionInfo {
     uint64_t expires_at{0};
     SuiteID suite{SuiteID::SUITE_1_CLASSICAL};
     uint64_t last_active{0};
+    std::string auth_type;
 
     bool is_expired() const;
 };

@@ -35,8 +35,8 @@ public:
     std::vector<UserAccount> list_users() const;
     std::optional<UserAccount> get_user(const std::string& username) const;
 
-    // Authenticates user and checks role permission
-    bool authenticate(const std::string& username, const std::string& password, Role required_role) const;
+    // Authenticates user and checks role permission (if required_role provided)
+    bool authenticate(const std::string& username, const std::string& password, std::optional<Role> required_role = std::nullopt) const;
 
 private:
     std::filesystem::path storage_path_;

@@ -2515,6 +2515,21 @@ function formatClock(sec) {
   return pad(h) + ':' + pad(m) + ':' + pad(s);
 }
 
+setInterval(() => {
+  const now = Math.floor(Date.now() / 1000);
+  document.querySelectorAll('.conn-ttl-badge').forEach(el => {
+    const exp = parseInt(el.getAttribute('data-exp') || '0', 10);
+    if (exp > 0) {
+      if (exp <= now) {
+        el.className = 'badge badge-quarantined';
+        el.innerText = 'Hết Hạn';
+      } else {
+        el.innerText = 'Còn ' + formatClock(exp - now);
+      }
+    }
+  });
+}, 1000);
+
 let currentRole = 'client';
 let clientAuthMode = 'otp';
 let hostedWorkspaces = [];
@@ -4946,6 +4961,7 @@ window.onload = function() {
           <tr>
             <th>Tên / ID</th>
             <th>Thư Mục</th>
+            <th>Xác Thực</th>
             <th>Địa Chỉ (IP:Port)</th>
             <th>Quyền</th>
             <th>Thời Hạn</th>
@@ -5465,25 +5481,43 @@ window.onload = function() {
         std::string conns_rows = "";
         uint64_t now = core::Utils::current_timestamp();
         for (const auto& c : conns) {
-            std::string exp_str = (c.expires_at == 0) ? "Permanent (∞)"
-                                  : (c.expires_at > now ? core::Utils::format_duration(c.expires_at - now) : "<span style='color:var(--danger);'>Expired</span>");
+            std::string exp_str;
+            if (c.expires_at == 0) {
+                exp_str = "<span class='badge badge-excluded'>Permanent (&infin;)</span>";
+            } else if (c.expires_at > now) {
+                uint64_t rem = c.expires_at - now;
+                exp_str = "<span class='badge badge-allowed conn-ttl-badge' data-exp='" + std::to_string(c.expires_at) + "'>C\xc3\xb2n " + core::Utils::format_duration(rem) + "</span>";
+            } else {
+                exp_str = "<span class='badge badge-quarantined'>H\xc3\xa9t H\xe1\xba\xa1n</span>";
+            }
+
+            std::string auth_badge;
+            if (c.auth_type == "account") {
+                auth_badge = "<span class='badge badge-allowed' style='font-size:10px;'>Acc: " + html_escape(c.identity.empty() ? "User" : c.identity) + "</span>";
+            } else if (c.auth_type == "totp" || c.identity.rfind("totp", 0) == 0) {
+                auth_badge = "<span class='badge badge-quarantined' style='font-size:10px;'>TOTP [" + core::role_to_string(c.role) + "]</span>";
+            } else {
+                auth_badge = "<span class='badge badge-excluded' style='font-size:10px;'>" + html_escape(c.identity.empty() ? "Phi\xc3\xaan" : c.identity) + "</span>";
+            }
+
             std::string esc_id_html = html_escape(c.id);
             std::string esc_id_js = js_escape(c.id);
-            std::string esc_ws_html = html_escape(c.workspace);
+            std::string esc_ws_html = html_escape(c.workspace.empty() ? "workspace" : c.workspace);
             std::string esc_host_html = html_escape(c.host);
 
             conns_rows += "<tr class='clickable-row' onclick='openSaved(\"" + esc_id_js + "\")'><td><strong>" + esc_id_html + "</strong></td>"
                        + "<td><code>" + esc_ws_html + "</code></td>"
+                       + "<td>" + auth_badge + "</td>"
                        + "<td><code>" + esc_host_html + ":" + std::to_string(c.port) + "</code></td>"
                        + "<td><span class='role-tag'>" + core::role_to_string(c.role) + "</span></td>"
                        + "<td>" + exp_str + "</td>"
                        + "<td onclick='event.stopPropagation()'><button class='btn btn-xs' onclick='openSaved(\"" + esc_id_js + "\")'>"
-                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duyệt Thư Mục</button> "
+                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duy\xe1\xbb\x87t Th\xc6\xb0 M\xe1\xbb\xa5c</button> "
                        + "<button class='btn-danger btn-xs' onclick='removeSaved(\"" + esc_id_js + "\")'>"
-                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='3 6 5 6 21 6'></polyline><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'></path></svg> Xóa</button></td></tr>";
+                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='3 6 5 6 21 6'></polyline><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'></path></svg> X\xc3\xb3a</button></td></tr>";
         }
         if (conns_rows.empty()) {
-            conns_rows = "<tr><td colspan='6' style='text-align:center; color:var(--text-muted); padding:18px;'>Chưa có trạm lưu nào. Điền IP và mã OTP vào biểu mẫu phía trên để kết nối ngay.</td></tr>";
+            conns_rows = "<tr><td colspan='7' style='text-align:center; color:var(--text-muted); padding:18px;'>Ch\xc6\xb0\x61 c\xc3\xb3 tr\xe1\xba\xa1m l\xc6\xb0u n\xc3\xa0o. \xc4\x90i\xe1\xbb\x81n IP v\xc3\xa0 m\xc3\xa3 OTP v\xc3\xa0o bi\xe1\xbb\x83u m\xe1\xba\xabu ph\xc3\xada tr\xc3\xaan \xc4\x91\xe1\xbb\x83 k\xe1\xba\xbft n\xe1\xbb\x91i ng\x61y.</td></tr>";
         }
 
         p = html.find("{{SAVED_CONNS_ROWS}}");

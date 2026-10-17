@@ -3033,6 +3033,16 @@ static bool open_path_in_os(const std::string& path_str) {
     return slug::platform::NativeDialog::open_path_in_os(path_str);
 }
 
+static std::string get_query_param(const std::string& query, const std::string& key) {
+    std::string search = key + "=";
+    size_t pos = query.find(search);
+    if (pos == std::string::npos) return "";
+    size_t val_start = pos + search.size();
+    size_t val_end = query.find('&', val_start);
+    std::string val = (val_end == std::string::npos) ? query.substr(val_start) : query.substr(val_start, val_end - val_start);
+    return slug_url_decode(val);
+}
+
 int cmd_portal(int argc, char* argv[]) {
     uint16_t start_port = 8080;
     std::string cfg_port = SlugConfig::get("portal_port", "8080");
@@ -3189,10 +3199,14 @@ int cmd_portal(int argc, char* argv[]) {
                             ci.id = cid;
                             ci.host = host;
                             ci.port = port;
+                            ci.workspace = client->workspace_name().empty() ? "workspace" : client->workspace_name();
+                            ci.identity = client->identity().empty() ? ((auth_type == "account") ? user : "totp") : client->identity();
+                            ci.auth_type = client->auth_type().empty() ? auth_type : client->auth_type();
                             ci.suite = suite;
                             ci.ticket = client->session_ticket();
                             ci.role = client->role();
                             ci.created_at = core::Utils::current_timestamp();
+                            ci.expires_at = (client->session_ttl() > 0) ? (ci.created_at + client->session_ttl()) : 0;
                             ci.last_active = ci.created_at;
                             core::ConnectionManager::instance().add_connection(ci);
                         }
@@ -3256,9 +3270,10 @@ int cmd_portal(int argc, char* argv[]) {
                         res["redirect"] = "/drop";
                         send_portal_http(sock, 200, "OK", "application/json", res.dump());
                     } else {
+                        core::ConnectionManager::instance().remove_connection(c_opt->id);
                         nlohmann::json res;
                         res["status"] = "error";
-                        res["message"] = client->get_last_error().empty() ? "Session ticket expired or host unreachable." : client->get_last_error();
+                        res["message"] = "Phiên làm việc đã bị Quản Trị Viên thu hồi (Revoked) hoặc đã hết hạn.";
                         send_portal_http(sock, 200, "OK", "application/json", res.dump());
                     }
                 } catch (const std::exception& e) {
@@ -3299,6 +3314,7 @@ int cmd_portal(int argc, char* argv[]) {
             if (path == "/api/portal/connections" && (method == "GET" || method == "POST")) {
                 auto conns = core::ConnectionManager::instance().list_connections(true);
                 nlohmann::json arr = nlohmann::json::array();
+                uint64_t now_ts = core::Utils::current_timestamp();
                 for (const auto& c : conns) {
                     nlohmann::json obj;
                     obj["id"] = c.id;
@@ -3309,6 +3325,9 @@ int cmd_portal(int argc, char* argv[]) {
                     obj["suite"] = core::suite_to_short_name(c.suite);
                     obj["expires_at"] = c.expires_at;
                     obj["is_expired"] = c.is_expired();
+                    obj["remaining_sec"] = (c.expires_at > now_ts) ? (c.expires_at - now_ts) : 0;
+                    obj["identity"] = c.identity;
+                    obj["auth_type"] = c.auth_type;
                     obj["is_alive"] = core::ConnectionManager::ping_connection(c, 250);
                     arr.push_back(obj);
                 }
@@ -4570,6 +4589,183 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/api/pull/dry-run") {
+                std::lock_guard<std::mutex> lk(g_portal.mtx);
+                if (!g_portal.client || !g_portal.client->is_connected()) {
+                    send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
+                    return;
+                }
+                std::string dest_str = get_query_param(query, "dest");
+                std::string scope = get_query_param(query, "scope");
+                std::string prune = get_query_param(query, "prune");
+                if (dest_str.empty()) {
+                    dest_str = "./";
+                }
+                auto manifest_opt = g_portal.client->fetch_manifest();
+                if (!manifest_opt) {
+                    send_portal_http(sock, 500, "Internal Server Error", "application/json", "{\"status\":\"error\",\"message\":\"Không thể tải danh sách tệp (manifest) từ máy chủ\"}");
+                    return;
+                }
+                sync::DeltaSyncOptions opts;
+                if (!scope.empty() && scope != "*") {
+                    opts.only_pattern = scope;
+                }
+                opts.dry_run = true;
+                opts.prune = (prune == "true");
+
+                std::filesystem::path target_dir(dest_str);
+                auto plan = sync::DeltaCalculator::compute_plan(*manifest_opt, target_dir, opts);
+
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["workspace"] = g_portal.client->workspace_name().empty() ? "remote" : g_portal.client->workspace_name();
+                res["new_files"] = plan.count_new + plan.count_modified;
+                res["new_bytes"] = plan.bytes_to_transfer;
+                res["cached_files"] = plan.count_unchanged;
+                res["cached_bytes"] = plan.bytes_saved;
+                double saved_pct = (plan.bytes_to_transfer + plan.bytes_saved > 0)
+                    ? (static_cast<double>(plan.bytes_saved) / (plan.bytes_to_transfer + plan.bytes_saved) * 100.0)
+                    : 100.0;
+                res["bandwidth_saved_pct"] = saved_pct;
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/pull/execute" && method == "POST") {
+                std::lock_guard<std::mutex> lk(g_portal.mtx);
+                if (!g_portal.client || !g_portal.client->is_connected()) {
+                    send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
+                    return;
+                }
+                nlohmann::json res;
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string dest = j.value("dest", "");
+                    std::string rel_dir = j.value("dir", "");
+                    if (dest.empty()) {
+                        res["status"] = "error";
+                        res["message"] = "Vui lòng chỉ định thư mục đích (dest)";
+                        send_portal_http(sock, 400, "Bad Request", "application/json", res.dump());
+                        return;
+                    }
+                    std::filesystem::path target_dir(dest);
+                    std::error_code ec;
+                    std::filesystem::create_directories(target_dir, ec);
+                    if (ec) {
+                        res["status"] = "error";
+                        res["message"] = "Không thể tạo thư mục đích trên máy: " + ec.message();
+                        send_portal_http(sock, 500, "Internal Server Error", "application/json", res.dump());
+                        return;
+                    }
+
+                    auto manifest_opt = g_portal.client->fetch_manifest();
+                    if (!manifest_opt) {
+                        res["status"] = "error";
+                        res["message"] = "Không thể lấy danh sách tệp (manifest) từ trạm từ xa.";
+                        send_portal_http(sock, 500, "Internal Server Error", "application/json", res.dump());
+                        return;
+                    }
+
+                    sync::DeltaSyncOptions opts;
+                    if (!rel_dir.empty()) {
+                        std::string p = rel_dir;
+                        std::replace(p.begin(), p.end(), '\\', '/');
+                        while (!p.empty() && p.front() == '/') p.erase(0, 1);
+                        while (!p.empty() && p.back() == '/') p.pop_back();
+                        if (!p.empty()) {
+                            opts.only_pattern = p + "/*";
+                        }
+                    }
+
+                    bool ok = g_portal.client->pull(target_dir, opts, nullptr, manifest_opt);
+                    if (ok) {
+                        size_t file_count = 0;
+                        uint64_t total_bytes = 0;
+                        for (const auto& f : manifest_opt->files) {
+                            if (opts.only_pattern.empty() || f.relative_path.rfind(rel_dir, 0) == 0) {
+                                file_count++;
+                                total_bytes += f.size;
+                            }
+                        }
+                        res["status"] = "ok";
+                        res["copied"] = file_count;
+                        res["bytes"] = total_bytes;
+                        res["dest"] = target_dir.string();
+                    } else {
+                        res["status"] = "error";
+                        res["message"] = g_portal.client->get_last_error().empty() ? "Quá trình đồng bộ tệp thất bại" : g_portal.client->get_last_error();
+                    }
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (const std::exception& e) {
+                    res["status"] = "error";
+                    res["message"] = e.what();
+                    send_portal_http(sock, 500, "Internal Server Error", "application/json", res.dump());
+                }
+                return;
+            }
+
+            if (path == "/api/fs/upload-local-path" && method == "POST") {
+                std::lock_guard<std::mutex> lk(g_portal.mtx);
+                if (!g_portal.client || !g_portal.client->is_connected()) {
+                    send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
+                    return;
+                }
+                nlohmann::json res;
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string source_str = j.value("source_path", "");
+                    std::string rel_dir = j.value("dir", "");
+                    bool is_dir = j.value("is_dir", false);
+                    if (source_str.empty()) {
+                        send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"source_path required\"}");
+                        return;
+                    }
+                    std::filesystem::path src_path(source_str);
+                    if (!std::filesystem::exists(src_path)) {
+                        send_portal_http(sock, 404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Đường dẫn không tồn tại trên máy.\"}");
+                        return;
+                    }
+
+                    if (!std::filesystem::is_directory(src_path) && !is_dir) {
+                        std::string filename = src_path.filename().string();
+                        std::string target_rel = rel_dir.empty() ? filename : (rel_dir + "/" + filename);
+                        bool ok = g_portal.client->push(src_path, target_rel);
+                        if (ok) {
+                            res["status"] = "ok";
+                            res["filename"] = filename;
+                            res["count"] = 1;
+                        } else {
+                            res["status"] = "error";
+                            res["message"] = g_portal.client->get_last_error().empty() ? "Không thể tải tệp lên máy chủ." : g_portal.client->get_last_error();
+                        }
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                        return;
+                    } else {
+                        size_t uploaded_count = 0;
+                        std::error_code ec;
+                        for (const auto& entry : std::filesystem::recursive_directory_iterator(src_path, ec)) {
+                            if (entry.is_regular_file()) {
+                                auto sub_rel = std::filesystem::relative(entry.path(), src_path).generic_string();
+                                std::string base_dir = src_path.filename().generic_string();
+                                std::string target_rel = rel_dir.empty() ? (base_dir + "/" + sub_rel) : (rel_dir + "/" + base_dir + "/" + sub_rel);
+                                if (g_portal.client->push(entry.path(), target_rel)) {
+                                    uploaded_count++;
+                                }
+                            }
+                        }
+                        res["status"] = "ok";
+                        res["count"] = uploaded_count;
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                        return;
+                    }
+                } catch (const std::exception& e) {
+                    res["status"] = "error";
+                    res["message"] = e.what();
+                    send_portal_http(sock, 500, "Internal Server Error", "application/json", res.dump());
+                }
+                return;
+            }
+
             // Tunnel file browsing, downloads, ZIP archives, uploads, and APIs through the encrypted PQC channel!
             std::lock_guard<std::mutex> lk(g_portal.mtx);
             if (!g_portal.client || !g_portal.client->is_connected()) {
@@ -4591,6 +4787,14 @@ int cmd_portal(int argc, char* argv[]) {
             // Tunnel the HTTP request over pure Post-Quantum frames
             auto tunnel_resp = g_portal.client->tunnel_http(raw);
             if (!tunnel_resp.empty()) {
+                std::string resp_str(tunnel_resp.begin(), tunnel_resp.end());
+                if (resp_str.rfind("HTTP/1.1 401", 0) == 0 || resp_str.find("Session Revoked") != std::string::npos) {
+                    std::string revoked_id = g_portal.active_id;
+                    g_portal.client.reset();
+                    if (!revoked_id.empty()) {
+                        core::ConnectionManager::instance().remove_connection(revoked_id);
+                    }
+                }
                 sock.send_all(tunnel_resp);
             } else {
                 send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Remote Post-Quantum workspace failed to respond.");

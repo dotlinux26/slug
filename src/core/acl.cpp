@@ -209,7 +209,7 @@ std::optional<UserAccount> AclManager::get_user(const std::string& username) con
     return std::nullopt;
 }
 
-bool AclManager::authenticate(const std::string& username, const std::string& password, Role required_role) const {
+bool AclManager::authenticate(const std::string& username, const std::string& password, std::optional<Role> required_role) const {
     const_cast<AclManager*>(this)->load();
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = users_.find(username);
@@ -217,7 +217,7 @@ bool AclManager::authenticate(const std::string& username, const std::string& pa
 
     const auto& acc = it->second;
     if (acc.is_expired()) return false;
-    if (!acc.has_permission(required_role)) return false;
+    if (required_role.has_value() && !acc.has_permission(*required_role)) return false;
 
     // Verify password hash (PBKDF2 with legacy SHA-256 fallback)
     return verify_password(password, acc.password_hash);

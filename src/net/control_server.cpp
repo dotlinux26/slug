@@ -171,6 +171,12 @@ bool ControlServer::revoke_session(uint32_t session_id) {
         ident = it->second.identity;
         auth_t = it->second.auth_type;
     }
+    if (web_server_) {
+        if (!ticket_to_revoke.empty()) {
+            web_server_->revoke_session_by_ticket(ticket_to_revoke);
+        }
+        web_server_->revoke_sessions_by_identity(ident);
+    }
     audit_logger_.log("host_admin", "SESSION_REVOKED", "session_" + std::to_string(session_id),
                       "Revoked " + auth_t + " session for " + ident);
     return true;
@@ -188,6 +194,9 @@ void ControlServer::revoke_sessions_by_identity(const std::string& identity) {
             }
         }
     }
+    if (web_server_) {
+        web_server_->revoke_sessions_by_identity(identity);
+    }
     for (auto sid : sids) {
         audit_logger_.log("host_admin", "SESSION_REVOKED", "session_" + std::to_string(sid),
                           "Revoked session for user " + identity);
@@ -199,7 +208,9 @@ void ControlServer::touch_session(uint32_t session_id) {
     std::lock_guard<std::mutex> lock(session_mutex_);
     auto it = sessions_.find(session_id);
     if (it != sessions_.end()) {
-        it->second.last_active_at = core::Utils::current_timestamp();
+        if (!it->second.is_revoked) {
+            it->second.last_active_at = core::Utils::current_timestamp();
+        }
     }
 }
 
@@ -379,8 +390,11 @@ void ControlServer::handle_client(platform::TcpSocket client) {
         } else if (type == "auth_user") {
             std::string u = req.value("username", "");
             std::string p = req.value("password", "");
-            std::string r_str = req.value("role", "r");
-            core::Role req_role = core::role_from_string(r_str);
+            std::string r_str = req.value("role", "");
+            std::optional<core::Role> req_role = std::nullopt;
+            if (!r_str.empty() && r_str != "any" && r_str != "*") {
+                req_role = core::role_from_string(r_str);
+            }
 
             bool ok = acl_manager_.authenticate(u, p, req_role);
             json resp;
@@ -568,6 +582,18 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             if (!send_packet(resp)) break;
 
         } else if (type == "http_tunnel") {
+            auto sess = get_session(cur_session_id);
+            if (!sess) {
+                json err_resp;
+                err_resp["status"] = "error";
+                err_resp["message"] = "Session revoked or expired";
+                std::string err_html = "<html><head><title>401 Session Revoked</title></head><body style='font-family:sans-serif; text-align:center; padding:40px; background:#0d1117; color:#f85149;'><h1>401 Unauthorized</h1><p>Phi\xc3\xaan l\xc3\xa0m vi\xe1\xbb\x87c \xc4\x91\xc3\xa3 b\xe1\xbb\x8b Qu\xe1\xba\xa3n Tr\xe1\xbb\x8b Vi\xc3\xaan (Host Admin) thu h\xe1\xbb\x93i (Session Revoked).</p></body></html>";
+                std::string http_err = "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " +
+                                       std::to_string(err_html.size()) + "\r\nConnection: close\r\nSet-Cookie: slug_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n\r\n" + err_html;
+                err_resp["raw_resp_b64"] = core::Utils::to_base64(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(http_err.data()), http_err.size()));
+                send_packet(err_resp);
+                break;
+            }
             touch_session(cur_session_id);
             std::string raw_b64 = req.value("raw_req_b64", "");
             auto raw_bytes = core::Utils::from_base64(raw_b64);

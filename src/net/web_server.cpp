@@ -268,6 +268,18 @@ void WebServer::revoke_session_by_ticket(const std::string& ticket) {
     }
 }
 
+void WebServer::revoke_sessions_by_identity(const std::string& identity) {
+    if (identity.empty()) return;
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    for (auto it = sessions_.begin(); it != sessions_.end(); ) {
+        if (it->second.identity == identity) {
+            it = sessions_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 std::string WebServer::render_directory_listing(const std::string& rel_subpath, const WebSession& session) {
     auto manifest = control_server_.get_or_build_manifest();
     return WebAssets::render_directory_listing(
@@ -333,7 +345,10 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
 
     std::optional<WebSession> current_session = validate_session(session_cookie);
 
-    if (!current_session && tunneled_session_id > 0) {
+    bool is_tunneled = (tunneled_session_id > 0);
+    bool is_localhost = (!is_tunneled && (peer_ip == "127.0.0.1" || peer_ip == "::1"));
+
+    if (!current_session && is_tunneled) {
         auto cs = control_server_.get_session(tunneled_session_id);
         if (cs && !cs->is_revoked) {
             WebSession ws;
@@ -345,8 +360,6 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             current_session = ws;
         }
     }
-
-    bool is_localhost = (peer_ip == "127.0.0.1" || peer_ip == "::1" || tunneled_session_id > 0);
 
     if (!current_session && !ticket.empty()) {
         if (ticket == "local_admin" && is_localhost) {
@@ -442,13 +455,22 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
     }
 
     bool was_session_invalidated = (!session_cookie.empty() && !current_session);
+    if (is_tunneled) {
+        auto cs = control_server_.get_session(tunneled_session_id);
+        if (!cs || cs->is_revoked) {
+            was_session_invalidated = true;
+        }
+    }
 
     // STRICT GATEKEEPER:
     if (!current_session) {
+        if (was_session_invalidated) {
+            std::string body = WebAssets::render_forbidden_page("Phiên làm việc đã kết thúc hoặc bị Quản Trị Viên (Host Admin) ngắt kết nối (Session Revoked).");
+            send_resp(401, "Unauthorized", "text/html; charset=utf-8", body, "Set-Cookie: slug_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n");
+            return;
+        }
         if (is_localhost) {
-            // Local loopback access is always granted to the local workspace owner (host_admin).
-            // If there was a stale or invalid session cookie from a previous run, automatically
-            // adopt host_admin without showing any 401/403 error page!
+            // Local loopback access is granted to host_admin for clean local management
             WebSession local_admin_session;
             local_admin_session.identity = "host_admin";
             local_admin_session.role = core::Role::READ_WRITE;
@@ -456,11 +478,6 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             local_admin_session.expires_at = 0;
             current_session = local_admin_session;
         } else {
-            if (was_session_invalidated) {
-                std::string body = WebAssets::render_forbidden_page("Phiên làm việc đã kết thúc hoặc bị Quản Trị Viên (Host Admin) ngắt kết nối.");
-                send_resp(401, "Unauthorized", "text/html; charset=utf-8", body, "Set-Cookie: slug_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n");
-                return;
-            }
             std::string body = WebAssets::render_forbidden_page("Mutual Post-Quantum Certificate / Session Ticket Required.");
             send_resp(403, "Forbidden", "text/html; charset=utf-8", body);
             return;
@@ -1438,6 +1455,23 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         while (!norm_dir.empty() && norm_dir.back() == '/') norm_dir.pop_back();
 
         std::string prefix = norm_dir.empty() ? "" : (norm_dir + "/");
+        size_t total_raw_bytes = 0;
+        for (const auto& f : m_opt->files) {
+            if (prefix.empty() || f.relative_path.rfind(prefix, 0) == 0 || f.relative_path == norm_dir) {
+                total_raw_bytes += f.size;
+            }
+        }
+        if (total_raw_bytes > 12 * 1024 * 1024) {
+            std::string err_html = "<html><head><meta charset='utf-8'><title>Thư mục quá lớn</title></head><body style='font-family:sans-serif; text-align:center; padding:40px; background:#0d1117; color:#f85149;'>"
+                "<h2>413 Payload Too Large - Thư mục quá lớn</h2>"
+                "<p style='color:#c9d1d9;'>Thư mục này có dung lượng (" + core::Utils::format_size(total_raw_bytes) + 
+                ") vượt quá giới hạn nén ZIP trực tiếp (12 MB) qua kênh mã hóa Post-Quantum.</p>"
+                "<p style='color:#58a6ff;'>Vui lòng quay lại và sử dụng chức năng <b>'ĐỒNG BỘ THƯ MỤC VỀ MÁY BẠN (PULL)'</b> để đồng bộ toàn bộ workspace về máy an toàn với phân luồng và kiểm tra mã hóa.</p>"
+                "<br><a href='javascript:history.back()' style='color:#58a6ff;'>&larr; Quay lại</a></body></html>";
+            send_resp(413, "Payload Too Large", "text/html; charset=utf-8", err_html);
+            return;
+        }
+
         std::vector<std::pair<std::string, std::vector<uint8_t>>> files_to_zip;
 
         for (const auto& f : m_opt->files) {

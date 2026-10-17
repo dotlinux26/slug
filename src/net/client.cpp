@@ -175,6 +175,11 @@ ClientAuthResult SlugClient::authenticate_totp(const std::string& totp_code) {
         session_id_ = res.session_id;
         role_ = res.role;
         session_ticket_ = res.web_ticket;
+        session_ttl_ = res.ttl;
+        expires_at_ = (res.ttl > 0) ? (core::Utils::current_timestamp() + res.ttl) : 0;
+        workspace_name_ = res.workspace_name;
+        identity_ = "totp_" + core::role_to_string(res.role);
+        auth_type_ = "totp";
     } else {
         res.success = false;
         res.message = resp.value("message", "Authentication failed");
@@ -193,7 +198,9 @@ ClientAuthResult SlugClient::authenticate_user(const std::string& username, cons
     req["type"] = "auth_user";
     req["username"] = username;
     req["password"] = password;
-    req["role"] = role;
+    if (!role.empty()) {
+        req["role"] = role;
+    }
     if (!send_json(req)) {
         res.message = "Failed to send auth request";
         return res;
@@ -218,6 +225,11 @@ ClientAuthResult SlugClient::authenticate_user(const std::string& username, cons
         session_id_ = res.session_id;
         role_ = res.role;
         session_ticket_ = res.web_ticket;
+        session_ttl_ = res.ttl;
+        expires_at_ = (res.ttl > 0) ? (core::Utils::current_timestamp() + res.ttl) : 0;
+        workspace_name_ = res.workspace_name;
+        identity_ = username;
+        auth_type_ = "account";
     } else {
         res.success = false;
         res.message = resp.value("message", "Authentication failed");
@@ -259,6 +271,11 @@ ClientAuthResult SlugClient::authenticate_ticket(const std::string& ticket) {
         session_id_ = res.session_id;
         role_ = res.role;
         session_ticket_ = res.web_ticket;
+        session_ttl_ = res.ttl;
+        expires_at_ = (res.ttl > 0) ? (core::Utils::current_timestamp() + res.ttl) : 0;
+        workspace_name_ = res.workspace_name;
+        identity_ = "ticket";
+        auth_type_ = "ticket";
     } else {
         res.success = false;
         res.message = resp.value("message", "Ticket authentication failed");
@@ -269,9 +286,14 @@ ClientAuthResult SlugClient::authenticate_ticket(const std::string& ticket) {
 bool SlugClient::authenticate_user(const std::string& username, const std::string& password, uint64_t ttl, bool save) {
     (void)ttl;
     (void)save;
-    auto r = authenticate_user(username, password, "rw");
+    auto r = authenticate_user(username, password, "");
     if (r.success) {
         session_ticket_ = r.web_ticket;
+        session_ttl_ = r.ttl;
+        expires_at_ = (r.ttl > 0) ? (core::Utils::current_timestamp() + r.ttl) : 0;
+        workspace_name_ = r.workspace_name;
+        identity_ = username;
+        auth_type_ = "account";
         return true;
     }
     last_error_ = r.message;
@@ -285,6 +307,11 @@ bool SlugClient::authenticate_token(const std::string& token_or_ticket, uint64_t
         auto r = authenticate_totp(token_or_ticket);
         if (r.success) {
             session_ticket_ = r.web_ticket;
+            session_ttl_ = r.ttl;
+            expires_at_ = (r.ttl > 0) ? (core::Utils::current_timestamp() + r.ttl) : 0;
+            workspace_name_ = r.workspace_name;
+            identity_ = "totp_" + core::role_to_string(r.role);
+            auth_type_ = "totp";
             return true;
         }
         last_error_ = r.message;
@@ -293,6 +320,11 @@ bool SlugClient::authenticate_token(const std::string& token_or_ticket, uint64_t
     auto r = authenticate_ticket(token_or_ticket);
     if (r.success) {
         session_ticket_ = r.web_ticket;
+        session_ttl_ = r.ttl;
+        expires_at_ = (r.ttl > 0) ? (core::Utils::current_timestamp() + r.ttl) : 0;
+        workspace_name_ = r.workspace_name;
+        identity_ = "ticket";
+        auth_type_ = "ticket";
         return true;
     }
     last_error_ = r.message;
@@ -599,7 +631,7 @@ std::vector<uint8_t> SlugClient::tunnel_http(const std::string& raw_http_request
         reinterpret_cast<const uint8_t*>(raw_http_request.data()), raw_http_request.size()));
 
     if (!send_json(req)) return {};
-    auto resp_opt = recv_json(15000);
+    auto resp_opt = recv_json(60000);
     if (!resp_opt) return {};
 
     const auto& resp = *resp_opt;

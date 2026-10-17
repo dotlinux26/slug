@@ -41,8 +41,8 @@ public:
     ClientAuthResult authenticate_totp(const std::string& totp_code);
 
     // Authenticate via username / password / requested role
-    ClientAuthResult authenticate_user(const std::string& username, const std::string& password, const std::string& role = "r");
-    bool authenticate_user(const std::string& username, const std::string& password, uint64_t ttl, bool save);
+    ClientAuthResult authenticate_user(const std::string& username, const std::string& password, const std::string& role = "");
+    bool authenticate_user(const std::string& username, const std::string& password, uint64_t ttl = 86400, bool save = false);
 
     // Authenticate via session ticket / certificate
     ClientAuthResult authenticate_ticket(const std::string& ticket);
@@ -77,11 +77,21 @@ public:
     const std::string& last_error() const { return last_error_; }
     const std::string& get_last_error() const { return last_error_; }
     const std::string& session_ticket() const { return session_ticket_; }
+    uint64_t session_ttl() const { return session_ttl_; }
+    uint64_t expires_at() const { return expires_at_; }
+    const std::string& workspace_name() const { return workspace_name_; }
+    const std::string& identity() const { return identity_; }
+    const std::string& auth_type() const { return auth_type_; }
 
 private:
     platform::TcpSocket socket_;
     std::string last_error_;
     std::string session_ticket_;
+    uint64_t session_ttl_{0};
+    uint64_t expires_at_{0};
+    std::string workspace_name_;
+    std::string identity_;
+    std::string auth_type_;
     core::SuiteID suite_id_{core::SuiteID::SUITE_1_CLASSICAL};
     std::string suite_name_;
     std::unique_ptr<crypto::ICryptoSuite> suite_;

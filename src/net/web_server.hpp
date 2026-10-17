@@ -51,6 +51,7 @@ public:
     std::string create_session(const std::string& identity, core::Role role, uint64_t ttl_sec = 86400, const std::string& ticket = "");
     void destroy_session(const std::string& token);
     void revoke_session_by_ticket(const std::string& ticket);
+    void revoke_sessions_by_identity(const std::string& identity);
 
 private:
     ControlServer& control_server_;
