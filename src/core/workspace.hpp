@@ -56,7 +56,7 @@ public:
 
 private:
     WorkspaceManager() = default;
-    std::mutex mutex_;
+    std::recursive_mutex mutex_;
     struct RunningInstance {
         std::shared_ptr<net::ControlServer> control_server;
         std::unique_ptr<net::WebServer> web_server;

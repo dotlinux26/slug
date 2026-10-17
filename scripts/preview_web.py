@@ -1521,10 +1521,22 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/fs/pick-folder":
+            folder = ""
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes('-topmost', True)
+                folder = filedialog.askdirectory(title="Slug: Chọn Thư Mục Workspace Chia Sẻ")
+                root.destroy()
+            except Exception:
+                folder = ""
+            has_slug = os.path.exists(os.path.join(folder, ".slug")) if folder else False
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "cancelled", "path": ""}).encode("utf-8"))
+            self.wfile.write(json.dumps({"status": "ok" if folder else "cancelled", "path": folder, "has_slug": has_slug}).encode("utf-8"))
             return
 
         if path == "/api/workspace/rules":

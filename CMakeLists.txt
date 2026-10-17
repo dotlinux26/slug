@@ -74,7 +74,7 @@ add_executable(slug ${SLUG_SOURCES})
 
 # Platform-specific link libraries & configuration
 if(WIN32)
-    target_link_libraries(slug PRIVATE ws2_32 crypt32 bcrypt advapi32 user32 iphlpapi)
+    target_link_libraries(slug PRIVATE ws2_32 crypt32 bcrypt advapi32 user32 iphlpapi ole32 shell32)
     # Statically link C/C++ runtime on MSVC (/MT)
     if(MSVC)
         set_property(TARGET slug PROPERTY

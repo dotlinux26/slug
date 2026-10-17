@@ -106,6 +106,8 @@ static bool is_terminal_interactive() {
 #elif defined(SLUG_PLATFORM_WINDOWS)
 #include <iphlpapi.h>
 #include <shellapi.h>
+#include <shobjidl.h>
+#include <shlobj.h>
 static std::string read_hidden_password(const std::string& prompt) {
     std::cout << prompt << std::flush;
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
@@ -2815,6 +2817,68 @@ static void send_portal_http(platform::TcpSocket& sock, int code, const std::str
     sock.send_all(resp);
 }
 
+#if defined(SLUG_PLATFORM_WINDOWS)
+static std::string pick_folder_native() {
+    std::string result = "";
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    bool need_uninit = SUCCEEDED(hr);
+
+    IFileOpenDialog* pFileOpen = nullptr;
+    hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+    if (SUCCEEDED(hr)) {
+        DWORD dwOptions = 0;
+        if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+            pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        }
+        pFileOpen->SetTitle(L"Slug: Chọn Thư Mục Workspace Chia Sẻ");
+        hr = pFileOpen->Show(NULL);
+        if (SUCCEEDED(hr)) {
+            IShellItem* pItem = nullptr;
+            hr = pFileOpen->GetResult(&pItem);
+            if (SUCCEEDED(hr)) {
+                PWSTR pszFilePath = nullptr;
+                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                if (SUCCEEDED(hr)) {
+                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                    if (size_needed > 0) {
+                        result.resize(size_needed - 1);
+                        WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                    }
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+    if (need_uninit) CoUninitialize();
+    return result;
+}
+#elif defined(SLUG_PLATFORM_POSIX)
+static std::string pick_folder_native() {
+    std::string chosen_path = "";
+    FILE* pipe = popen("zenity --file-selection --directory --title='Chọn thư mục chia sẻ qua Slug' 2>/dev/null", "r");
+    if (!pipe) {
+        pipe = popen("kdialog --getexistingdirectory . 2>/dev/null", "r");
+    }
+    if (pipe) {
+        char buf[512];
+        while (fgets(buf, sizeof(buf), pipe)) {
+            chosen_path += buf;
+        }
+        pclose(pipe);
+    }
+    while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
+        chosen_path.pop_back();
+    }
+    return chosen_path;
+}
+#else
+static std::string pick_folder_native() {
+    return "";
+}
+#endif
+
 int cmd_portal(int argc, char* argv[]) {
     uint16_t start_port = 8080;
     std::string cfg_port = SlugConfig::get("portal_port", "8080");
@@ -3386,8 +3450,14 @@ int cmd_portal(int argc, char* argv[]) {
 
             if (path == "/api/fs/pick-folder") {
                 nlohmann::json res;
-                res["status"] = "cancelled";
-                res["path"] = "";
+                std::string chosen = pick_folder_native();
+                if (!chosen.empty()) {
+                    res["status"] = "ok";
+                    res["path"] = chosen;
+                } else {
+                    res["status"] = "cancelled";
+                    res["path"] = "";
+                }
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 return;
             }
@@ -3490,12 +3560,14 @@ int cmd_portal(int argc, char* argv[]) {
                         if (assigned_port > 0) {
                             res["message"] = "Thư mục này hiện đang được chia sẻ trên cổng " + std::to_string(assigned_port) + "! Không thể phát trùng lặp cùng một thư mục.";
                         } else {
-                            res["message"] = "Không thể khởi động chia sẻ workspace (vui lòng kiểm tra quyền truy cập thư mục hoặc cổng mạng)";
+                            res["message"] = "Không thể khởi động chia sẻ workspace: Thư mục '" + wpath + "' không tồn tại hoặc không thể tạo. Hãy chọn thư mục hoặc nhập đường dẫn đầy đủ (ví dụ: D:\\project\\dist).";
                         }
                     }
-                    send_portal_http(sock, ok ? 200 : 400, ok ? "OK" : "Bad Request", "application/json", res.dump());
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (const std::exception& e) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Lỗi định dạng: " + std::string(e.what()) + "\"}");
                 } catch (...) {
-                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid request body\"}");
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Lỗi không xác định khi bắt đầu chia sẻ\"}");
                 }
                 return;
             }

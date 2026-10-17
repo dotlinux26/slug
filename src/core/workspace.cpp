@@ -155,7 +155,7 @@ uint16_t WorkspaceManager::find_available_port(uint16_t starting_port) {
         uint16_t candidate = static_cast<uint16_t>(p);
         // 1. Check in-memory instances_
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<std::recursive_mutex> lock(mutex_);
             if (instances_.find(candidate) != instances_.end()) {
                 continue;
             }
@@ -202,7 +202,7 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
 
     // STRICT CHECK: Reject duplicate hosting of the same directory!
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         for (const auto& [p, inst] : instances_) {
             if (inst.control_server) {
                 std::error_code eq_ec;
@@ -241,9 +241,6 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
             "<rule id=\"r_env_sample\" action=\"allow\" type=\"path\">./.env.example</rule>\n";
         platform::PathUtils::write_text_file_atomic(rules_file, def_rules);
     }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
     // Auto-search next available port if port is occupied
     uint16_t target_port = (port >= 1024) ? port : 9443;
     std::shared_ptr<net::ControlServer> ctrl;
@@ -298,14 +295,14 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     update_registry(wi, false);
 
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         instances_[ctrl->port()] = {ctrl, std::move(web)};
     }
     return true;
 }
 
 bool WorkspaceManager::stop_workspace(uint16_t port) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = instances_.find(port);
     if (it != instances_.end()) {
         it->second.control_server->stop();
@@ -341,7 +338,7 @@ bool WorkspaceManager::stop_workspace(uint16_t port) {
 }
 
 std::vector<WorkspaceInfo> WorkspaceManager::list_active_workspaces() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<WorkspaceInfo> result;
 
     // Collect from running in-memory instances
@@ -367,7 +364,7 @@ std::vector<WorkspaceInfo> WorkspaceManager::list_active_workspaces() {
 }
 
 std::shared_ptr<net::ControlServer> WorkspaceManager::get_server(uint16_t port) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     auto it = instances_.find(port);
     if (it != instances_.end()) {
         return it->second.control_server;
