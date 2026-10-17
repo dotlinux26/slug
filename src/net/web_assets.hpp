@@ -179,9 +179,12 @@ public:
             std::string p = s.relative_path;
             std::string st_label = "Excluded";
             std::string badge_cls = "badge-excluded";
-            if (s.status == "AI_FLAGGED") {
+            if (s.status == "AI_FLAGGED" || s.status == "SMART_FILTER_FLAGGED") {
                 st_label = "Quarantined";
                 badge_cls = "badge-quarantined";
+            } else if (s.status == "MANUAL_BLOCKED") {
+                st_label = "Blocked (Manual Guard)";
+                badge_cls = "badge-blocked";
             } else if (s.status == "RULE_OR_GITIGNORE_BLOCKED") {
                 if (s.reason.find("gitignore") != std::string::npos) {
                     st_label = "Excluded";
@@ -365,6 +368,41 @@ public:
           << "      .catch(err => { alert('Upload failed: ' + err); toast.style.display = 'none'; });"
           << "  });"
           << "}"
+          << "function toggleManualBlockFile(p, block) {"
+          << "  const ep = block ? '/api/admin/manual-block' : '/api/admin/manual-unblock';"
+          << "  const msg = block ? ('Bạn có chắc muốn chặn tệp \"' + p + '\" khỏi chia sẻ mạng?\\n(Gắn nhãn: Người tự kiểm toán - Manual Guard)') : ('Bạn có chắc muốn gỡ chặn tệp \"' + p + '\"?');"
+          << "  if (!confirm(msg)) return;"
+          << "  fetch(ep, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({path: p, is_dir: false}) })"
+          << "    .then(r => r.json())"
+          << "    .then(res => { if (res.status === 'ok') location.reload(); else alert('Lỗi: ' + (res.message || 'Không thể thao tác')); })"
+          << "    .catch(e => alert('Lỗi: ' + e));"
+          << "}"
+          << "function toggleManualBlockDir(p) {"
+          << "  if (!confirm('Bạn có chắc muốn chặn toàn bộ thư mục \"' + p + '/\" khỏi chia sẻ mạng?\\n(Gắn nhãn: Người tự kiểm toán - Manual Guard)')) return;"
+          << "  fetch('/api/admin/manual-block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({path: p, is_dir: true}) })"
+          << "    .then(r => r.json())"
+          << "    .then(res => { if (res.status === 'ok') location.reload(); else alert('Lỗi: ' + (res.message || 'Không thể chặn')); })"
+          << "    .catch(e => alert('Lỗi: ' + e));"
+          << "}"
+          << "function returnToPortal() {"
+          << "  if (window.location.port === '8080' || window.location.pathname.startsWith('/portal')) {"
+          << "    window.location.href = '/portal';"
+          << "    return;"
+          << "  }"
+          << "  if (document.referrer && (document.referrer.includes('/portal') || document.referrer.includes(':8080'))) {"
+          << "    window.location.href = document.referrer;"
+          << "    return;"
+          << "  }"
+          << "  let savedCfg = null;"
+          << "  try { savedCfg = JSON.parse(localStorage.getItem('slug_system_config') || '{}'); } catch(e){}"
+          << "  const pPort = (savedCfg && savedCfg.portal_port) ? savedCfg.portal_port : 8080;"
+          << "  window.location.href = 'http://127.0.0.1:' + pPort + '/portal';"
+          << "}"
+          << "setInterval(() => {"
+          << "  fetch('/api/status')"
+          << "    .then(r => { if (r.status === 401 || r.status === 403) window.location.href = '/portal?reason=revoked'; })"
+          << "    .catch(() => {});"
+          << "}, 4000);"
           << "window.addEventListener('dragover', e => { e.preventDefault(); document.getElementById('drop-container').classList.add('dropzone-active'); });"
           << "window.addEventListener('dragleave', e => { if (e.clientX <= 0 || e.clientY <= 0) document.getElementById('drop-container').classList.remove('dropzone-active'); });"
           << "window.addEventListener('drop', e => {"
@@ -378,6 +416,7 @@ public:
           << "<h1><span>Slug Workspace Explorer</span> <span class='badge badge-pqc'>" << core::suite_to_string(suite_id) << "</span></h1>"
           << "<div style='display:flex; align-items:center; gap:8px;'>"
           << "<div class='user-badge'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg> " << html_escape(identity) << " <span class='role-tag'>" << core::role_to_string(role) << "</span></div>"
+          << "<button type='button' class='btn-sec' onclick='returnToPortal()' style='display:inline-flex; align-items:center; gap:6px;' title='Quay lại Trạm Điều Khiển Workspace để kết nối phiên mới'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='4 17 10 11 4 5'></polyline><line x1='12' y1='19' x2='20' y2='19'></line></svg> <span>Trở Về Trạm Điều Khiển</span></button>"
           << (identity == "host_admin" ? "<a class='btn-sec' href='/admin'>Admin Dashboard</a>" : "")
           << "<a class='btn-sec' href='/logout' style='color:var(--danger);'>Logout</a>"
           << "</div></div>"
@@ -404,6 +443,8 @@ public:
         }
         h << "</div>"
           << "<div style='display:flex; align-items:center; gap:8px;'>"
+          << "<button type='button' class='btn-sec' onclick='returnToPortal()' style='display:inline-flex; align-items:center; gap:6px;'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='4 17 10 11 4 5'></polyline><line x1='12' y1='19' x2='20' y2='19'></line></svg> <span>Trang Điều Khiển</span></button>"
+          << "<button type='button' class='btn-sec' onclick='location.reload()' style='display:inline-flex; align-items:center; gap:6px;'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M23 4v6h-6'></path><path d='M1 20v-6h6'></path><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'></path></svg> <span>Làm Mới</span></button>"
           << "<input type='file' id='hidden-file-input' multiple style='display:none;' onchange='uploadFiles(this.files)'>"
           << (role != core::Role::READ_ONLY ? "<button type='button' class='btn btn-sm' onclick='triggerUpload()' style='display:inline-flex; align-items:center; gap:6px;'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='17 8 12 3 7 8'></polyline><line x1='12' y1='3' x2='12' y2='15'></line></svg> <span>Tải Lên</span></button>" : "")
           << (role != core::Role::WRITE_ONLY ? ("<button type='button' class='btn' onclick='document.getElementById(\"pull-sync-card\").scrollIntoView({behavior:\"smooth\"})' style='background:#0969da; color:#fff; display:inline-flex; align-items:center; gap:6px;'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg> <span>ĐỒNG BỘ THƯ MỤC VỀ MÁY BẠN</span></button> "
@@ -426,7 +467,7 @@ public:
               << "<th style='width:80px;'>TYPE</th>"
               << "<th style='width:100px;'>SIZE</th>"
               << "<th style='width:150px;'>STATUS</th>"
-              << "<th style='width:90px; text-align:right;'>ACTION</th>"
+              << "<th style='width:160px; text-align:right;'>ACTION</th>"
               << "</tr></thead><tbody>";
 
             if (!norm_sub.empty()) {
@@ -438,12 +479,16 @@ public:
             for (const auto& item : items) {
                 h << "<tr class='item-row'>";
                 if (item.is_dir) {
+                    std::string admin_dir_act = (identity == "host_admin")
+                        ? (" <button type='button' class='btn-danger' style='padding:2px 8px; font-size:11px;' onclick='toggleManualBlockDir(\"" + js_escape(item.full_rel_path) + "\")'>Chặn Cả Thư Mục (Manual Guard)</button>")
+                        : "";
+
                     h << "<td></td>"
                       << "<td><a class='entry-name' href='/drop?dir=" << html_escape(item.full_rel_path) << "'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> " << html_escape(item.name) << "/</a></td>"
                       << "<td style='color:var(--text-muted);'>folder</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
                       << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
-                      << "<td style='text-align:right;'><a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/drop?dir=" << html_escape(item.full_rel_path) << "'>Browse</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'>Copy Path</button></td>";
+                      << "<td style='text-align:right;'><a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/drop?dir=" << html_escape(item.full_rel_path) << "'>Browse</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'>Copy Path</button>" << admin_dir_act << "</td>";
                 } else {
                     std::string chk = item.selectable
                         ? ("<input type='checkbox' class='file-check' data-path='" + html_escape(item.full_rel_path) + "' data-size='" + std::to_string(item.size) + "' onchange='updateSelection()'>")
@@ -452,6 +497,14 @@ public:
                     std::string act = item.selectable
                         ? ("<a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/download?path=" + html_escape(item.full_rel_path) + "'>Download</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'>Copy Path</button>")
                         : "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
+
+                    if (identity == "host_admin") {
+                        if (item.selectable) {
+                            act += " <button type='button' class='btn-danger' style='padding:2px 8px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", true)'>Chặn (Manual Guard)</button>";
+                        } else {
+                            act += " <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", false)'>Gỡ Chặn (Unblock)</button>";
+                        }
+                    }
 
                     h << "<td>" << chk << "</td>"
                       << "<td><span style='display:inline-flex; align-items:center; gap:6px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline></svg> " << html_escape(item.name) << "</span></td>"
@@ -2232,8 +2285,11 @@ function renderAuditWorkspaceFiles() {
             <td><strong style="color:${f.unquarantined ? '#1a7f37' : '#cf222e'};">${f.name}</strong></td>
             <td><code>${f.size}</code></td>
             <td>
-              <span class="badge" style="background:#fff8c5; color:#9a6700;">Slug Regex</span>
-              <span class="badge" style="background:#fbefff; color:#8250df;">Slug AI</span>
+              ${(f.tiers || ['Slug Regex', 'Slug AI']).map(t => {
+                if (t === 'Manual Guard') return '<span class="badge" style="background:#ffebe9; color:#cf222e; font-weight:600;">Manual Guard</span>';
+                if (t === 'Slug Regex') return '<span class="badge" style="background:#fff8c5; color:#9a6700;">Slug Regex</span>';
+                return '<span class="badge" style="background:#fbefff; color:#8250df;">' + t + '</span>';
+              }).join(' ')}
             </td>
             <td style="font-size:11px; color:var(--text-muted);">${f.reason}</td>
             <td>
@@ -2284,6 +2340,193 @@ function renderAuditWorkspaceFiles() {
     });
 }
 
+let currentWorkspaceRules = ['node_modules/', 'target/', 'build/', 'dist/', '.git/', '*.tmp', '*.log', '*.iso', '*.zip', 'venv/', '__pycache__/', '.env*'];
+let isRulesTextMode = false;
+
+function loadWorkspaceRules(wsPath) {
+  const p = wsPath || getSelectedAuditPath() || './';
+  fetch('/api/workspace/rules?path=' + encodeURIComponent(p))
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === 'ok') {
+        if (data.raw && data.raw.trim()) {
+          const lines = data.raw.split('\n')
+            .map(l => l.trim())
+            .filter(l => l && !l.startsWith('#'));
+          if (lines.length > 0) {
+            currentWorkspaceRules = lines;
+          }
+        }
+        renderActiveRuleChips();
+        const ta = document.getElementById('rules-raw-textarea');
+        if (ta) ta.value = data.raw || currentWorkspaceRules.join('\n');
+      }
+    })
+    .catch(() => {
+      renderActiveRuleChips();
+    });
+}
+
+function renderActiveRuleChips() {
+  const c = document.getElementById('active-rules-container');
+  if (!c) return;
+  if (currentWorkspaceRules.length === 0) {
+    c.innerHTML = '<span style="font-size:11px; color:var(--text-muted); font-style:italic;">Chưa có quy tắc nào. Chọn mẫu ở trên hoặc tự thêm.</span>';
+    return;
+  }
+  c.innerHTML = currentWorkspaceRules.map((r, idx) => `
+    <span class="badge" style="background:#f6f8fa; border:1px solid #d0d7de; color:#1f2328; padding:3px 8px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">
+      <code>${r}</code>
+      <span onclick="removeRuleChip(${idx})" style="cursor:pointer; color:#cf222e; font-weight:bold; font-size:14px; line-height:1; padding:0 2px;" title="Xóa quy tắc này">&times;</span>
+    </span>
+  `).join('');
+  const ta = document.getElementById('rules-raw-textarea');
+  if (ta && !isRulesTextMode) {
+    ta.value = currentWorkspaceRules.join('\n');
+  }
+}
+
+function addQuickPreset(pattern) {
+  if (!currentWorkspaceRules.includes(pattern)) {
+    currentWorkspaceRules.push(pattern);
+    renderActiveRuleChips();
+    showToast(`Đã thêm mẫu: ${pattern}`);
+  } else {
+    showToast(`Mẫu ${pattern} đã có trong danh sách.`);
+  }
+}
+
+function addCustomRule() {
+  const inp = document.getElementById('custom-rule-input');
+  if (!inp) return;
+  const val = inp.value.trim();
+  if (!val) return;
+  if (!currentWorkspaceRules.includes(val)) {
+    currentWorkspaceRules.push(val);
+    renderActiveRuleChips();
+    showToast(`Đã thêm quy tắc: ${val}`);
+  }
+  inp.value = '';
+  inp.focus();
+}
+
+function removeRuleChip(idx) {
+  if (idx >= 0 && idx < currentWorkspaceRules.length) {
+    const removed = currentWorkspaceRules.splice(idx, 1);
+    renderActiveRuleChips();
+    showToast(`Đã xóa: ${removed[0]}`);
+  }
+}
+
+function toggleRulesTextView() {
+  isRulesTextMode = !isRulesTextMode;
+  const builder = document.getElementById('rules-builder-view');
+  const txtView = document.getElementById('rules-text-view');
+  const btn = document.getElementById('btn-toggle-rules-text');
+  const ta = document.getElementById('rules-raw-textarea');
+
+  if (isRulesTextMode) {
+    if (builder) builder.style.display = 'none';
+    if (txtView) txtView.style.display = 'block';
+    if (btn) btn.textContent = 'Xem Dạng Thẻ (Tags)';
+    if (ta) ta.value = currentWorkspaceRules.join('\n');
+  } else {
+    if (ta) {
+      currentWorkspaceRules = ta.value.split('\n')
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('#'));
+      renderActiveRuleChips();
+    }
+    if (builder) builder.style.display = 'block';
+    if (txtView) txtView.style.display = 'none';
+    if (btn) btn.textContent = 'Xem / Sửa Dạng Text';
+  }
+}
+
+function saveAndApplyRules() {
+  const p = getSelectedAuditPath() || './';
+  let rawText = '';
+  if (isRulesTextMode) {
+    rawText = document.getElementById('rules-raw-textarea')?.value || '';
+  } else {
+    rawText = currentWorkspaceRules.join('\n');
+  }
+
+  showToast('Đang lưu và áp dụng bộ quy tắc lọc...');
+  fetch('/api/workspace/rules/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path: p,
+      raw: rawText
+    })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      showToast('Đã áp dụng bộ quy tắc lọc!');
+      renderAuditWorkspaceFiles();
+    } else {
+      alert('Lỗi lưu quy tắc: ' + (res.message || 'Lỗi'));
+    }
+  })
+  .catch(e => alert('Lỗi: ' + e));
+}
+
+function browseHostedWorkspace(port, ticket) {
+  const t = ticket || 'local_admin';
+  const url = 'http://' + window.location.hostname + ':' + port + '/drop?ticket=' + encodeURIComponent(t);
+  window.open(url, '_blank');
+}
+
+function openSaved(id) {
+  showToast('Đang đàm phán mở phiên làm việc...');
+  fetch('/api/portal/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      window.location.href = res.redirect || '/drop';
+    } else {
+      alert('Không thể kết nối lại trạm này: ' + (res.message || 'Trạm đã tắt hoặc vé phiên hết hạn'));
+    }
+  })
+  .catch(e => alert('Lỗi kết nối: ' + e));
+}
+
+function removeSaved(id) {
+  if (!confirm('Bạn có chắc muốn xóa trạm lưu này?')) return;
+  fetch('/api/portal/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      showToast('Đã xóa trạm lưu!');
+      location.reload();
+    } else {
+      alert('Không thể xóa trạm');
+    }
+  })
+  .catch(e => alert('Lỗi: ' + e));
+}
+
+function pruneConnections() {
+  if (!confirm('Dọn dẹp và xóa các trạm kết nối đã chết hoặc hết hạn?')) return;
+  fetch('/api/portal/prune', { method: 'POST' })
+    .then(r => r.json())
+    .then(res => {
+      showToast('Đã dọn dẹp các trạm kết nối không còn khả dụng!');
+      location.reload();
+    })
+    .catch(e => alert('Lỗi: ' + e));
+}
+
 function setAuditScanPath(path) {
   const el = document.getElementById('audit-scan-path');
   if (el) {
@@ -2306,17 +2549,20 @@ function switchAuditWorkspace(wsId) {
     }
   }
   renderAuditWorkspaceFiles();
+  loadWorkspaceRules(getSelectedAuditPath());
 }
 
 function rescanSelectedWorkspace() {
   showToast('Đang quét kiểm toán lại danh sách tệp...');
   renderAuditWorkspaceFiles();
+  loadWorkspaceRules(getSelectedAuditPath());
   showToast('Đã cập nhật chỉ mục bảo mật thực tế!');
 }
 
 function runFullAiScanForWorkspace() {
   showToast('Đang khởi chạy AI Deep Audit quét toàn diện qua Model AI...');
   renderAuditWorkspaceFiles();
+  loadWorkspaceRules(getSelectedAuditPath());
   showToast('Hoàn tất kiểm toán bảo mật vùng làm việc.');
 }
 
@@ -2427,7 +2673,7 @@ function renderHostedWorkspaces() {
             <span class="badge" style="background:#eaeef2; color:#1f2328; flex-shrink:0;">Cổng: ${w.port}</span>
           </div>
           <div style="display:flex; gap:8px; flex-shrink:0;">
-            <button class="btn btn-sm" onclick="window.location.href='/drop'">${ICONS.folder} Duyệt Thư Mục Này</button>
+            <button class="btn btn-sm" onclick="browseHostedWorkspace('${w.port}', '${w.admin_ticket || 'local_admin'}')">${ICONS.folder} Duyệt Thư Mục Này</button>
             <button class="btn-sec btn-sm" onclick="toggleAdminPanel('${w.id}')">${ICONS.settings} Quản Trị (Admin)</button>
             <button class="btn-danger btn-sm" onclick="stopHost('${w.id}')">${ICONS.power} Dừng Host</button>
           </div>
@@ -3116,7 +3362,8 @@ function startHosting(e) {
       path: pathInp,
       port: port,
       suite: sSelect.value,
-      filter: fSelect.value
+      filter: fSelect.value,
+      ttl: parseInt(document.getElementById('host-ttl')?.value) || 7200
     })
   })
   .then(r => r.json())
@@ -3317,6 +3564,26 @@ function updateEnvTargetLabel(val) {
 }
 
 async function chooseLocalSaveLocation(destId) {
+  try {
+    const res = await fetch('/api/fs/pick-folder').then(r => r.json());
+    if (res.status === 'ok' && res.path) {
+      const target = document.getElementById(destId);
+      if (target) {
+        target.value = res.path;
+        if (destId === 'env-target-folder') updateEnvTargetLabel(res.path);
+        if (destId === 'host-path' && typeof checkHostPathHasSlug === 'function') {
+          checkHostPathHasSlug(res.path);
+        }
+        if (destId === 'custom-audit-path' && typeof setCustomAuditWorkspace === 'function') {
+          setCustomAuditWorkspace();
+        }
+      }
+      return;
+    } else if (res.status === 'cancelled') {
+      return;
+    }
+  } catch(e) {}
+
   if (window.showDirectoryPicker) {
     try {
       const handle = await window.showDirectoryPicker();
@@ -4444,6 +4711,18 @@ window.onload = function() {
           </select>
         </div>
 
+        <div class="form-group" style="margin-bottom:8px;">
+          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Thời Gian Sống Phiên / OTP (Session TTL) <span style="color:var(--text-muted); font-weight:normal;">* Tối đa 24h</span></label>
+          <select id="host-ttl" class="input-select" style="height:38px; box-sizing:border-box; font-size:12px;">
+            <option value="1800">30 phút (0.5h)</option>
+            <option value="3600">1 giờ (1h)</option>
+            <option value="7200" selected>2 giờ (2h) [Mặc Định / Khuyên Dùng]</option>
+            <option value="14400">4 giờ (4h)</option>
+            <option value="28800">8 giờ (8h)</option>
+            <option value="86400">24 giờ (24h) [Tối đa cho phép]</option>
+          </select>
+        </div>
+
         <button type="submit" class="btn" style="height:42px; width:100%; justify-content:center; font-size:13px; font-weight:700; background:#1a7f37; border-color:#1a7f37;">
           ${ICONS.plus} <span>Bắt Đầu Phát &amp; Chia Sẻ Thư Mục Này</span>
         </button>
@@ -4543,6 +4822,81 @@ window.onload = function() {
               ${ICONS.check} Áp Dụng &amp; Quét
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- BỘ QUY TẮC LỌC (SLUG GUARD FILTER RULES) -->
+      <div style="background:#fff; border:1px solid #d0d7de; border-radius:var(--radius-sharp); padding:14px; margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+          <div style="font-weight:700; font-size:13px; display:inline-flex; align-items:center; gap:8px; color:var(--text-main);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            <span>Bộ Quy Tắc Lọc</span>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn-sec btn-xs" id="btn-toggle-rules-text" onclick="toggleRulesTextView()">
+              Xem / Sửa Dạng Text
+            </button>
+            <button type="button" class="btn btn-xs" onclick="saveAndApplyRules()" style="background:#0969da; color:#fff;">
+              ${ICONS.check} Lưu &amp; Áp Dụng
+            </button>
+          </div>
+        </div>
+
+        <!-- CHỌN NHANH MẪU PHỔ BIẾN -->
+        <div style="margin-bottom:10px;">
+          <div style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.3px;">
+            CHỌN NHANH MẪU PHỔ BIẾN:
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px;" id="quick-preset-chips">
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('node_modules/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ node_modules/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('target/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ target/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('build/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ build/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('dist/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ dist/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.git/')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ .git/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.tmp')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.tmp</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.log')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.log</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.iso')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.iso</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.zip')" style="color:#0969da; background:#ddf4ff; border-color:#54aeff;">+ *.zip</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('venv/')">+ venv/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('__pycache__/')">+ __pycache__/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.env*')">+ .env*</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.idea/')">+ .idea/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('.vscode/')">+ .vscode/</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.tar.gz')">+ *.tar.gz</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.exe')">+ *.exe</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.dll')">+ *.dll</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.bak')">+ *.bak</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.key')">+ *.key</button>
+            <button type="button" class="btn-sec btn-xs" onclick="addQuickPreset('*.pem')">+ *.pem</button>
+          </div>
+          <div style="font-size:11px; color:#656d76; margin-top:8px; background:#f6f8fa; border:1px solid #d0d7de; border-radius:var(--radius-sharp); padding:6px 10px; display:flex; align-items:center; gap:8px;">
+            <span style="color:#0969da;">${ICONS.shield}</span>
+            <span><strong>Mẹo với file .env:</strong> Chức năng này giúp loại trừ các file bí mật ra khỏi mạng. Nếu bạn muốn mã hóa để chia sẻ file .env an toàn với đồng đội, hãy chuyển sang <strong><a href="javascript:void(0)" onclick="switchRole('env')" style="color:#0969da; text-decoration:underline;">[Tab 4: EnvShield &amp; Vault]</a></strong>.</span>
+          </div>
+        </div>
+
+        <!-- NHẬP MẪU MỚI -->
+        <div id="rules-builder-view">
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <input type="text" id="custom-rule-input" class="input-text" placeholder="Nhập mẫu cần loại trừ (ví dụ: *.bak, cache/, temp/)..." style="flex:1; height:34px; font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomRule();}">
+            <button type="button" class="btn-sec" onclick="addCustomRule()" style="height:34px; padding:0 16px; font-size:12px; white-space:nowrap;">+ Thêm</button>
+          </div>
+
+          <!-- QUY TẮC ĐANG CÓ HIỆU LỰC -->
+          <div>
+            <div style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.3px;">
+              QUY TẮC ĐANG CÓ HIỆU LỰC (BẤM &times; ĐỂ XÓA):
+            </div>
+            <div id="active-rules-container" style="display:flex; flex-wrap:wrap; gap:6px; min-height:28px;">
+              <!-- Rendered by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- DẠNG TEXT (RAW .slugignore / rules.conf) -->
+        <div id="rules-text-view" style="display:none; margin-top:8px;">
+          <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Chỉnh sửa trực tiếp dạng plain-text (.slugignore / quy tắc lọc - mỗi dòng một quy tắc):</div>
+          <textarea id="rules-raw-textarea" class="input-text" style="width:100%; height:130px; font-family:'JetBrains Mono', monospace; font-size:12px; padding:8px; box-sizing:border-box; resize:vertical;"></textarea>
         </div>
       </div>
 

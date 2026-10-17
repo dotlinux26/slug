@@ -198,6 +198,32 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
         return false;
     }
 
+    // STRICT CHECK: Reject duplicate hosting of the same directory!
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [p, inst] : instances_) {
+            if (inst.control_server) {
+                std::error_code eq_ec;
+                if (fs::equivalent(inst.control_server->workspace_root(), canonical_path, eq_ec)) {
+                    std::cerr << "Error: Workspace folder is already being hosted on port " << p << std::endl;
+                    if (actual_port) *actual_port = p;
+                    return false;
+                }
+            }
+        }
+        auto reg_list = load_registry();
+        for (const auto& w : reg_list) {
+            std::error_code eq_ec;
+            if (fs::equivalent(w.path, canonical_path, eq_ec)) {
+                if (!is_port_available(w.port)) {
+                    std::cerr << "Error: Workspace folder is already being hosted on port " << w.port << std::endl;
+                    if (actual_port) *actual_port = w.port;
+                    return false;
+                }
+            }
+        }
+    }
+
     // Initialize .slug/ workspace directory
     fs::path slug_dir = canonical_path / ".slug";
     platform::PathUtils::ensure_directory(slug_dir);
@@ -269,7 +295,10 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
 
     update_registry(wi, false);
 
-    instances_[ctrl->port()] = {ctrl, std::move(web)};
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        instances_[ctrl->port()] = {ctrl, std::move(web)};
+    }
     return true;
 }
 

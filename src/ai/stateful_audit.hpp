@@ -34,6 +34,7 @@ public:
 
     void update_entry(const AuditIndexEntry& entry);
     bool allow_file(const std::string& file_path, const std::string& reason, const std::string& actor = "user");
+    bool block_file(const std::string& file_path, const std::string& reason, const std::string& actor = "user");
     bool remove_entry(const std::string& file_path);
 
     std::optional<AuditIndexEntry> get_entry(const std::string& file_path) const;

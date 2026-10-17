@@ -210,9 +210,14 @@ std::pair<VfsStatus, std::vector<uint8_t>> SlugVFS::read_file(std::string_view v
 
     // Evaluate content-level rules on read file data
     if (filter_mode_ != FilterMode::NONE) {
+        std::string proto = (resolved.virtual_path == "/") ? "" : resolved.virtual_path.substr(1);
+        if (enable_ai_ && audit_index_) {
+            if (audit_index_->is_flagged(proto)) {
+                return {VfsStatus::FILTERED, {}};
+            }
+        }
         std::string_view text_view(reinterpret_cast<const char*>(data->data()), data->size());
         bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
-        std::string proto = (resolved.virtual_path == "/") ? "" : resolved.virtual_path.substr(1);
         auto dec = policy_engine_.evaluate(proto, false, text_view, ignore_gi);
         if (!dec.is_allowed) {
             return {VfsStatus::FILTERED, {}};

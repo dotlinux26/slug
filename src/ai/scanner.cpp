@@ -52,7 +52,9 @@ bool AiScanner::is_scannable_file(const std::filesystem::path& path) {
     static const std::vector<std::string> scannable_exts = {
         ".py", ".js", ".ts", ".jsx", ".tsx", ".cpp", ".hpp", ".c", ".h",
         ".go", ".rs", ".java", ".json", ".yaml", ".yml", ".toml",
-        ".xml", ".ini", ".conf", ".sh", ".bash", ".zsh", ".rb", ".php"
+        ".xml", ".ini", ".conf", ".sh", ".bash", ".zsh", ".rb", ".php",
+        ".txt", ".md", ".cfg", ".properties", ".csv", ".log", ".sql",
+        ".pem", ".key", ".crt", ".auth", ".token", ".secret", ".cert", ".config", ".cnf"
     };
 
     for (const auto& e : scannable_exts) {

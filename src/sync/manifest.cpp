@@ -184,6 +184,13 @@ WorkspaceManifest ManifestBuilder::build(
                 continue;
             }
 
+            if (cached_status == core::AuditStatus::RULE_BLOCKED) {
+                auto e = audit_index.get_entry(proto_path);
+                std::string r = e ? e->reason : "Chặn thủ công (Manual Guard)";
+                manifest.skipped.push_back({proto_path, r, "MANUAL_BLOCKED"});
+                continue;
+            }
+
             if (cached_status == core::AuditStatus::USER_ALLOWED) {
                 // Whitelisted by user override
             } else if (cached_status == core::AuditStatus::UNKNOWN || cached_status == core::AuditStatus::STALE) {

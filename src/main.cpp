@@ -486,6 +486,8 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
     policy::HierarchicalGitignore gi;
     gi.scan_and_load_all(canonical_ws);
 
+    policy::RulesManager rules_mgr(canonical_ws / ".slug" / "rules.conf");
+
     std::filesystem::path idx_file = canonical_ws / ".slug" / "index.db";
     ai::StatefulAuditIndex audit_idx(idx_file);
     audit_idx.load();
@@ -507,6 +509,15 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         bool is_excluded = false;
         std::string excl_rule = "";
 
+        // STRICT ISOLATION: .slug metadata is strictly internal to Slug and NEVER quarantined as a user secret!
+        if (lower == ".slug" || lower.starts_with(".slug/") || lower.find("/.slug/") != std::string::npos ||
+            platform::PathUtils::is_internal_slug_path(rel_path)) {
+            if (is_dir) {
+                it.disable_recursion_pending();
+            }
+            continue;
+        }
+
         if (lower == ".git" || lower.starts_with(".git/") || lower.find("/.git/") != std::string::npos) {
             is_excluded = true; excl_rule = "VCS internals (.git/)";
         } else if (lower == "node_modules" || lower.starts_with("node_modules/") || lower.find("/node_modules/") != std::string::npos) {
@@ -519,6 +530,12 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             is_excluded = true; excl_rule = "Compiled binary artifact";
         } else if (gi.is_ignored(rel_path, is_dir)) {
             is_excluded = true; excl_rule = "Khớp quy tắc trong .gitignore / .slugignore";
+        } else {
+            const auto* rm = rules_mgr.match(rel);
+            if (rm && rm->action == policy::RuleAction::BLOCK) {
+                is_excluded = true;
+                excl_rule = "Slug Rule: " + rm->value;
+            }
         }
 
         if (is_excluded) {
@@ -558,9 +575,25 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         double entropy = compute_shannon_entropy(sv);
 
         bool allowed = false;
+        bool is_manual_blocked = false;
         auto entry_opt = audit_idx.get_entry(rel);
-        if (entry_opt && entry_opt->status == core::AuditStatus::CLEAN && entry_opt->decision_actor == "user") {
-            allowed = true;
+        if (entry_opt) {
+            if (entry_opt->status == core::AuditStatus::CLEAN && entry_opt->decision_actor == "user") {
+                allowed = true;
+            } else if (entry_opt->status == core::AuditStatus::RULE_BLOCKED) {
+                is_manual_blocked = true;
+            }
+        }
+
+        if (is_manual_blocked) {
+            quarantined.push_back(nlohmann::json{
+                {"name", rel},
+                {"size", core::Utils::format_size(sz)},
+                {"tiers", nlohmann::json::array({"Manual Guard"})},
+                {"reason", "Người tự kiểm toán (User Manual Audit)"},
+                {"unquarantined", false}
+            });
+            continue;
         }
 
         auto finding = scanner.scan_content(rel, sv, true);
@@ -569,6 +602,16 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
             std::ostringstream ss;
             ss << std::fixed << std::setprecision(2) << entropy;
             reason += " (Entropy: " + ss.str() + ")";
+
+            if (!allowed) {
+                ai::AuditIndexEntry idx_entry;
+                idx_entry.file_path = rel;
+                idx_entry.blake3_hash = crypto::Blake3::hash_hex(*data);
+                idx_entry.scanned_at = core::Utils::current_timestamp();
+                idx_entry.status = core::AuditStatus::SMART_FILTER_FLAGGED;
+                idx_entry.reason = reason;
+                audit_idx.update_entry(idx_entry);
+            }
 
             quarantined.push_back(nlohmann::json{
                 {"name", rel},
@@ -3327,6 +3370,119 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/api/fs/pick-folder") {
+                nlohmann::json res;
+                std::string chosen_path = "";
+#if defined(SLUG_PLATFORM_WINDOWS)
+                std::string ps_cmd = "powershell -NoProfile -NonInteractive -Command \""
+                    "Add-Type -AssemblyName System.Windows.Forms; "
+                    "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                    "$f.Description = 'Chọn thư mục để chia sẻ qua Slug Post-Quantum Gateway'; "
+                    "$f.ShowNewFolderButton = $true; "
+                    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
+                    "  [Console]::Out.Write($f.SelectedPath) "
+                    "}\"";
+                FILE* pipe = _popen(ps_cmd.c_str(), "r");
+                if (pipe) {
+                    char buf[512];
+                    while (fgets(buf, sizeof(buf), pipe)) {
+                        chosen_path += buf;
+                    }
+                    _pclose(pipe);
+                }
+                while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
+                    chosen_path.pop_back();
+                }
+#elif defined(SLUG_PLATFORM_POSIX)
+                FILE* pipe = popen("zenity --file-selection --directory --title='Chọn thư mục chia sẻ qua Slug' 2>/dev/null", "r");
+                if (pipe) {
+                    char buf[512];
+                    while (fgets(buf, sizeof(buf), pipe)) {
+                        chosen_path += buf;
+                    }
+                    pclose(pipe);
+                }
+                while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
+                    chosen_path.pop_back();
+                }
+#endif
+                if (!chosen_path.empty()) {
+                    res["status"] = "ok";
+                    res["path"] = chosen_path;
+                } else {
+                    res["status"] = "cancelled";
+                    res["path"] = "";
+                }
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/workspace/rules") {
+                std::string target_dir = "./";
+                size_t ppos = query.find("path=");
+                if (ppos != std::string::npos) {
+                    target_dir = query.substr(ppos + 5);
+                    size_t amp = target_dir.find('&');
+                    if (amp != std::string::npos) target_dir = target_dir.substr(0, amp);
+                    target_dir = slug_url_decode(target_dir);
+                }
+                std::filesystem::path rules_file = std::filesystem::path(target_dir) / ".slug" / "rules.conf";
+                std::filesystem::path ignore_file = std::filesystem::path(target_dir) / ".slugignore";
+
+                std::string raw = "";
+                if (std::filesystem::exists(rules_file)) {
+                    auto c = platform::PathUtils::read_text_file(rules_file);
+                    if (c) raw = *c;
+                } else if (std::filesystem::exists(ignore_file)) {
+                    auto c = platform::PathUtils::read_text_file(ignore_file);
+                    if (c) raw = *c;
+                }
+
+                policy::RulesManager mgr(rules_file);
+                nlohmann::json r_arr = nlohmann::json::array();
+                for (const auto& r : mgr.rules()) {
+                    r_arr.push_back(nlohmann::json{
+                        {"id", r.id},
+                        {"value", r.value},
+                        {"action", (r.action == policy::RuleAction::ALLOW ? "allow" : "block")},
+                        {"type", (r.type == policy::RuleType::EXT ? "ext" : (r.type == policy::RuleType::REGEX ? "regex" : "path"))}
+                    });
+                }
+
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["workspace"] = target_dir;
+                res["raw"] = raw;
+                res["rules"] = r_arr;
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/workspace/rules/save" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string target_dir = j.value("path", "./");
+                    std::string raw_content = j.value("raw", "");
+
+                    std::filesystem::path slug_dir = std::filesystem::path(target_dir) / ".slug";
+                    platform::PathUtils::ensure_directory(slug_dir);
+
+                    std::filesystem::path rules_file = slug_dir / "rules.conf";
+                    std::filesystem::path ignore_file = std::filesystem::path(target_dir) / ".slugignore";
+
+                    platform::PathUtils::write_text_file_atomic(rules_file, raw_content);
+                    platform::PathUtils::write_text_file_atomic(ignore_file, raw_content);
+
+                    nlohmann::json res;
+                    res["status"] = "ok";
+                    res["message"] = "Đã lưu và áp dụng bộ quy tắc lọc thành công!";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Failed to save rules\"}");
+                }
+                return;
+            }
+
             if (path == "/api/host/start" && method == "POST") {
                 try {
                     auto j = nlohmann::json::parse(body);
@@ -3335,7 +3491,9 @@ int cmd_portal(int argc, char* argv[]) {
                     uint16_t wport = static_cast<uint16_t>(j.value("port", 9443));
                     std::string suite_str = j.value("suite", "2");
                     std::string filter_str = j.value("filter", "protected");
-                    uint64_t wttl = j.value("ttl", 86400ULL);
+                    uint64_t wttl = j.value("ttl", 7200ULL);
+                    // Strictly cap session/OTP TTL between 60s and 24 hours (86400s)
+                    wttl = std::clamp(wttl, 60ULL, 86400ULL);
 
                     core::SuiteID suite = core::suite_from_string(suite_str);
                     core::FilterMode fmode = core::filter_mode_from_string(filter_str);
@@ -3354,7 +3512,11 @@ int cmd_portal(int argc, char* argv[]) {
                             res["message"] = "Đã bắt đầu chia sẻ workspace tại '" + wpath + "' trên cổng " + std::to_string(assigned_port);
                         }
                     } else {
-                        res["message"] = "Không thể khởi động chia sẻ workspace (vui lòng kiểm tra quyền truy cập thư mục hoặc cổng mạng)";
+                        if (assigned_port > 0) {
+                            res["message"] = "Thư mục này hiện đang được chia sẻ trên cổng " + std::to_string(assigned_port) + "! Không thể phát trùng lặp cùng một thư mục.";
+                        } else {
+                            res["message"] = "Không thể khởi động chia sẻ workspace (vui lòng kiểm tra quyền truy cập thư mục hoặc cổng mạng)";
+                        }
                     }
                     send_portal_http(sock, ok ? 200 : 400, ok ? "OK" : "Bad Request", "application/json", res.dump());
                 } catch (...) {
@@ -3871,6 +4033,13 @@ int cmd_portal(int argc, char* argv[]) {
             std::lock_guard<std::mutex> lk(g_portal.mtx);
             if (!g_portal.client || !g_portal.client->is_connected()) {
                 if (path == "/drop" || path == "/browse") {
+                    auto running_list = core::WorkspaceManager::load_registry();
+                    if (!running_list.empty()) {
+                        uint16_t target_port = running_list.front().port;
+                        std::string target_url = "http://127.0.0.1:" + std::to_string(target_port) + "/drop?ticket=local_admin";
+                        send_portal_http(sock, 302, "Found", "text/plain", "Redirecting to hosted workspace...", "Location: " + target_url);
+                        return;
+                    }
                     send_portal_http(sock, 302, "Found", "text/plain", "Redirecting to portal...", "Location: /portal");
                     return;
                 }

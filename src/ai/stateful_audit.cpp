@@ -135,6 +135,30 @@ bool StatefulAuditIndex::allow_file(const std::string& file_path, const std::str
     return save();
 }
 
+bool StatefulAuditIndex::block_file(const std::string& file_path, const std::string& reason, const std::string& actor) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::string key = normalize_path_key(file_path);
+        auto it = entries_.find(key);
+        if (it != entries_.end()) {
+            it->second.status = core::AuditStatus::RULE_BLOCKED;
+            it->second.decision_actor = actor;
+            it->second.decision_reason = reason;
+            it->second.reason = reason;
+        } else {
+            AuditIndexEntry e;
+            e.file_path = key;
+            e.status = core::AuditStatus::RULE_BLOCKED;
+            e.decision_actor = actor;
+            e.decision_reason = reason;
+            e.reason = reason;
+            e.scanned_at = core::Utils::current_timestamp();
+            entries_[key] = e;
+        }
+    }
+    return save();
+}
+
 bool StatefulAuditIndex::remove_entry(const std::string& file_path) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -157,14 +181,20 @@ bool StatefulAuditIndex::is_flagged(const std::string& file_path) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = entries_.find(normalize_path_key(file_path));
     if (it == entries_.end()) return false;
-    return (it->second.status == core::AuditStatus::AI_FLAGGED || it->second.status == core::AuditStatus::RULE_BLOCKED);
+    return (it->second.status == core::AuditStatus::AI_FLAGGED || 
+            it->second.status == core::AuditStatus::SMART_FILTER_FLAGGED ||
+            it->second.status == core::AuditStatus::RULE_BLOCKED);
 }
 
 std::vector<AuditIndexEntry> StatefulAuditIndex::list_flagged_or_all(bool only_flagged) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<AuditIndexEntry> res;
     for (const auto& [_, e] : entries_) {
-        if (!only_flagged || e.status == core::AuditStatus::AI_FLAGGED || e.status == core::AuditStatus::STALE) {
+        if (!only_flagged || 
+            e.status == core::AuditStatus::AI_FLAGGED || 
+            e.status == core::AuditStatus::SMART_FILTER_FLAGGED ||
+            e.status == core::AuditStatus::RULE_BLOCKED || 
+            e.status == core::AuditStatus::STALE) {
             res.push_back(e);
         }
     }

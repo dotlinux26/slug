@@ -1131,6 +1131,7 @@ window.onload = setupDropzone;
       {breadcrumb_rel}
     </div>
     <div style="display:flex; gap:6px; align-items:center;">
+      <button class="btn-sec btn-sm" onclick="window.location.href='/'">{SVG_ICONS['terminal']} Trang Điều Khiển</button>
       <input type="file" id="manual-file-upload" multiple style="display:none;" onchange="uploadDroppedFiles(this.files)">
       <button type="button" class="btn btn-sm" onclick="triggerManualUpload()" style="display:inline-flex; align-items:center; gap:6px;">
         {SVG_ICONS['upload']} <span>Tải Lên</span>
@@ -1452,6 +1453,49 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             }).encode("utf-8"))
             return
 
+        if path == "/api/fs/pick-folder":
+            folder = ""
+            if sys.platform == "win32":
+                ps_script = (
+                    "Add-Type -AssemblyName System.Windows.Forms; "
+                    "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                    "$f.Description = 'Slug: Chon thu muc workspace'; "
+                    "$f.ShowNewFolderButton = $true; "
+                    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"
+                )
+                try:
+                    res = subprocess.run(["powershell", "-NoProfile", "-Command", ps_script], capture_output=True, text=True, timeout=60)
+                    folder = res.stdout.strip()
+                except Exception:
+                    folder = ""
+            has_slug = os.path.exists(os.path.join(folder, ".slug")) if folder else False
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "path": folder, "has_slug": has_slug}).encode("utf-8"))
+            return
+
+        if path == "/api/workspace/rules":
+            target_p = query.get("path", [""])[0]
+            scan_target = os.path.abspath(os.path.join(BASE_DIR, target_p)) if target_p else BASE_DIR
+            rf = os.path.join(scan_target, ".slug", "rules.conf")
+            gf = os.path.join(scan_target, ".slugignore")
+            content = ""
+            if os.path.exists(rf):
+                try:
+                    with open(rf, "r", encoding="utf-8") as f: content = f.read()
+                except Exception: pass
+            elif os.path.exists(gf):
+                try:
+                    with open(gf, "r", encoding="utf-8") as f: content = f.read()
+                except Exception: pass
+            rules = [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "path": scan_target, "rules": rules, "raw": content}).encode("utf-8"))
+            return
+
         if path == "/api/host/workspaces":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1620,6 +1664,67 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(err_bytes)))
                 self.end_headers()
                 self.wfile.write(err_bytes)
+            return
+
+        if path == "/api/workspace/rules/save":
+            target_p = req_data.get("path", "")
+            raw = req_data.get("raw", "")
+            rules = req_data.get("rules", [])
+            scan_target = os.path.abspath(os.path.join(BASE_DIR, target_p)) if target_p else BASE_DIR
+            slug_dir = os.path.join(scan_target, ".slug")
+            os.makedirs(slug_dir, exist_ok=True)
+            rf = os.path.join(slug_dir, "rules.conf")
+            gf = os.path.join(scan_target, ".slugignore")
+            save_text = raw if raw else "\n".join(rules)
+            try:
+                with open(rf, "w", encoding="utf-8") as f: f.write(save_text)
+                with open(gf, "w", encoding="utf-8") as f: f.write(save_text)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "message": "Đã lưu quy tắc lọc thành công!"}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
+            return
+
+        if path == "/api/admin/manual-block":
+            file_path = req_data.get("path", "")
+            is_dir = req_data.get("is_dir", False)
+            rule_entry = (file_path + "/") if is_dir else file_path
+            slug_dir = os.path.join(BASE_DIR, ".slug")
+            os.makedirs(slug_dir, exist_ok=True)
+            rf = os.path.join(slug_dir, "rules.conf")
+            try:
+                with open(rf, "a", encoding="utf-8") as f:
+                    f.write(f"\n{rule_entry}\n")
+            except Exception: pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "message": "Đã chặn thủ công (Manual Guard)"}).encode("utf-8"))
+            return
+
+        if path == "/api/admin/manual-unblock":
+            file_path = req_data.get("path", "")
+            slug_dir = os.path.join(BASE_DIR, ".slug")
+            rf = os.path.join(slug_dir, "rules.conf")
+            if os.path.exists(rf):
+                try:
+                    with open(rf, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    with open(rf, "w", encoding="utf-8") as f:
+                        for l in lines:
+                            st = l.strip()
+                            if st != file_path and st != (file_path + "/"):
+                                f.write(l)
+                except Exception: pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "message": "Đã gỡ chặn"}).encode("utf-8"))
             return
 
         if path == "/api/host/start":
