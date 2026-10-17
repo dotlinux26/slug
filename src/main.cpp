@@ -3726,6 +3726,84 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/api/fs/list") {
+                std::string target_dir = "";
+                size_t ppos = query.find("path=");
+                if (ppos != std::string::npos) {
+                    target_dir = query.substr(ppos + 5);
+                    size_t amp = target_dir.find('&');
+                    if (amp != std::string::npos) target_dir = target_dir.substr(0, amp);
+                    target_dir = slug_url_decode(target_dir);
+                }
+
+                nlohmann::json res;
+                res["status"] = "ok";
+
+                if (target_dir.empty()) {
+#if defined(SLUG_PLATFORM_WINDOWS)
+                    char cur[MAX_PATH];
+                    GetCurrentDirectoryA(MAX_PATH, cur);
+                    res["current"] = std::string(cur);
+                    nlohmann::json items = nlohmann::json::array();
+                    DWORD drives = GetLogicalDrives();
+                    for (char d = 'A'; d <= 'Z'; ++d) {
+                        if (drives & (1 << (d - 'A'))) {
+                            std::string d_str = std::string(1, d) + ":\\";
+                            items.push_back({
+                                {"name", std::string(1, d) + ":"},
+                                {"path", d_str},
+                                {"is_dir", true},
+                                {"is_drive", true},
+                                {"size", 0}
+                            });
+                        }
+                    }
+                    res["parent"] = "";
+                    res["items"] = items;
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                    return;
+#else
+                    target_dir = std::filesystem::current_path().string();
+#endif
+                }
+
+                std::error_code ec;
+                std::filesystem::path p(target_dir);
+                if (!std::filesystem::exists(p, ec) || !std::filesystem::is_directory(p, ec)) {
+                    res["status"] = "error";
+                    res["message"] = "Thư mục không tồn tại: " + target_dir;
+                    send_portal_http(sock, 404, "Not Found", "application/json", res.dump());
+                    return;
+                }
+
+                res["current"] = std::filesystem::absolute(p, ec).string();
+                res["parent"] = p.has_parent_path() ? p.parent_path().string() : "";
+
+                nlohmann::json items = nlohmann::json::array();
+                try {
+                    for (const auto& entry : std::filesystem::directory_iterator(p, std::filesystem::directory_options::skip_permission_denied, ec)) {
+                        std::string fn = entry.path().filename().string();
+                        if (fn.empty() || fn == "." || fn == "..") continue;
+                        bool is_d = entry.is_directory(ec);
+                        uint64_t f_sz = 0;
+                        if (!is_d) {
+                            try { f_sz = entry.file_size(ec); } catch (...) {}
+                        }
+                        items.push_back({
+                            {"name", fn},
+                            {"path", entry.path().string()},
+                            {"is_dir", is_d},
+                            {"size", f_sz}
+                        });
+                        if (items.size() >= 500) break;
+                    }
+                } catch (...) {}
+
+                res["items"] = items;
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
             if (path == "/api/fs/pick-folder") {
                 nlohmann::json res;
                 std::string chosen = pick_folder_native();
@@ -4007,8 +4085,8 @@ int cmd_portal(int argc, char* argv[]) {
 
                     std::filesystem::path ws_dir = ws;
                     if (ws_dir.empty() || ws_dir == "./") {
-                        std::lock_guard<std::mutex> lk(g_portal.mtx);
-                        for (const auto& hw : g_portal.hosted_workspaces) {
+                        auto w_list = core::WorkspaceManager::load_registry();
+                        for (const auto& hw : w_list) {
                             if (wport != 0 && hw.port == wport) {
                                 ws_dir = hw.path;
                                 break;
@@ -4065,13 +4143,14 @@ int cmd_portal(int argc, char* argv[]) {
                         std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
                         g_audit_cache.erase(ws_dir.string());
                     }
-                    // Invalidate control server cache if active
-                    {
-                        std::lock_guard<std::mutex> lk(g_portal.mtx);
-                        for (auto& hw : g_portal.hosted_workspaces) {
-                            if (hw.path == ws_dir && hw.ctrl_server) {
-                                hw.ctrl_server->invalidate_manifest_cache();
-                            }
+                    // Invalidate control server cache if live
+                    if (wport > 0) {
+                        nlohmann::json inv_body;
+                        inv_body["path"] = fname;
+                        if (was_allowed) {
+                            post_workspace_api(wport, "/api/admin/audit/block", inv_body, 300);
+                        } else {
+                            post_workspace_api(wport, "/api/admin/audit/unblock", inv_body, 300);
                         }
                     }
 
