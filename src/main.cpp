@@ -2863,16 +2863,25 @@ static std::string pick_folder_native() {
 #elif defined(SLUG_PLATFORM_POSIX)
 static std::string pick_folder_native() {
     std::string chosen_path = "";
-    FILE* pipe = popen("zenity --file-selection --directory --title='Chọn thư mục chia sẻ qua Slug' 2>/dev/null", "r");
-    if (!pipe) {
-        pipe = popen("kdialog --getexistingdirectory . 2>/dev/null", "r");
-    }
+    // 1. Thu zenity voi co --modal de GNOME/X11/Wayland ep focus len foreground
+    FILE* pipe = popen("zenity --file-selection --directory --title='Slug: Chọn Thư Mục Workspace Chia Sẻ' --modal 2>/dev/null", "r");
     if (pipe) {
         char buf[512];
         while (fgets(buf, sizeof(buf), pipe)) {
             chosen_path += buf;
         }
         pclose(pipe);
+    }
+    // 2. Neu zenity khong co (KDE Plasma), fallback sang kdialog
+    if (chosen_path.empty()) {
+        pipe = popen("kdialog --getexistingdirectory . --title 'Slug: Chọn Thư Mục Workspace Chia Sẻ' 2>/dev/null", "r");
+        if (pipe) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), pipe)) {
+                chosen_path += buf;
+            }
+            pclose(pipe);
+        }
     }
     while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
         chosen_path.pop_back();
