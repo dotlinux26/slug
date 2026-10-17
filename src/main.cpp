@@ -613,7 +613,8 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         bool is_manual_blocked = false;
         auto entry_opt = audit_idx.get_entry(rel);
         if (entry_opt) {
-            if (entry_opt->status == core::AuditStatus::CLEAN && entry_opt->decision_actor == "user") {
+            if (entry_opt->status == core::AuditStatus::USER_ALLOWED || 
+                (entry_opt->status == core::AuditStatus::CLEAN && entry_opt->decision_actor == "user")) {
                 allowed = true;
             } else if (entry_opt->status == core::AuditStatus::RULE_BLOCKED) {
                 is_manual_blocked = true;
@@ -688,6 +689,7 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
     res["quarantined_files"] = quarantined;
     res["clean_files"] = clean;
     res["excluded_files"] = excluded;
+    audit_idx.save();
     return res;
 }
 
@@ -3079,16 +3081,31 @@ static std::string pick_file_native() {
 #endif
 
 static bool open_path_in_os(const std::string& path_str) {
+    if (path_str.empty()) return false;
+    try {
+        std::filesystem::path p(path_str);
+        std::error_code ec;
+        if (!std::filesystem::exists(p, ec)) {
+            p = std::filesystem::absolute(p, ec);
+        }
+        std::string native_p = p.make_preferred().string();
 #if defined(SLUG_PLATFORM_WINDOWS)
-    HINSTANCE res = ShellExecuteA(NULL, "open", path_str.c_str(), NULL, NULL, SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(res) > 32;
+        HINSTANCE res = ShellExecuteA(NULL, "open", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(res) <= 32) {
+            std::string cmd = "explorer.exe \"" + native_p + "\"";
+            system(cmd.c_str());
+        }
+        return true;
 #elif defined(SLUG_PLATFORM_POSIX)
-    std::string cmd = "xdg-open \"" + path_str + "\" >/dev/null 2>&1 &";
-    int ret = system(cmd.c_str());
-    return ret == 0;
+        std::string cmd = "xdg-open \"" + native_p + "\" >/dev/null 2>&1 &";
+        int ret = system(cmd.c_str());
+        return ret == 0;
 #else
-    return false;
+        return false;
 #endif
+    } catch (...) {
+        return false;
+    }
 }
 
 int cmd_portal(int argc, char* argv[]) {
@@ -3515,6 +3532,35 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/api/host/kick-peer" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    uint16_t port = j.value("port", 0U);
+                    uint32_t sid = 0;
+                    if (j.contains("session_id")) {
+                        if (j["session_id"].is_number()) {
+                            sid = j["session_id"].get<uint32_t>();
+                        } else if (j["session_id"].is_string()) {
+                            try { sid = static_cast<uint32_t>(std::stoul(j["session_id"].get<std::string>())); } catch (...) {}
+                        }
+                    }
+                    if (port > 0 && sid > 0) {
+                        nlohmann::json req_body;
+                        req_body["session_id"] = sid;
+                        auto res_j = post_workspace_api(port, "/api/admin/sessions/revoke", req_body, 1200);
+                        nlohmann::json res;
+                        res["status"] = "ok";
+                        res["message"] = "Đã ngắt kết nối peer và thu hồi phiên thành công";
+                        send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                    } else {
+                        send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"port and session_id required\"}");
+                    }
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            }
+
             if (path == "/api/network/inspect" || path == "/api/network/interfaces") {
                 auto net_info = inspect_network_interfaces(actual_port);
                 send_portal_http(sock, 200, "OK", "application/json; charset=utf-8", net_info.dump());
@@ -3609,6 +3655,26 @@ int cmd_portal(int argc, char* argv[]) {
                             log_arr.push_back(lines[li - 1]);
                         }
                     }
+                    // Load persistent ACL users from workspace's .slug/acl.db
+                    std::filesystem::path acl_file = w.path / ".slug" / "acl.db";
+                    nlohmann::json users_arr = nlohmann::json::array();
+                    if (std::filesystem::exists(acl_file)) {
+                        core::AclManager ws_acl(acl_file);
+                        auto u_list = ws_acl.list_users();
+                        uint64_t now_ts = core::Utils::current_timestamp();
+                        for (const auto& u : u_list) {
+                            nlohmann::json u_obj;
+                            u_obj["username"] = u.username;
+                            u_obj["role"] = core::role_to_string(u.role);
+                            u_obj["roleName"] = (u.role == core::Role::READ_WRITE) ? "[RW] Toàn Quyền (Đọc & Ghi)" : ((u.role == core::Role::READ_ONLY) ? "[R] Chỉ Đọc (Tải Về)" : "[W] GỬI LÊN (Chỉ Cho Tải Lên)");
+                            u_obj["ttl"] = (u.expires_at > now_ts) ? (u.expires_at - now_ts) : 0;
+                            u_obj["status"] = u.is_expired(now_ts) ? "Hết Hạn" : (u.expires_at > 0 ? ("Còn " + std::to_string((u.expires_at - now_ts) / 3600) + "h") : "Permanent (∞)");
+                            u_obj["createdAt"] = core::Utils::format_timestamp(u.created_at);
+                            u_obj["revoked"] = u.revoked;
+                            users_arr.push_back(u_obj);
+                        }
+                    }
+                    item["users"] = users_arr;
                     item["logs"] = log_arr;
 
                     arr.push_back(item);
@@ -3717,6 +3783,72 @@ int cmd_portal(int argc, char* argv[]) {
                     nlohmann::json res;
                     res["status"] = ok ? "ok" : "error";
                     res["message"] = ok ? "Đã mở tệp bằng ứng dụng mặc định" : "Không thể mở tệp";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            if (path == "/api/workspace/users/add" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string wspath = j.value("workspace_path", "");
+                    std::string uname = j.value("username", "");
+                    std::string pass = j.value("password", "");
+                    std::string r_str = j.value("role", "rw");
+                    uint64_t ttl = j.value("ttl", 86400ULL);
+                    if (uname.empty() || pass.empty()) {
+                        send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Username và password không được để trống\"}");
+                        return;
+                    }
+                    core::Role r = core::role_from_string(r_str);
+                    std::filesystem::path ws_p = wspath.empty() ? std::filesystem::current_path() : std::filesystem::path(wspath);
+                    std::filesystem::path acl_p = ws_p / ".slug" / "acl.db";
+                    platform::PathUtils::ensure_directory(acl_p.parent_path());
+                    core::AclManager ws_acl(acl_p);
+                    bool ok = ws_acl.add_user(uname, pass, r, ttl);
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
+                    res["message"] = ok ? "Đã lưu tài khoản vào cơ sở dữ liệu acl.db" : "Không thể tạo tài khoản";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            }
+
+            if (path == "/api/workspace/users/delete" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string wspath = j.value("workspace_path", "");
+                    std::string uname = j.value("username", "");
+                    std::filesystem::path ws_p = wspath.empty() ? std::filesystem::current_path() : std::filesystem::path(wspath);
+                    std::filesystem::path acl_p = ws_p / ".slug" / "acl.db";
+                    core::AclManager ws_acl(acl_p);
+                    bool ok = ws_acl.remove_user(uname);
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            }
+
+            if (path == "/api/workspace/users/update" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string wspath = j.value("workspace_path", "");
+                    std::string uname = j.value("username", "");
+                    std::string pass = j.value("password", "");
+                    std::string r_str = j.value("role", "rw");
+                    uint64_t ttl = j.value("ttl", 86400ULL);
+                    std::filesystem::path ws_p = wspath.empty() ? std::filesystem::current_path() : std::filesystem::path(wspath);
+                    std::filesystem::path acl_p = ws_p / ".slug" / "acl.db";
+                    core::AclManager ws_acl(acl_p);
+                    core::Role r = core::role_from_string(r_str);
+                    bool ok = ws_acl.update_user(uname, pass, r, ttl);
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
                     send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 } catch (...) {
                     send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
@@ -3870,26 +4002,84 @@ int cmd_portal(int argc, char* argv[]) {
                 try {
                     auto j = nlohmann::json::parse(body);
                     std::string fname = j.value("file", "");
-                    std::string ws = j.value("workspace", "./");
-                    std::filesystem::path idx_file = std::filesystem::path(ws) / ".slug" / "index.db";
+                    std::string ws = j.value("workspace", "");
+                    uint16_t wport = j.value("port", 0);
+
+                    std::filesystem::path ws_dir = ws;
+                    if (ws_dir.empty() || ws_dir == "./") {
+                        std::lock_guard<std::mutex> lk(g_portal.mtx);
+                        for (const auto& hw : g_portal.hosted_workspaces) {
+                            if (wport != 0 && hw.port == wport) {
+                                ws_dir = hw.path;
+                                break;
+                            }
+                        }
+                    }
+                    if (ws_dir.empty()) ws_dir = "./";
+
+                    std::filesystem::path idx_file = ws_dir / ".slug" / "index.db";
                     ai::StatefulAuditIndex audit_idx(idx_file);
                     audit_idx.load();
 
                     auto existing = audit_idx.get_entry(fname);
-                    bool was_allowed = (existing && existing->status == core::AuditStatus::CLEAN && existing->decision_actor == "user");
+                    bool was_allowed = (existing && (existing->status == core::AuditStatus::USER_ALLOWED || 
+                                                     (existing->status == core::AuditStatus::CLEAN && existing->decision_actor == "user")));
+
+                    std::filesystem::path rules_file = ws_dir / ".slug" / "rules.conf";
+                    policy::RulesManager rules_mgr(rules_file);
 
                     if (was_allowed) {
-                        audit_idx.remove_entry(fname);
+                        audit_idx.block_file(fname, "Tái cách ly vào RAM Shield bởi người dùng", "user");
+                        for (const auto& r : rules_mgr.rules()) {
+                            if (r.value == fname || r.value == (fname + "/")) {
+                                rules_mgr.remove_rule(r.id);
+                            }
+                        }
+                        rules_mgr.add_rule("", policy::RuleAction::BLOCK, policy::RuleType::PATH, fname);
                     } else {
-                        audit_idx.allow_file(fname, "Gỡ cách ly chủ động bởi người dùng qua Web Portal", "user");
+                        std::filesystem::path abs_f = ws_dir / fname;
+                        auto f_data = platform::PathUtils::read_binary_file(abs_f);
+                        std::string h_val = f_data ? crypto::Blake3::hash_hex(*f_data) : (existing ? existing->blake3_hash : "");
+
+                        ai::AuditIndexEntry ae;
+                        ae.file_path = fname;
+                        ae.blake3_hash = h_val;
+                        ae.status = core::AuditStatus::USER_ALLOWED;
+                        ae.reason = "Gỡ cách ly chủ động bởi người dùng qua Web Portal";
+                        ae.decision_actor = "user";
+                        ae.decision_reason = "User Whitelist Override";
+                        ae.scanned_at = core::Utils::current_timestamp();
+                        audit_idx.update_entry(ae);
+
+                        for (const auto& r : rules_mgr.rules()) {
+                            if (r.value == fname || r.value == (fname + "/")) {
+                                rules_mgr.remove_rule(r.id);
+                            }
+                        }
+                        rules_mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, fname);
                     }
                     audit_idx.save();
+
+                    // Invalidate workspace cache
+                    {
+                        std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
+                        g_audit_cache.erase(ws_dir.string());
+                    }
+                    // Invalidate control server cache if active
+                    {
+                        std::lock_guard<std::mutex> lk(g_portal.mtx);
+                        for (auto& hw : g_portal.hosted_workspaces) {
+                            if (hw.path == ws_dir && hw.ctrl_server) {
+                                hw.ctrl_server->invalidate_manifest_cache();
+                            }
+                        }
+                    }
 
                     nlohmann::json res;
                     res["status"] = "ok";
                     res["file"] = fname;
                     res["unquarantined"] = !was_allowed;
-                    res["message"] = (!was_allowed ? "Đã gỡ cách ly (cho phép transit): " : "Đã tái cách ly vào RAM Shield: ") + fname;
+                    res["message"] = (!was_allowed ? "Đã gỡ cách ly & cho phép tệp: " : "Đã tái cách ly vào RAM Shield: ") + fname;
                     send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 } catch (...) {
                     send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
@@ -3946,10 +4136,22 @@ int cmd_portal(int argc, char* argv[]) {
                 ai::StatefulAuditIndex audit_idx(idx_file);
                 audit_idx.load();
                 auto list = audit_idx.list_flagged_or_all(true);
+                std::filesystem::path rules_file = std::filesystem::path(ws) / ".slug" / "rules.conf";
+                policy::RulesManager rules_mgr(rules_file);
                 for (const auto& e : list) {
                     audit_idx.allow_file(e.file_path, "Gỡ cách ly hàng loạt bởi người dùng qua Web Portal", "user");
+                    for (const auto& r : rules_mgr.rules()) {
+                        if (r.value == e.file_path || r.value == (e.file_path + "/")) {
+                            rules_mgr.remove_rule(r.id);
+                        }
+                    }
+                    rules_mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, e.file_path);
                 }
                 audit_idx.save();
+                {
+                    std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
+                    g_audit_cache.erase(ws);
+                }
                 nlohmann::json res;
                 res["status"] = "ok";
                 res["message"] = "Đã gỡ cách ly cho toàn bộ " + std::to_string(list.size()) + " tệp nhạy cảm.";
@@ -3967,6 +4169,10 @@ int cmd_portal(int argc, char* argv[]) {
                 std::filesystem::path idx_file = std::filesystem::path(ws) / ".slug" / "index.db";
                 std::error_code ec;
                 std::filesystem::remove(idx_file, ec);
+                {
+                    std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
+                    g_audit_cache.erase(ws);
+                }
                 nlohmann::json res;
                 res["status"] = "ok";
                 res["message"] = "Đã xóa trắng bộ nhớ đệm kiểm toán (.slug/index.db).";
@@ -3978,11 +4184,18 @@ int cmd_portal(int argc, char* argv[]) {
                 try {
                     auto j = nlohmann::json::parse(body);
                     std::string fpath = j.value("path", "");
+                    std::string ws = j.value("workspace", "");
                     if (fpath.empty()) {
                         send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Vui lòng chọn hoặc nhập đường dẫn file cần kiểm toán.\"}");
                         return;
                     }
                     std::filesystem::path fp(fpath);
+                    if (!std::filesystem::exists(fp) && !ws.empty()) {
+                        std::filesystem::path combined = std::filesystem::path(ws) / fpath;
+                        if (std::filesystem::exists(combined)) {
+                            fp = combined;
+                        }
+                    }
                     if (!std::filesystem::exists(fp)) {
                         send_portal_http(sock, 404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Không tìm thấy tệp: " + fpath + "\"}");
                         return;

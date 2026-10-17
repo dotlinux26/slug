@@ -566,12 +566,12 @@ void ControlServer::handle_client(platform::TcpSocket client) {
 sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
     std::lock_guard<std::mutex> lock(manifest_mutex_);
     uint64_t now = core::Utils::current_timestamp();
-    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 10)) {
-        auto m = sync::WorkspaceManifest::from_json(cached_manifest_json_);
-        if (m) return *m;
+    if (!manifest_dirty_ && cached_manifest_.has_value() && (now - manifest_cached_at_ < 300)) {
+        return *cached_manifest_;
     }
 
     auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_);
+    cached_manifest_ = manifest;
     cached_manifest_json_ = manifest.to_json();
     manifest_cached_at_ = now;
     manifest_dirty_ = false;
@@ -581,11 +581,12 @@ sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
 std::string ControlServer::get_or_build_manifest_json() {
     std::lock_guard<std::mutex> lock(manifest_mutex_);
     uint64_t now = core::Utils::current_timestamp();
-    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 10)) {
+    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 300)) {
         return cached_manifest_json_;
     }
 
     auto manifest = sync::ManifestBuilder::build(workspace_root_, 1, static_cast<uint8_t>(suite_id_), enable_ai_, filter_mode_);
+    cached_manifest_ = manifest;
     cached_manifest_json_ = manifest.to_json();
     manifest_cached_at_ = now;
     manifest_dirty_ = false;
@@ -595,6 +596,8 @@ std::string ControlServer::get_or_build_manifest_json() {
 void ControlServer::invalidate_manifest_cache() {
     std::lock_guard<std::mutex> lock(manifest_mutex_);
     manifest_dirty_ = true;
+    cached_manifest_.reset();
+    cached_manifest_json_.clear();
 }
 
 } // namespace slug::net

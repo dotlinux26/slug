@@ -8,11 +8,24 @@
 #include "third_party/json/json.hpp"
 #include <algorithm>
 #include <iostream>
+#include <unordered_map>
+#include <mutex>
 
 namespace slug::sync {
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
+
+namespace {
+struct CachedFileState {
+    uint64_t mtime{0};
+    uint64_t size{0};
+    std::string hash;
+    std::vector<ChunkInfo> chunks;
+};
+static std::mutex g_state_cache_mtx;
+static std::unordered_map<std::string, CachedFileState> g_state_cache;
+}
 
 void WorkspaceManifest::compute_root_hash() {
     std::string aggregate;
@@ -147,7 +160,11 @@ WorkspaceManifest ManifestBuilder::build(
 
         if (it->is_directory(ec)) {
             if (lower == ".git" || lower == ".slug" || lower == "node_modules" ||
+                lower == "_internal" || lower == "venv" || lower == ".venv" || lower == "env" ||
+                lower == "__pycache__" || lower == "site-packages" || lower == "vendor" ||
                 lower == "build" || lower == "build_win" || lower == "target" || lower == "dist" ||
+                lower == "out" || lower == "bin" || lower == "obj" ||
+                lower == ".idea" || lower == ".vscode" ||
                 platform::PathUtils::is_internal_slug_path(rel)) {
                 it.disable_recursion_pending();
             }
@@ -175,14 +192,34 @@ WorkspaceManifest ManifestBuilder::build(
             }
         }
 
-        // Read file content for BLAKE3 hashing and AI checking
-        auto file_data = platform::PathUtils::read_binary_file(entry.path());
-        if (!file_data) {
-            manifest.skipped.push_back({proto_path, "Failed to read file", "IO_ERROR"});
-            continue;
+        // Fast metadata check: avoid reading disk if file is unchanged
+        uint64_t cur_sz = 0;
+        try { cur_sz = fs::file_size(entry.path(), ec); } catch (...) {}
+        uint64_t cur_mtime = 0;
+        try { cur_mtime = static_cast<uint64_t>(fs::last_write_time(entry.path(), ec).time_since_epoch().count()); } catch (...) {}
+
+        std::string current_hash;
+        std::vector<ChunkInfo> cached_chunks;
+        bool cache_hit = false;
+        {
+            std::lock_guard<std::mutex> lk(g_state_cache_mtx);
+            auto it_c = g_state_cache.find(proto_path);
+            if (it_c != g_state_cache.end() && it_c->second.mtime == cur_mtime && it_c->second.size == cur_sz && !it_c->second.hash.empty()) {
+                current_hash = it_c->second.hash;
+                cached_chunks = it_c->second.chunks;
+                cache_hit = true;
+            }
         }
 
-        std::string current_hash = crypto::Blake3::hash_hex(*file_data);
+        std::optional<std::vector<uint8_t>> file_data;
+        if (!cache_hit) {
+            file_data = platform::PathUtils::read_binary_file(entry.path());
+            if (!file_data) {
+                manifest.skipped.push_back({proto_path, "Failed to read file", "IO_ERROR"});
+                continue;
+            }
+            current_hash = crypto::Blake3::hash_hex(*file_data);
+        }
 
         // Step 2: Stateful AI & Smart Filter Audit evaluation (only active when enable_ai is true and filter_mode != NONE)
         if (enable_ai && filter_mode != core::FilterMode::NONE) {
@@ -210,10 +247,12 @@ WorkspaceManifest ManifestBuilder::build(
             }
 
             if (cached_status == core::AuditStatus::USER_ALLOWED) {
-                // Whitelisted by user override
+                // Whitelisted by user override - Always permitted!
             } else if (cached_status == core::AuditStatus::UNKNOWN || cached_status == core::AuditStatus::STALE) {
-                // Scan with Smart Filter / AI Guard
-                if (ai::AiScanner::is_scannable_file(entry.path())) {
+                if (!file_data) {
+                    file_data = platform::PathUtils::read_binary_file(entry.path());
+                }
+                if (file_data && ai::AiScanner::is_scannable_file(entry.path())) {
                     std::string text(file_data->begin(), file_data->end());
                     auto finding = scanner.scan_content(proto_path, text, false);
 
@@ -241,13 +280,24 @@ WorkspaceManifest ManifestBuilder::build(
             }
         }
 
-        // File is allowed: chunk it and add to manifest
+        // File is allowed: chunk it (or use cached chunks) and add to manifest
         ManifestFileEntry fe;
         fe.relative_path = proto_path;
-        fe.size = file_data->size();
-        fe.mtime = static_cast<uint64_t>(fs::last_write_time(entry.path(), ec).time_since_epoch().count());
+        fe.size = cur_sz;
+        fe.mtime = cur_mtime;
         fe.file_blake3_hash = current_hash;
-        fe.chunks = Chunker::chunk_buffer(*file_data);
+        if (cache_hit && !cached_chunks.empty()) {
+            fe.chunks = std::move(cached_chunks);
+        } else {
+            if (!file_data) {
+                file_data = platform::PathUtils::read_binary_file(entry.path());
+            }
+            if (file_data) {
+                fe.chunks = Chunker::chunk_buffer(*file_data);
+                std::lock_guard<std::mutex> lk(g_state_cache_mtx);
+                g_state_cache[proto_path] = {cur_mtime, cur_sz, current_hash, fe.chunks};
+            }
+        }
 
         manifest.files.push_back(std::move(fe));
     }

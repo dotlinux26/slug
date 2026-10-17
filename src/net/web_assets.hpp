@@ -467,7 +467,7 @@ public:
               << "<th style='width:80px;'>TYPE</th>"
               << "<th style='width:100px;'>SIZE</th>"
               << "<th style='width:150px;'>STATUS</th>"
-              << "<th style='width:160px; text-align:right;'>ACTION</th>"
+              << "<th style='width:220px; text-align:right;'>HÀNH ĐỘNG</th>"
               << "</tr></thead><tbody>";
 
             if (!norm_sub.empty()) {
@@ -480,7 +480,7 @@ public:
                 h << "<tr class='item-row'>";
                 if (item.is_dir) {
                     std::string admin_dir_act = (identity == "host_admin")
-                        ? (" <button type='button' class='btn-danger' style='padding:2px 8px; font-size:11px;' onclick='toggleManualBlockDir(\"" + js_escape(item.full_rel_path) + "\")'>Chặn Cả Thư Mục (Manual Guard)</button>")
+                        ? (" <button type='button' class='btn-danger btn-xs' style='padding:2px 7px; font-size:11px;' onclick='toggleManualBlockDir(\"" + js_escape(item.full_rel_path) + "\")'>Chặn</button>")
                         : "";
 
                     h << "<td></td>"
@@ -488,21 +488,21 @@ public:
                       << "<td style='color:var(--text-muted);'>folder</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
                       << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
-                      << "<td style='text-align:right;'><a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/drop?dir=" << html_escape(item.full_rel_path) << "'>Browse</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'>Copy Path</button>" << admin_dir_act << "</td>";
+                      << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'><a class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' href='/drop?dir=" << html_escape(item.full_rel_path) << "'>Duyệt</a><button type='button' class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'>Copy</button>" << admin_dir_act << "</div></td>";
                 } else {
                     std::string chk = item.selectable
                         ? ("<input type='checkbox' class='file-check' data-path='" + html_escape(item.full_rel_path) + "' data-size='" + std::to_string(item.size) + "' onchange='updateSelection()'>")
                         : "<input type='checkbox' disabled title='File is shielded/quarantined'>";
 
                     std::string act = item.selectable
-                        ? ("<a class='btn-sec' style='padding:2px 8px; font-size:11px;' href='/download?path=" + html_escape(item.full_rel_path) + "'>Download</a> <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'>Copy Path</button>")
+                        ? ("<a class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' href='/download?path=" + html_escape(item.full_rel_path) + "'>Tải Về</a><button type='button' class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'>Copy</button>")
                         : "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
 
                     if (identity == "host_admin") {
                         if (item.selectable) {
-                            act += " <button type='button' class='btn-danger' style='padding:2px 8px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", true)'>Chặn (Manual Guard)</button>";
+                            act += "<button type='button' class='btn-danger btn-xs' style='padding:2px 7px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", true)'>Chặn</button>";
                         } else {
-                            act += " <button type='button' class='btn-sec' style='padding:2px 8px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", false)'>Gỡ Chặn (Unblock)</button>";
+                            act += "<button type='button' class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", false)'>Gỡ Chặn</button>";
                         }
                     }
 
@@ -511,7 +511,7 @@ public:
                       << "<td style='color:var(--text-muted);'>file</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
                       << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
-                      << "<td style='text-align:right;'>" << act << "</td>";
+                      << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'>" << act << "</div></td>";
                 }
                 h << "</tr>";
             }
@@ -2678,13 +2678,13 @@ function renderHostedWorkspaces() {
           <div class="host-title">
             <span style="color:#0969da; flex-shrink:0;">${ICONS.folder}</span>
             <span class="path-truncate" title="${w.path}">${(w.path === './' || w.path === '.') ? 'Thư mục hiện tại (D:\\slugdoc)' : w.path}</span>
-            <button class="btn-sec btn-xs" onclick="copyText('${w.path}', 'Đường dẫn')" style="flex-shrink:0;">${ICONS.copy} Copy Path</button>
+            <button class="btn-sec btn-xs" data-path="${(w.path || '').replace(/"/g, '&quot;')}" onclick="copyPathFromAttr(this)" style="flex-shrink:0;">${ICONS.copy} Copy Path</button>
             <span class="badge badge-live" style="flex-shrink:0;"><span class="status-dot"></span> ĐANG PHÁT (HOSTING)</span>
             <span class="badge" style="background:#eaeef2; color:#1f2328; flex-shrink:0;">Cổng: ${w.port}</span>
           </div>
           <div style="display:flex; gap:8px; flex-shrink:0;">
             <button class="btn btn-sm" onclick="browseHostedWorkspace('${w.port}', '${w.admin_ticket || 'local_admin'}')">${ICONS.folder} Duyệt Thư Mục Này</button>
-            <button class="btn-sec btn-sm" onclick="openInExplorer('${w.path}')" title="Mở thư mục này trực tiếp trong Windows Explorer / File Manager">${ICONS.folder} Mở Explorer</button>
+            <button class="btn-sec btn-sm" data-path="${(w.path || '').replace(/"/g, '&quot;')}" onclick="openInExplorerFromAttr(this)" title="Mở thư mục này trực tiếp trong Windows Explorer / File Manager">${ICONS.folder} Mở Explorer</button>
             <button class="btn-sec btn-sm" onclick="toggleAdminPanel('${w.id}')">${ICONS.settings} Quản Trị (Admin)</button>
             <button class="btn-danger btn-sm" onclick="stopHost('${w.id}')">${ICONS.power} Dừng Host</button>
           </div>
@@ -3335,12 +3335,38 @@ function toggleUnquarantine(hostId, fname) {
 }
 
 function kickPeer(hostId, peerId) {
+  if (!confirm(`Xác nhận ngắt kết nối và thu hồi quyền truy cập của thiết bị / peer (ID: ${peerId})?`)) return;
   const host = hostedWorkspaces.find(w => w.id === hostId);
-  if (host && host.peers) {
-    host.peers = host.peers.filter(p => p.id !== peerId);
-    renderHostedWorkspaces();
-    showToast(`Đã ngắt kết nối peer ${peerId}!`);
+  const port = host ? parseInt(host.port) : 0;
+  if (!port) {
+    showToast('Lỗi: Không tìm thấy cổng của workspace!');
+    return;
   }
+  showToast(`Đang gửi lệnh ngắt kết nối peer ${peerId}...`);
+  fetch('/api/host/kick-peer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ port: port, session_id: parseInt(peerId) })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      showToast(`Đã ngắt kết nối và thu hồi phiên của peer ${peerId}!`);
+      loadHostedWorkspaces();
+      setTimeout(() => {
+        const drawer = document.getElementById('admin-drawer-' + hostId);
+        if (drawer) {
+          drawer.style.display = 'block';
+          switchAdminTab(hostId, 'peers');
+        }
+      }, 500);
+    } else {
+      showToast(`Không thể ngắt kết nối: ${res.message || 'Lỗi hệ thống'}`);
+    }
+  })
+  .catch(err => {
+    showToast(`Lỗi kết nối khi ngắt peer: ${err}`);
+  });
 }
 
 function getNextFreePort() {
@@ -3687,6 +3713,16 @@ async function chooseLocalFile(destId, callback) {
   };
   document.body.appendChild(tempInput);
   tempInput.click();
+}
+
+function copyPathFromAttr(btn) {
+  const p = btn ? btn.getAttribute('data-path') : '';
+  if (p) copyText(p, 'Đường dẫn');
+}
+
+function openInExplorerFromAttr(btn) {
+  const p = btn ? btn.getAttribute('data-path') : '';
+  if (p) openInExplorer(p);
 }
 
 function openInExplorer(path) {

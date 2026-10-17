@@ -1949,6 +1949,21 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             }).encode("utf-8"))
             return
 
+        if path == "/api/host/kick-peer":
+            wport = req_data.get("port", 0)
+            sid = req_data.get("session_id", 0)
+            for w in GLOBAL_HOSTED_WORKSPACES:
+                if w.get("port") == wport:
+                    w["peers"] = [p for p in w.get("peers", []) if str(p.get("id")) != str(sid) and str(p.get("session_id")) != str(sid)]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "message": f"Đã ngắt kết nối peer {sid} và thu hồi phiên thành công."
+            }).encode("utf-8"))
+            return
+
         if path == "/api/audit/toggle-unquarantine":
             fname = req_data.get("file", ".env")
             if fname in UNQUARANTINED_FILES:

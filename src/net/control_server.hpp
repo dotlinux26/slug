@@ -111,6 +111,7 @@ private:
 
     mutable std::mutex manifest_mutex_;
     std::string cached_manifest_json_;
+    std::optional<sync::WorkspaceManifest> cached_manifest_;
     uint64_t manifest_cached_at_{0};
     bool manifest_dirty_{true};
 

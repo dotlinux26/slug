@@ -428,15 +428,22 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         return;
     }
 
-    // STRICT GATEKEEPER: If not authenticated and not localhost loopback, reject immediately!
-    if (!current_session && !is_localhost) {
-        std::string body = WebAssets::render_forbidden_page("Mutual Post-Quantum Certificate / Session Ticket Required.");
-        send_resp(403, "Forbidden", "text/html; charset=utf-8", body);
-        return;
-    }
+    bool was_session_invalidated = (!session_cookie.empty() && !current_session);
 
-    // If accessing from localhost loopback without an explicit ticket, treat as local host_admin
-    if (!current_session && is_localhost) {
+    // STRICT GATEKEEPER:
+    if (!current_session) {
+        if (was_session_invalidated) {
+            std::string body = WebAssets::render_forbidden_page("Phiên làm việc đã kết thúc hoặc bị Quản Trị Viên (Host Admin) ngắt kết nối.");
+            send_resp(401, "Unauthorized", "text/html; charset=utf-8", body, "Set-Cookie: slug_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n");
+            return;
+        }
+        if (!is_localhost) {
+            std::string body = WebAssets::render_forbidden_page("Mutual Post-Quantum Certificate / Session Ticket Required.");
+            send_resp(403, "Forbidden", "text/html; charset=utf-8", body);
+            return;
+        }
+
+        // If accessing from localhost loopback without a previous peer session cookie, treat as local host_admin
         WebSession local_admin_session;
         local_admin_session.identity = "host_admin";
         local_admin_session.role = core::Role::READ_WRITE;
@@ -530,6 +537,20 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             if (sid == 0) {
                 send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"session_id required\"}");
                 return;
+            }
+            auto sess = control_server_.get_session(sid);
+            if (sess) {
+                if (!sess->web_ticket.empty()) {
+                    revoke_session_by_ticket(sess->web_ticket);
+                }
+                std::lock_guard<std::mutex> lock(session_mutex_);
+                for (auto it = sessions_.begin(); it != sessions_.end(); ) {
+                    if (it->second.identity == sess->identity || (!sess->web_ticket.empty() && it->second.ticket == sess->web_ticket)) {
+                        it = sessions_.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
             }
             bool ok = control_server_.revoke_session(sid);
             if (ok) {
@@ -763,12 +784,18 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
             policy::RulesManager mgr(rules_file);
             std::string rule_val = target_path + (is_dir ? "/" : "");
+            for (const auto& r : mgr.rules()) {
+                if (r.value == target_path || r.value == (target_path + "/")) {
+                    mgr.remove_rule(r.id);
+                }
+            }
             mgr.add_rule("", policy::RuleAction::BLOCK, policy::RuleType::PATH, rule_val);
 
             // 2. Add entry to index.db (Shared logic: stateful audit index)
             fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
             ai::StatefulAuditIndex audit_idx(idx_file);
             audit_idx.block_file(target_path, "Người tự kiểm toán (Manual Guard)", "host_admin");
+            audit_idx.save();
 
             control_server_.audit_logger().log(current_session->identity, "MANUAL_GUARD_BLOCK", target_path, "Chặn thủ công bởi người tự kiểm toán");
             control_server_.invalidate_manifest_cache();
@@ -793,12 +820,30 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                 return;
             }
 
-            // Remove from index.db
+            // 1. Mark as USER_ALLOWED in index.db
             fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
             ai::StatefulAuditIndex audit_idx(idx_file);
-            audit_idx.remove_entry(target_path);
+            
+            // Read file hash if exists to ensure zero-cost cache hit for USER_ALLOWED
+            fs::path abs_target = control_server_.workspace_root() / target_path;
+            std::string file_hash = "";
+            auto file_data = platform::PathUtils::read_binary_file(abs_target);
+            if (file_data) {
+                file_hash = crypto::Blake3::hash_hex(*file_data);
+            }
+            
+            ai::AuditIndexEntry ae;
+            ae.file_path = target_path;
+            ae.blake3_hash = file_hash;
+            ae.status = core::AuditStatus::USER_ALLOWED;
+            ae.reason = "Gỡ chặn & cho phép bởi Quản Trị Viên (Host Admin)";
+            ae.decision_actor = current_session->identity;
+            ae.decision_reason = "Host Admin Whitelist Override";
+            ae.scanned_at = core::Utils::current_timestamp();
+            audit_idx.update_entry(ae);
+            audit_idx.save();
 
-            // Remove matching rule from rules.conf
+            // 2. Remove matching block rule from rules.conf and add allow rule
             fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
             policy::RulesManager mgr(rules_file);
             for (const auto& r : mgr.rules()) {
@@ -806,8 +851,9 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                     mgr.remove_rule(r.id);
                 }
             }
+            mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, target_path);
 
-            control_server_.audit_logger().log(current_session->identity, "MANUAL_GUARD_UNBLOCK", target_path, "Gỡ chặn thủ công bởi người tự kiểm toán");
+            control_server_.audit_logger().log(current_session->identity, "MANUAL_GUARD_UNBLOCK", target_path, "Gỡ chặn thủ công bởi Quản Trị Viên");
             control_server_.invalidate_manifest_cache();
 
             send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"path\":\"" + target_path + "\"}");
@@ -858,6 +904,16 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
             ai::StatefulAuditIndex audit_idx(idx_file);
             if (audit_idx.allow_file(p, reason, current_session->identity)) {
+                audit_idx.save();
+                fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
+                policy::RulesManager mgr(rules_file);
+                for (const auto& r : mgr.rules()) {
+                    if (r.value == p || r.value == (p + "/")) {
+                        mgr.remove_rule(r.id);
+                    }
+                }
+                mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, p);
+
                 control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW", p, "Whitelisted false positive: " + reason);
                 control_server_.invalidate_manifest_cache();
                 send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"File whitelisted successfully\"}");
@@ -878,12 +934,21 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
         ai::StatefulAuditIndex audit_idx(idx_file);
         auto flagged = audit_idx.list_flagged_or_all(true);
+        fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
+        policy::RulesManager mgr(rules_file);
         int count = 0;
         for (const auto& item : flagged) {
             if (audit_idx.allow_file(item.file_path, "Admin batch whitelist", current_session->identity)) {
                 count++;
+                for (const auto& r : mgr.rules()) {
+                    if (r.value == item.file_path || r.value == (item.file_path + "/")) {
+                        mgr.remove_rule(r.id);
+                    }
+                }
+                mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, item.file_path);
             }
         }
+        audit_idx.save();
         control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW_ALL", "all", "Whitelisted " + std::to_string(count) + " files");
         control_server_.invalidate_manifest_cache();
         send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"count\":" + std::to_string(count) + "}");
@@ -968,6 +1033,10 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
     }
 
     if (path == "/api/upload") {
+        if (!current_session) {
+            send_resp(401, "Unauthorized", "application/json", "{\"status\":\"unauthorized\",\"message\":\"Session required to upload.\"}");
+            return;
+        }
         std::string rel_dir = get_query_param(req.query, "dir");
         std::string file_name = get_query_param(req.query, "name");
         if (file_name.empty()) {
