@@ -3,6 +3,7 @@
 #include "src/platform/fs.hpp"
 #include <fstream>
 #include <sstream>
+#include <atomic>
 
 namespace slug::policy {
 
