@@ -39,6 +39,7 @@ HPP_PATH = os.path.join(BASE_DIR, "src", "net", "web_assets.hpp")
 
 UNQUARANTINED_FILES = set()
 INCLUDED_EXCLUDED_FILES = set()
+GLOBAL_HOSTED_WORKSPACES = []
 
 def inspect_network_interfaces():
     adapters = []
@@ -1549,6 +1550,72 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "ok" if folder else "cancelled", "path": folder, "has_slug": has_slug}).encode("utf-8"))
             return
 
+        if path == "/api/fs/pick-file":
+            fpath = ""
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                import ctypes
+                root = tk.Tk()
+                root.attributes("-topmost", True)
+                root.attributes("-alpha", 0.0)
+                root.geometry("1x1+0+0")
+                root.lift()
+                root.focus_force()
+                try:
+                    hwnd = ctypes.windll.user32.GetForegroundWindow()
+                    if hwnd:
+                        ctypes.windll.user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+                fpath = filedialog.askopenfilename(parent=root, title="Slug: Chọn Tệp Tin")
+                root.destroy()
+            except Exception:
+                fpath = ""
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok" if fpath else "cancelled", "path": fpath}).encode("utf-8"))
+            return
+
+        if path == "/api/fs/open-folder" and self.command == "POST":
+            target_p = req_data.get("path", "")
+            ok = False
+            if target_p and os.path.exists(target_p):
+                try:
+                    if sys.platform == "win32":
+                        os.startfile(target_p)
+                        ok = True
+                    else:
+                        os.system(f'xdg-open "{target_p}" &')
+                        ok = True
+                except Exception:
+                    pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok" if ok else "error"}).encode("utf-8"))
+            return
+
+        if path == "/api/fs/open-file" and self.command == "POST":
+            target_p = req_data.get("path", "")
+            ok = False
+            if target_p and os.path.exists(target_p):
+                try:
+                    if sys.platform == "win32":
+                        os.startfile(target_p)
+                        ok = True
+                    else:
+                        os.system(f'xdg-open "{target_p}" &')
+                        ok = True
+                except Exception:
+                    pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok" if ok else "error"}).encode("utf-8"))
+            return
+
         if path == "/api/workspace/rules":
             target_p = query.get("path", [""])[0]
             scan_target = os.path.abspath(os.path.join(BASE_DIR, target_p)) if target_p else BASE_DIR
@@ -1574,7 +1641,7 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"status":"ok","workspaces":[]}')
+            self.wfile.write(json.dumps({"status": "ok", "workspaces": GLOBAL_HOSTED_WORKSPACES}).encode("utf-8"))
             return
 
         if path == "/api/audit/workspace":
@@ -1697,7 +1764,7 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        global USER_ACCOUNTS, UNQUARANTINED_FILES
+        global USER_ACCOUNTS, UNQUARANTINED_FILES, GLOBAL_HOSTED_WORKSPACES
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
@@ -1805,10 +1872,36 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
             wpath = req_data.get("path", "")
             if not wpath: wpath = "./"
             wport = int(req_data.get("port", 9443))
+            suite = req_data.get("suite", "2")
+            filter_mode = req_data.get("filter", "protected")
+            ttl = int(req_data.get("ttl", 7200))
             try:
                 os.makedirs(wpath, exist_ok=True)
             except Exception:
                 pass
+            GLOBAL_HOSTED_WORKSPACES = [w for w in GLOBAL_HOSTED_WORKSPACES if w.get("port") != wport]
+            GLOBAL_HOSTED_WORKSPACES.append({
+                "id": f"host-{wport}",
+                "port": wport,
+                "path": os.path.abspath(wpath),
+                "suite": suite,
+                "filter_mode": filter_mode,
+                "ttl": 60,
+                "is_live": True,
+                "otp_rw": "51903319",
+                "otp_r": "01937358",
+                "otp_w": "17712945",
+                "otp": "51903319",
+                "maxTtl": 60,
+                "step_sec": 60,
+                "cert_ttl": ttl,
+                "peers": [],
+                "users": [],
+                "auditStats": {"clean": 12, "quarantined": 1, "excluded": 5},
+                "quarantinedFiles": [],
+                "cleanFiles": [],
+                "excludedFiles": []
+            })
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -1816,6 +1909,18 @@ class SlugPreviewHandler(http.server.BaseHTTPRequestHandler):
                 "status": "ok",
                 "port": wport,
                 "message": f"Đã bắt đầu chia sẻ workspace tại '{wpath}' trên cổng {wport}"
+            }).encode("utf-8"))
+            return
+
+        if path == "/api/host/stop":
+            wport = int(req_data.get("port", 0))
+            GLOBAL_HOSTED_WORKSPACES = [w for w in GLOBAL_HOSTED_WORKSPACES if w.get("port") != wport]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "message": f"Đã dừng trạm phát trên cổng {wport}"
             }).encode("utf-8"))
             return
 

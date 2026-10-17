@@ -135,11 +135,29 @@ WorkspaceManifest ManifestBuilder::build(
     ai::AiScanner scanner;
 
     std::error_code ec;
-    for (const auto& entry : fs::recursive_directory_iterator(workspace_root, fs::directory_options::skip_permission_denied, ec)) {
-        if (!entry.is_regular_file(ec)) continue;
+    for (auto it = fs::recursive_directory_iterator(workspace_root, fs::directory_options::skip_permission_denied, ec), end = fs::recursive_directory_iterator();
+         it != end; ++it) {
+        if (ec) { ec.clear(); continue; }
 
-        fs::path rel = entry.path().lexically_relative(workspace_root);
+        fs::path p = it->path();
+        fs::path rel = p.lexically_relative(workspace_root);
+        std::string filename = p.filename().string();
+        std::string lower = filename;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+        if (it->is_directory(ec)) {
+            if (lower == ".git" || lower == ".slug" || lower == "node_modules" ||
+                lower == "build" || lower == "build_win" || lower == "target" || lower == "dist" ||
+                platform::PathUtils::is_internal_slug_path(rel)) {
+                it.disable_recursion_pending();
+            }
+            continue;
+        }
+
+        if (!it->is_regular_file(ec)) continue;
+
         std::string proto_path = platform::PathUtils::to_protocol_path(rel);
+        const auto& entry = *it;
 
         // Mandatory isolation: .slug and .git metadata are strictly protected ALWAYS
         if (platform::PathUtils::is_internal_slug_path(rel)) {

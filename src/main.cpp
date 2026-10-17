@@ -661,6 +661,27 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
     return res;
 }
 
+static std::mutex g_audit_cache_mtx;
+static std::map<std::string, std::pair<uint64_t, nlohmann::json>> g_audit_cache;
+
+static nlohmann::json get_cached_workspace_audit(const std::filesystem::path& ws_path, bool force_fresh = false) {
+    std::string key = ws_path.string();
+    uint64_t now = core::Utils::current_timestamp();
+    if (!force_fresh) {
+        std::lock_guard<std::mutex> lk(g_audit_cache_mtx);
+        auto it = g_audit_cache.find(key);
+        if (it != g_audit_cache.end() && (now - it->second.first) < 45) {
+            return it->second.second;
+        }
+    }
+    auto result = perform_real_workspace_audit(ws_path);
+    {
+        std::lock_guard<std::mutex> lk(g_audit_cache_mtx);
+        g_audit_cache[key] = {now, result};
+    }
+    return result;
+}
+
 using namespace slug;
 
 class SlugConfig {
@@ -2894,6 +2915,94 @@ static std::string pick_folder_native() {
 }
 #endif
 
+#if defined(SLUG_PLATFORM_WINDOWS)
+static std::string pick_file_native() {
+    std::string result = "";
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    bool need_uninit = SUCCEEDED(hr);
+
+    IFileOpenDialog* pFileOpen = nullptr;
+    hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+    if (SUCCEEDED(hr)) {
+        DWORD dwOptions = 0;
+        if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+            pFileOpen->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+        }
+        pFileOpen->SetTitle(L"Slug: Chọn Tệp Tin");
+        HWND hwndOwner = GetForegroundWindow();
+        if (!hwndOwner) hwndOwner = GetActiveWindow();
+        if (hwndOwner) {
+            SetForegroundWindow(hwndOwner);
+            BringWindowToTop(hwndOwner);
+        }
+        hr = pFileOpen->Show(hwndOwner);
+        if (SUCCEEDED(hr)) {
+            IShellItem* pItem = nullptr;
+            hr = pFileOpen->GetResult(&pItem);
+            if (SUCCEEDED(hr)) {
+                PWSTR pszFilePath = nullptr;
+                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                if (SUCCEEDED(hr)) {
+                    int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                    if (size_needed > 0) {
+                        result.resize(size_needed - 1);
+                        WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                    }
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+    if (need_uninit) CoUninitialize();
+    return result;
+}
+#elif defined(SLUG_PLATFORM_POSIX)
+static std::string pick_file_native() {
+    std::string chosen_path = "";
+    FILE* pipe = popen("zenity --file-selection --title='Slug: Chọn Tệp Tin' --modal 2>/dev/null", "r");
+    if (pipe) {
+        char buf[512];
+        while (fgets(buf, sizeof(buf), pipe)) {
+            chosen_path += buf;
+        }
+        pclose(pipe);
+    }
+    if (chosen_path.empty()) {
+        pipe = popen("kdialog --getopenfilename . --title 'Slug: Chọn Tệp Tin' 2>/dev/null", "r");
+        if (pipe) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), pipe)) {
+                chosen_path += buf;
+            }
+            pclose(pipe);
+        }
+    }
+    while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
+        chosen_path.pop_back();
+    }
+    return chosen_path;
+}
+#else
+static std::string pick_file_native() {
+    return "";
+}
+#endif
+
+static bool open_path_in_os(const std::string& path_str) {
+#if defined(SLUG_PLATFORM_WINDOWS)
+    HINSTANCE res = ShellExecuteA(NULL, "open", path_str.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(res) > 32;
+#elif defined(SLUG_PLATFORM_POSIX)
+    std::string cmd = "xdg-open \"" + path_str + "\" >/dev/null 2>&1 &";
+    int ret = system(cmd.c_str());
+    return ret == 0;
+#else
+    return false;
+#endif
+}
+
 int cmd_portal(int argc, char* argv[]) {
     uint16_t start_port = 8080;
     std::string cfg_port = SlugConfig::get("portal_port", "8080");
@@ -3379,8 +3488,8 @@ int cmd_portal(int argc, char* argv[]) {
                         item["peers"] = nlohmann::json::array();
                     }
 
-                    // Attach real audit data, quarantined files, and rules for this workspace
-                    auto audit_data = perform_real_workspace_audit(w.path);
+                    // Attach real audit data, quarantined files, and rules for this workspace (using in-memory cache to guarantee 0ms response)
+                    auto audit_data = get_cached_workspace_audit(w.path);
                     item["auditStats"] = audit_data.value("stats", nlohmann::json{{"clean", 0}, {"quarantined", 0}, {"excluded", 0}});
                     item["quarantinedFiles"] = audit_data.value("quarantined_files", nlohmann::json::array());
                     item["cleanFiles"] = audit_data.value("clean_files", nlohmann::json::array());
@@ -3474,6 +3583,56 @@ int cmd_portal(int argc, char* argv[]) {
                     res["path"] = "";
                 }
                 send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/fs/pick-file") {
+                nlohmann::json res;
+                std::string chosen = pick_file_native();
+                if (!chosen.empty()) {
+                    res["status"] = "ok";
+                    res["path"] = chosen;
+                } else {
+                    res["status"] = "cancelled";
+                    res["path"] = "";
+                }
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/fs/open-folder" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string target_p = j.value("path", "");
+                    bool ok = false;
+                    if (!target_p.empty()) {
+                        ok = open_path_in_os(target_p);
+                    }
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
+                    res["message"] = ok ? "Đã mở thư mục trong trình quản lý tệp" : "Không thể mở thư mục";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
+                return;
+            }
+
+            if (path == "/api/fs/open-file" && method == "POST") {
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string target_p = j.value("path", "");
+                    bool ok = false;
+                    if (!target_p.empty()) {
+                        ok = open_path_in_os(target_p);
+                    }
+                    nlohmann::json res;
+                    res["status"] = ok ? "ok" : "error";
+                    res["message"] = ok ? "Đã mở tệp bằng ứng dụng mặc định" : "Không thể mở tệp";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (...) {
+                    send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\"}");
+                }
                 return;
             }
 

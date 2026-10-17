@@ -273,8 +273,10 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     web->start();
 
     if (enable_ai && filter_mode != FilterMode::NONE) {
-        // Initial scan on startup to populate index.db and detect flagged secrets immediately
-        sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode);
+        // Run initial scan asynchronously in background thread so add_workspace returns in 0.01s
+        std::thread([canonical_path, suite, filter_mode]() {
+            sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode);
+        }).detach();
     }
 
     WorkspaceInfo wi;

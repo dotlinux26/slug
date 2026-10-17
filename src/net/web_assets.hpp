@@ -592,6 +592,9 @@ public:
           << "  }"
           << "}"
           << "function chooseLocalSaveLocationDirect(destId) {"
+          << "  if (typeof chooseLocalSaveLocation === 'function') {"
+          << "    chooseLocalSaveLocation(destId); return;"
+          << "  }"
           << "  if (window.showDirectoryPicker) {"
           << "    window.showDirectoryPicker().then(h => {"
           << "      if (h && h.name) document.getElementById(destId).value = h.name;"
@@ -2681,6 +2684,7 @@ function renderHostedWorkspaces() {
           </div>
           <div style="display:flex; gap:8px; flex-shrink:0;">
             <button class="btn btn-sm" onclick="browseHostedWorkspace('${w.port}', '${w.admin_ticket || 'local_admin'}')">${ICONS.folder} Duyệt Thư Mục Này</button>
+            <button class="btn-sec btn-sm" onclick="openInExplorer('${w.path}')" title="Mở thư mục này trực tiếp trong Windows Explorer / File Manager">${ICONS.folder} Mở Explorer</button>
             <button class="btn-sec btn-sm" onclick="toggleAdminPanel('${w.id}')">${ICONS.settings} Quản Trị (Admin)</button>
             <button class="btn-danger btn-sm" onclick="stopHost('${w.id}')">${ICONS.power} Dừng Host</button>
           </div>
@@ -3650,6 +3654,75 @@ async function chooseLocalSaveLocation(destId) {
   };
   document.body.appendChild(tempInput);
   tempInput.click();
+}
+
+async function chooseLocalFile(destId, callback) {
+  try {
+    const res = await fetch('/api/fs/pick-file').then(r => r.json());
+    if (res.status === 'ok' && res.path) {
+      if (destId) {
+        const target = document.getElementById(destId);
+        if (target) target.value = res.path;
+      }
+      if (typeof callback === 'function') callback(res.path);
+      return;
+    } else if (res.status === 'cancelled') {
+      return;
+    }
+  } catch(e) {}
+  const tempInput = document.createElement('input');
+  tempInput.type = 'file';
+  tempInput.style.display = 'none';
+  tempInput.onchange = function() {
+    if (tempInput.files && tempInput.files.length > 0) {
+      const f = tempInput.files[0];
+      const val = f.name;
+      if (destId) {
+        const target = document.getElementById(destId);
+        if (target) target.value = val;
+      }
+      if (typeof callback === 'function') callback(val);
+    }
+    if (tempInput.parentNode) tempInput.parentNode.removeChild(tempInput);
+  };
+  document.body.appendChild(tempInput);
+  tempInput.click();
+}
+
+function openInExplorer(path) {
+  if (!path) return;
+  fetch('/api/fs/open-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: path })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      showToast('Đã mở thư mục trong Explorer!');
+    } else {
+      alert('Không thể mở thư mục: ' + (res.message || 'Lỗi'));
+    }
+  })
+  .catch(e => alert('Lỗi: ' + e));
+}
+
+function openLocalFile(path) {
+  if (!path) return;
+  fetch('/api/fs/open-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: path })
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res.status === 'ok') {
+      showToast('Đã mở tệp bằng ứng dụng mặc định!');
+    } else {
+      alert('Không thể mở tệp: ' + (res.message || 'Lỗi'));
+    }
+  })
+  .catch(e => alert('Lỗi: ' + e));
 }
 
 function handleDirInputSelected(inp, targetId) {
