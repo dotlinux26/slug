@@ -1345,7 +1345,7 @@ public:
           << "      if (res.status === 'ok') queryAudit(false);"
           << "      else alert(res.message || 'Failed to whitelist all');"
           << "    }).catch(e => alert('Network error'));"
-          << "}
+          << "}"
           << "function filterAuditLogs() {"
           << "  const q = (document.getElementById('logs-search')?.value || '').toLowerCase().trim();"
           << "  const entries = document.querySelectorAll('#audit-logs-container .log-entry');"
