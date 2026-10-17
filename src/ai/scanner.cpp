@@ -167,6 +167,67 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
 }
 
 
+static std::string execute_http_post(const std::string& url,
+                                     const std::filesystem::path& payload_file,
+                                     const std::string& auth_bearer,
+                                     int timeout_sec) {
+    std::string response;
+
+    // 1. Primary Attempt: curl.exe (standard on Windows 10 build 1803+, Windows 11, Linux, macOS)
+    std::string auth_header = auth_bearer.empty() ? "" : "-H \"Authorization: Bearer " + auth_bearer + "\" ";
+    std::string curl_cmd = "curl -s -m " + std::to_string(timeout_sec) + " -X POST \"" + url + "\" "
+                         + "-H \"Content-Type: application/json\" "
+                         + auth_header
+                         + "-d @\"" + payload_file.generic_string() + "\"" + NULL_DEV;
+
+    FILE* fp = popen(curl_cmd.c_str(), "r");
+    if (fp) {
+        char buf[1024];
+        while (fgets(buf, sizeof(buf), fp)) response += buf;
+        pclose(fp);
+    }
+
+#if defined(_WIN32)
+    // 2. Windows Fallback: If curl.exe is missing (Windows 7 SP1 or older Windows 10 < 1803),
+    // automatically fallback to PowerShell + .NET HttpWebRequest which is built into System32 out-of-the-box.
+    if (response.empty()) {
+        std::string win_path = payload_file.string();
+        for (auto& c : win_path) { if (c == '/') c = '\\'; }
+
+        int timeout_ms = timeout_sec * 1000;
+        std::string ps_cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \""
+            "[System.Net.ServicePointManager]::SecurityProtocol = 3072; "
+            "$req = [System.Net.HttpWebRequest]::Create('" + url + "'); "
+            "$req.Method = 'POST'; "
+            "$req.ContentType = 'application/json'; "
+            "$req.Timeout = " + std::to_string(timeout_ms) + "; ";
+        if (!auth_bearer.empty()) {
+            ps_cmd += "$req.Headers.Add('Authorization', 'Bearer " + auth_bearer + "'); ";
+        }
+        ps_cmd += "try { "
+                  "$data = [System.IO.File]::ReadAllBytes('" + win_path + "'); "
+                  "$req.ContentLength = $data.Length; "
+                  "$st = $req.GetRequestStream(); "
+                  "$st.Write($data, 0, $data.Length); "
+                  "$st.Close(); "
+                  "$resp = $req.GetResponse(); "
+                  "$sr = New-Object System.IO.StreamReader($resp.GetResponseStream()); "
+                  "Write-Output $sr.ReadToEnd(); "
+                  "$sr.Close(); $resp.Close(); "
+                  "} catch { }\"" + NULL_DEV;
+
+        FILE* ps_fp = popen(ps_cmd.c_str(), "r");
+        if (ps_fp) {
+            char buf[1024];
+            while (fgets(buf, sizeof(buf), ps_fp)) response += buf;
+            pclose(ps_fp);
+        }
+    }
+#endif
+
+    return response;
+}
+
 ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_view content) const {
     auto h_finding = scan_heuristic(file_path, content, false);
     if (h_finding.has_secret) return h_finding;
@@ -189,14 +250,8 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ollama_" + std::to_string(core::Utils::current_timestamp()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string curl_cmd = "curl -s -m 5 -X POST \"" + url + "\" -H \"Content-Type: application/json\" -d @\"" + tmp_payload.generic_string() + "\"" + NULL_DEV;
-    FILE* fp = popen(curl_cmd.c_str(), "r");
-    std::string response;
-    if (fp) {
-        char buf[1024];
-        while (fgets(buf, sizeof(buf), fp)) response += buf;
-        pclose(fp);
-    }
+    std::string response = execute_http_post(url, tmp_payload, "", 5);
+
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
@@ -289,18 +344,8 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ai_req_" + std::to_string(core::Utils::current_timestamp()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string curl_cmd = "curl -s -m 8 -X POST \"" + endpoint + "\" "
-                           "-H \"Content-Type: application/json\" "
-                           "-H \"Authorization: Bearer " + api_key + "\" "
-                           "-d @\"" + tmp_payload.generic_string() + "\"" + NULL_DEV;
+    std::string response = execute_http_post(endpoint, tmp_payload, api_key, 8);
 
-    FILE* fp = popen(curl_cmd.c_str(), "r");
-    std::string response;
-    if (fp) {
-        char buf[1024];
-        while (fgets(buf, sizeof(buf), fp)) response += buf;
-        pclose(fp);
-    }
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
