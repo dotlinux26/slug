@@ -433,24 +433,26 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
 
     // STRICT GATEKEEPER:
     if (!current_session) {
-        if (was_session_invalidated) {
-            std::string body = WebAssets::render_forbidden_page("Phiên làm việc đã kết thúc hoặc bị Quản Trị Viên (Host Admin) ngắt kết nối.");
-            send_resp(401, "Unauthorized", "text/html; charset=utf-8", body, "Set-Cookie: slug_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n");
-            return;
-        }
-        if (!is_localhost) {
+        if (is_localhost) {
+            // Local loopback access is always granted to the local workspace owner (host_admin).
+            // If there was a stale or invalid session cookie from a previous run, automatically
+            // adopt host_admin without showing any 401/403 error page!
+            WebSession local_admin_session;
+            local_admin_session.identity = "host_admin";
+            local_admin_session.role = core::Role::READ_WRITE;
+            local_admin_session.token = "local_admin";
+            local_admin_session.expires_at = 0;
+            current_session = local_admin_session;
+        } else {
+            if (was_session_invalidated) {
+                std::string body = WebAssets::render_forbidden_page("Phiên làm việc đã kết thúc hoặc bị Quản Trị Viên (Host Admin) ngắt kết nối.");
+                send_resp(401, "Unauthorized", "text/html; charset=utf-8", body, "Set-Cookie: slug_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n");
+                return;
+            }
             std::string body = WebAssets::render_forbidden_page("Mutual Post-Quantum Certificate / Session Ticket Required.");
             send_resp(403, "Forbidden", "text/html; charset=utf-8", body);
             return;
         }
-
-        // If accessing from localhost loopback without a previous peer session cookie, treat as local host_admin
-        WebSession local_admin_session;
-        local_admin_session.identity = "host_admin";
-        local_admin_session.role = core::Role::READ_WRITE;
-        local_admin_session.token = "local_admin";
-        local_admin_session.expires_at = 0;
-        current_session = local_admin_session;
     }
 
     // Authenticated endpoints:

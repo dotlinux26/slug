@@ -3090,7 +3090,13 @@ static bool open_path_in_os(const std::string& path_str) {
         }
         std::string native_p = p.make_preferred().string();
 #if defined(SLUG_PLATFORM_WINDOWS)
-        HINSTANCE res = ShellExecuteA(NULL, "open", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        HWND hwnd_owner = GetForegroundWindow();
+        if (!hwnd_owner) hwnd_owner = GetDesktopWindow();
+        AllowSetForegroundWindow(ASFW_ANY);
+        HINSTANCE res = ShellExecuteA(hwnd_owner, "explore", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(res) <= 32) {
+            res = ShellExecuteA(hwnd_owner, "open", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
+        }
         if (reinterpret_cast<INT_PTR>(res) <= 32) {
             std::string cmd = "explorer.exe \"" + native_p + "\"";
             system(cmd.c_str());

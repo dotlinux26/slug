@@ -282,6 +282,11 @@ public:
           << ".btn-sec { background: #ffffff; border: 1px solid var(--border-primary); color: var(--text-main); padding: 5px 11px; border-radius: var(--radius-sharp); text-decoration: none; font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; cursor: pointer; }"
           << ".btn-sec:hover { background: var(--bg-surface-hover); border-color: #afb8c1; }"
           << ".btn:disabled, .btn-sec:disabled { opacity: 0.5; cursor: not-allowed; }"
+          << ".act-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 24px; line-height: 22px; padding: 0 8px; font-size: 11px; font-weight: 500; border-radius: var(--radius-sharp); text-decoration: none; font-family: 'JetBrains Mono', monospace; cursor: pointer; box-sizing: border-box; white-space: nowrap; vertical-align: middle; border: 1px solid var(--border-primary); background: #ffffff; color: var(--text-main); transition: all 0.15s ease; }"
+          << ".act-btn:hover { background: var(--bg-surface-hover); border-color: #afb8c1; color: var(--text-main); }"
+          << ".act-btn-danger { background: #fff8f8; border-color: #ffc8c8; color: #cf222e; }"
+          << ".act-btn-danger:hover { background: #ffebe9; border-color: #cf222e; color: #a40e26; }"
+          << ".act-btn svg { flex-shrink: 0; width: 12px; height: 12px; display: inline-block; vertical-align: middle; }"
           << "table { width: 100%; border-collapse: collapse; margin-top: 4px; font-family: 'JetBrains Mono', monospace; }"
           << "th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; vertical-align: middle; }"
           << "th { background: #f6f8fa; color: var(--text-muted); border-bottom: 1px solid var(--border-primary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; font-size: 11px; }"
@@ -480,7 +485,7 @@ public:
                 h << "<tr class='item-row'>";
                 if (item.is_dir) {
                     std::string admin_dir_act = (identity == "host_admin")
-                        ? (" <button type='button' class='btn-danger btn-xs' style='padding:2px 7px; font-size:11px;' onclick='toggleManualBlockDir(\"" + js_escape(item.full_rel_path) + "\")'>Chặn</button>")
+                        ? (" <button type='button' class='act-btn act-btn-danger' onclick='toggleManualBlockDir(\"" + js_escape(item.full_rel_path) + "\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><line x1='4.93' y1='4.93' x2='19.07' y2='19.07'></line></svg> Chặn</button>")
                         : "";
 
                     h << "<td></td>"
@@ -488,21 +493,21 @@ public:
                       << "<td style='color:var(--text-muted);'>folder</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
                       << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
-                      << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'><a class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' href='/drop?dir=" << html_escape(item.full_rel_path) << "'>Duyệt</a><button type='button' class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'>Copy</button>" << admin_dir_act << "</div></td>";
+                      << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'><a class='act-btn' href='/drop?dir=" << html_escape(item.full_rel_path) << "'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duyệt</a><button type='button' class='act-btn' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>" << admin_dir_act << "</div></td>";
                 } else {
                     std::string chk = item.selectable
                         ? ("<input type='checkbox' class='file-check' data-path='" + html_escape(item.full_rel_path) + "' data-size='" + std::to_string(item.size) + "' onchange='updateSelection()'>")
                         : "<input type='checkbox' disabled title='File is shielded/quarantined'>";
 
                     std::string act = item.selectable
-                        ? ("<a class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' href='/download?path=" + html_escape(item.full_rel_path) + "'>Tải Về</a><button type='button' class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'>Copy</button>")
+                        ? ("<a class='act-btn' href='/download?path=" + html_escape(item.full_rel_path) + "'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> Tải Về</a><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>")
                         : "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
 
                     if (identity == "host_admin") {
                         if (item.selectable) {
-                            act += "<button type='button' class='btn-danger btn-xs' style='padding:2px 7px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", true)'>Chặn</button>";
+                            act += "<button type='button' class='act-btn act-btn-danger' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", true)'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><line x1='4.93' y1='4.93' x2='19.07' y2='19.07'></line></svg> Chặn</button>";
                         } else {
-                            act += "<button type='button' class='btn-sec btn-xs' style='padding:2px 7px; font-size:11px;' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", false)'>Gỡ Chặn</button>";
+                            act += "<button type='button' class='act-btn' onclick='toggleManualBlockFile(\"" + js_escape(item.full_rel_path) + "\", false)'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'></path><polyline points='9 12 11 14 15 10'></polyline></svg> Gỡ Chặn</button>";
                         }
                     }
 
