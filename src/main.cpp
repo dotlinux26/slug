@@ -509,6 +509,9 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         bool is_excluded = false;
         std::string excl_rule = "";
 
+        const auto* rm = rules_mgr.match(rel);
+        bool is_whitelisted = (rm && rm->action == policy::RuleAction::ALLOW);
+
         // STRICT ISOLATION: .slug metadata is strictly internal to Slug and NEVER quarantined as a user secret!
         if (lower == ".slug" || lower.starts_with(".slug/") || lower.find("/.slug/") != std::string::npos ||
             platform::PathUtils::is_internal_slug_path(rel_path)) {
@@ -529,8 +532,6 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         } else if (lower.ends_with(".obj") || lower.ends_with(".o") || lower.ends_with(".pdb") || lower.ends_with(".exe") || lower.ends_with(".dll")) {
             is_excluded = true; excl_rule = "Compiled binary artifact";
         } else {
-            const auto* rm = rules_mgr.match(rel);
-            bool is_whitelisted = (rm && rm->action == policy::RuleAction::ALLOW);
             if (rm && rm->action == policy::RuleAction::BLOCK) {
                 is_excluded = true;
                 excl_rule = "Slug Rule: " + rm->value;
@@ -636,10 +637,11 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
                 } else if (is_template_sample) {
                     note = "Tệp mẫu cấu hình (Example / Template safe)";
                 }
+                std::string status_str = is_whitelisted ? "Whitelisted" : "Clean";
                 clean.push_back(nlohmann::json{
                     {"name", rel},
                     {"size", core::Utils::format_size(sz)},
-                    {"status", is_whitelisted ? "Whitelisted" : "Clean"},
+                    {"status", status_str},
                     {"note", note}
                 });
             }
@@ -3505,7 +3507,7 @@ int cmd_portal(int argc, char* argv[]) {
                     std::string filter_str = j.value("filter", "protected");
                     uint64_t wttl = j.value("ttl", 7200ULL);
                     // Strictly cap session/OTP TTL between 60s and 24 hours (86400s)
-                    wttl = std::clamp(wttl, 60ULL, 86400ULL);
+                    wttl = std::clamp<uint64_t>(wttl, 60ULL, 86400ULL);
 
                     core::SuiteID suite = core::suite_from_string(suite_str);
                     core::FilterMode fmode = core::filter_mode_from_string(filter_str);
