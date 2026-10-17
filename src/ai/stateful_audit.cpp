@@ -97,7 +97,7 @@ void StatefulAuditIndex::init_sqlite() {
     // Open SQLite 3 Database
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
 #if defined(_WIN32)
-    int rc = sqlite3_open_v2(index_file_.u8string().c_str(), &db_, flags, nullptr);
+    int rc = sqlite3_open_v2(reinterpret_cast<const char*>(index_file_.u8string().c_str()), &db_, flags, nullptr);
 #else
     int rc = sqlite3_open_v2(index_file_.c_str(), &db_, flags, nullptr);
 #endif

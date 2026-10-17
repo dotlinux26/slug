@@ -191,7 +191,7 @@ WorkspaceManifest ManifestBuilder::build(
                 manifest.skipped.push_back({proto_path, decision.reason, "RULE_OR_GITIGNORE_BLOCKED"});
                 continue;
             }
-            if (!decision.matched_rule_id.empty() && decision.matched_rule_id != "gitignore") {
+            if (!decision.rule_id.empty() && decision.rule_id != "gitignore") {
                 is_explicitly_allowed_by_rule = true;
             }
         }

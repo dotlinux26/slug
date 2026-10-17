@@ -1,7 +1,7 @@
 CXX ?= g++
 CC ?= gcc
-CXXFLAGS ?= -std=c++20 -O2 -Wall -Wextra -pthread -I. -I./third_party -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512
-CFLAGS ?= -O2 -I. -I./third_party -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512
+CXXFLAGS ?= -std=c++20 -O2 -Wall -Wextra -pthread -I. -I./third_party -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DSQLITE_DQS=0 -DSQLITE_THREADSAFE=1 -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_OMIT_DEPRECATED -DSQLITE_OMIT_PROGRESS_CALLBACK -DSQLITE_OMIT_SHARED_CACHE
+CFLAGS ?= -O2 -I. -I./third_party -DBLAKE3_NO_SSE2 -DBLAKE3_NO_SSE41 -DBLAKE3_NO_AVX2 -DBLAKE3_NO_AVX512 -DSQLITE_DQS=0 -DSQLITE_THREADSAFE=1 -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_OMIT_DEPRECATED -DSQLITE_OMIT_PROGRESS_CALLBACK -DSQLITE_OMIT_SHARED_CACHE
 LDFLAGS ?= -pthread -lssl -lcrypto -ldl
 
 STATIC_FLAGS = -static -static-libgcc -static-libstdc++
@@ -10,7 +10,8 @@ STATIC_LDFLAGS = -pthread -lssl -lcrypto -lzstd -lz -ldl
 TARGET = bin/slug
 TARGET_STATIC = bin/slug-static
 
-SRC_C = third_party/blake3/blake3.c \
+SRC_C = third_party/sqlite/sqlite3.c \
+        third_party/blake3/blake3.c \
         third_party/blake3/blake3_portable.c \
         third_party/blake3/blake3_dispatch.c
 
