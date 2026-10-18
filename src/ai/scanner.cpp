@@ -8,6 +8,9 @@
 #include <map>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
+#include <chrono>
+#include <atomic>
 
 #if defined(_WIN32)
 #ifndef popen
@@ -22,6 +25,20 @@ static const char* NULL_DEV = " 2>/dev/null";
 #endif
 
 namespace slug::ai {
+
+static std::atomic<bool> g_scan_cancelled{false};
+
+void AiScanner::request_cancellation() {
+    g_scan_cancelled.store(true);
+}
+
+void AiScanner::reset_cancellation() {
+    g_scan_cancelled.store(false);
+}
+
+bool AiScanner::is_cancelled() {
+    return g_scan_cancelled.load();
+}
 
 using json = nlohmann::json;
 
@@ -155,6 +172,7 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
     if ((fname == ".env" || fname.rfind(".env.", 0) == 0 || std::filesystem::path(file_path).extension().string() == ".env") &&
         fname != ".env.example" && fname != ".env.sample" && fname != ".env.template") {
         finding.has_secret = true;
+        finding.status = ScanStatus::SECRET_FOUND;
         finding.line_number = 1;
         finding.reason = "Environment Secret File (" + fname + ")";
         finding.matched_snippet = content.empty() ? fname : std::string(content.substr(0, std::min(content.size(), (size_t)80)));
@@ -185,6 +203,7 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
             std::smatch match;
             if (std::regex_search(line, match, rx)) {
                 finding.has_secret = true;
+                finding.status = ScanStatus::SECRET_FOUND;
                 finding.line_number = static_cast<int>(i + 1);
                 finding.reason = desc;
                 finding.matched_snippet = core::Utils::trim(line);
@@ -214,16 +233,24 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
                 while (!val.empty() && (val.front() == '"' || val.front() == '\'')) val = val.substr(1);
                 while (!val.empty() && (val.back() == '"' || val.back() == '\'' || val.back() == ';')) val.pop_back();
 
-                // Only evaluate ASCII token candidates (skip natural language / multi-byte UTF-8)
+                // Skip template expressions, f-strings, function calls, spaces
                 bool is_token_candidate = true;
+                if (val.find('{') != std::string::npos || val.find('}') != std::string::npos ||
+                    val.find('(') != std::string::npos || val.find(')') != std::string::npos ||
+                    val.find(' ') != std::string::npos || val.rfind("f\"", 0) == 0 || val.rfind("f'", 0) == 0) {
+                    is_token_candidate = false;
+                }
+
+                // Only evaluate ASCII token candidates (skip natural language / multi-byte UTF-8)
                 for (char c : val) {
                     if (static_cast<unsigned char>(c) < 32 || static_cast<unsigned char>(c) > 126) {
                         is_token_candidate = false;
                         break;
                     }
                 }
-                if (is_token_candidate && val.size() >= 20 && calculate_entropy(val) >= 4.0) {
+                if (is_token_candidate && val.size() >= 24 && calculate_entropy(val) >= 4.8) {
                     finding.has_secret = true;
+                    finding.status = ScanStatus::SECRET_FOUND;
                     finding.line_number = static_cast<int>(i + 1);
                     finding.detector = "Shannon Entropy";
                     finding.reason = "High-entropy Secret Token";
@@ -243,8 +270,13 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
                     clean.pop_back();
                 }
 
-                // Check that word is ASCII (skip non-ASCII words)
                 bool is_ascii_word = true;
+                if (clean.find('{') != std::string::npos || clean.find('}') != std::string::npos ||
+                    clean.find('(') != std::string::npos || clean.find(')') != std::string::npos ||
+                    clean.rfind("f\"", 0) == 0 || clean.rfind("f'", 0) == 0) {
+                    is_ascii_word = false;
+                }
+
                 for (char c : clean) {
                     if (static_cast<unsigned char>(c) < 32 || static_cast<unsigned char>(c) > 126) {
                         is_ascii_word = false;
@@ -252,9 +284,10 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
                     }
                 }
 
-                if (is_ascii_word && clean.size() >= 32 && calculate_entropy(clean) >= 4.5) {
+                if (is_ascii_word && clean.size() >= 32 && calculate_entropy(clean) >= 5.0) {
                     // High entropy secret detected!
                     finding.has_secret = true;
+                    finding.status = ScanStatus::SECRET_FOUND;
                     finding.line_number = static_cast<int>(i + 1);
                     finding.detector = "Shannon Entropy";
                     finding.reason = "High-entropy Secret Token";
@@ -267,15 +300,54 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
 
     return finding;
 }
+struct HttpResponse {
+    int status_code{0};
+    std::string body;
+    std::string error_message;
+    bool is_timeout{false};
+    int retry_after_sec{0};
+};
 
+static int extract_retry_delay(const std::string& body, int default_delay) {
+    int delay = default_delay;
+    try {
+        auto j = json::parse(body);
+        if (j.contains("error")) {
+            auto& err = j["error"];
+            if (err.contains("details") && err["details"].is_array()) {
+                for (const auto& item : err["details"]) {
+                    if (item.contains("retryDelay") && item["retryDelay"].is_string()) {
+                        std::string rd = item["retryDelay"].get<std::string>();
+                        double sec = std::atof(rd.c_str());
+                        if (sec > 0) delay = std::max(delay, static_cast<int>(std::ceil(sec)));
+                    }
+                }
+            }
+            if (err.contains("message") && err["message"].is_string()) {
+                std::string msg = err["message"].get<std::string>();
+                static const std::regex re_retry(R"(retry in ([0-9]+(?:\.[0-9]+)?)s)", std::regex::icase);
+                std::smatch m;
+                if (std::regex_search(msg, m, re_retry)) {
+                    double sec = std::atof(m[1].str().c_str());
+                    if (sec > 0) delay = std::max(delay, static_cast<int>(std::ceil(sec)));
+                }
+            }
+        }
+    } catch (...) {}
+    return delay;
+}
 
-static std::string execute_http_post(const std::string& url,
-                                     const std::filesystem::path& payload_file,
-                                     const std::vector<std::pair<std::string, std::string>>& headers,
-                                     int timeout_sec) {
-    std::string response;
+static HttpResponse execute_http_post_single(const std::string& url,
+                                             const std::filesystem::path& payload_file,
+                                             const std::vector<std::pair<std::string, std::string>>& headers,
+                                             int timeout_sec) {
+    HttpResponse resp;
+    if (AiScanner::is_cancelled()) {
+        resp.status_code = -1;
+        resp.error_message = "Cancelled by user";
+        return resp;
+    }
 
-    // 1. Primary Attempt: curl.exe (standard on Windows 10 build 1803+, Windows 11, Linux, macOS)
     std::string headers_cmd = "";
     bool has_content_type = false;
     for (const auto& [name, val] : headers) {
@@ -287,76 +359,113 @@ static std::string execute_http_post(const std::string& url,
     if (!has_content_type) {
         headers_cmd = "-H \"Content-Type: application/json\" " + headers_cmd;
     }
-    std::string curl_cmd = "curl -s -m " + std::to_string(timeout_sec) + " -X POST \"" + url + "\" "
-                         + headers_cmd
-                         + "-d @\"" + payload_file.generic_string() + "\"" + NULL_DEV;
 
+    auto tmp_hdr = std::filesystem::temp_directory_path() / ("slug_hdr_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".txt");
+
+    std::string curl_cmd = "curl -s -S -m " + std::to_string(timeout_sec) + " -X POST \"" + url + "\" "
+                         + headers_cmd
+                         + "-D \"" + tmp_hdr.generic_string() + "\" "
+                         + "-d @\"" + payload_file.generic_string() + "\" "
+                         + "-w \"\\n__SLUG_STATUS__:%{http_code}\"" + NULL_DEV;
+
+    std::string raw_out;
     FILE* fp = popen(curl_cmd.c_str(), "r");
     if (fp) {
-        char buf[1024];
-        while (fgets(buf, sizeof(buf), fp)) response += buf;
+        char buf[2048];
+        while (fgets(buf, sizeof(buf), fp)) {
+            raw_out += buf;
+            if (AiScanner::is_cancelled()) break;
+        }
         pclose(fp);
     }
 
-#if defined(_WIN32)
-    // 2. Windows Fallback via PowerShell + HttpWebRequest
-    if (response.empty()) {
-        std::string win_path = payload_file.string();
-        for (auto& c : win_path) { if (c == '/') c = '\\'; }
+    size_t status_pos = raw_out.rfind("\n__SLUG_STATUS__:");
+    if (status_pos != std::string::npos) {
+        std::string code_str = raw_out.substr(status_pos + 17);
+        while (!code_str.empty() && (code_str.back() == '\r' || code_str.back() == '\n' || code_str.back() == ' ')) code_str.pop_back();
+        try {
+            resp.status_code = std::stoi(code_str);
+        } catch (...) {
+            resp.status_code = 0;
+        }
+        resp.body = raw_out.substr(0, status_pos);
+    } else {
+        resp.body = raw_out;
+        resp.status_code = 0;
+    }
 
-        int timeout_ms = timeout_sec * 1000;
-        std::string ps_cmd = "powershell -NoProfile -ExecutionPolicy Bypass -Command \""
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-            "[System.Net.ServicePointManager]::SecurityProtocol = 3072 -bor 768 -bor 192; "
-            "$req = [System.Net.HttpWebRequest]::Create('" + url + "'); "
-            "$req.Method = 'POST'; "
-            "$req.ContentType = 'application/json; charset=utf-8'; "
-            "$req.Timeout = " + std::to_string(timeout_ms) + "; ";
-        for (const auto& [name, val] : headers) {
-            if (!name.empty() && name != "Content-Type" && name != "content-type") {
-                ps_cmd += "$req.Headers.Add('" + name + "', '" + val + "'); ";
+    if (resp.status_code == 0) {
+        resp.is_timeout = true;
+        resp.error_message = "Không nhận được phản hồi kết nối (Timeout hoặc lỗi mạng)";
+    }
+
+    if (std::filesystem::exists(tmp_hdr)) {
+        auto hdr_content = platform::PathUtils::read_text_file(tmp_hdr);
+        if (hdr_content) {
+            auto h_lines = core::Utils::split(*hdr_content, '\n');
+            for (const auto& hl : h_lines) {
+                if (hl.rfind("Retry-After:", 0) == 0 || hl.rfind("retry-after:", 0) == 0) {
+                    std::string val = hl.substr(12);
+                    while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.erase(val.begin());
+                    while (!val.empty() && (val.back() == '\r' || val.back() == '\n' || val.back() == ' ')) val.pop_back();
+                    try {
+                        resp.retry_after_sec = std::stoi(val);
+                    } catch (...) {}
+                }
             }
         }
-        ps_cmd += "$data = [System.IO.File]::ReadAllBytes('" + win_path + "'); "
-                  "$req.ContentLength = $data.Length; "
-                  "try { "
-                  "$st = $req.GetRequestStream(); "
-                  "$st.Write($data, 0, $data.Length); "
-                  "$st.Close(); "
-                  "$resp = $req.GetResponse(); "
-                  "$sr = New-Object System.IO.StreamReader($resp.GetResponseStream(), [System.Text.Encoding]::UTF8); "
-                  "Write-Output $sr.ReadToEnd(); "
-                  "$sr.Close(); $resp.Close(); "
-                  "} catch [System.Net.WebException] { "
-                  "if ($_.Exception.Response) { "
-                  "$sr = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream(), [System.Text.Encoding]::UTF8); "
-                  "Write-Output $sr.ReadToEnd(); "
-                  "$sr.Close(); $_.Exception.Response.Close(); "
-                  "} "
-                  "} catch { }\"" + NULL_DEV;
-
-        FILE* ps_fp = popen(ps_cmd.c_str(), "r");
-        if (ps_fp) {
-            char buf[1024];
-            while (fgets(buf, sizeof(buf), ps_fp)) response += buf;
-            pclose(ps_fp);
-        }
+        std::error_code ec;
+        std::filesystem::remove(tmp_hdr, ec);
     }
-#endif
 
-    return response;
+    if (!resp.body.empty()) {
+        resp.retry_after_sec = extract_retry_delay(resp.body, resp.retry_after_sec);
+    }
+
+    return resp;
 }
 
-static std::string execute_http_post(const std::string& url,
-                                     const std::filesystem::path& payload_file,
-                                     const std::string& header_name,
-                                     const std::string& header_val,
-                                     int timeout_sec) {
-    std::vector<std::pair<std::string, std::string>> hdrs;
-    if (!header_name.empty() && !header_val.empty()) {
-        hdrs.push_back({header_name, header_val});
+static HttpResponse execute_http_post_with_retry(
+    const std::string& url,
+    const std::filesystem::path& payload_file,
+    const std::vector<std::pair<std::string, std::string>>& headers,
+    int timeout_sec,
+    int max_retries = 2) {
+    
+    HttpResponse resp;
+    for (int attempt = 0; attempt <= max_retries; ++attempt) {
+        if (AiScanner::is_cancelled()) {
+            resp.status_code = -1;
+            resp.error_message = "Cancelled by user";
+            return resp;
+        }
+        resp = execute_http_post_single(url, payload_file, headers, timeout_sec);
+        if (AiScanner::is_cancelled()) {
+            resp.status_code = -1;
+            resp.error_message = "Cancelled by user";
+            return resp;
+        }
+
+        bool is_retryable = (resp.status_code == 429 || resp.status_code == 503 || resp.status_code == 504 ||
+                             resp.status_code == 502 || resp.status_code == 500 || (resp.status_code == 0 && resp.is_timeout));
+
+        if (!is_retryable || attempt == max_retries) {
+            break;
+        }
+
+        int wait_sec = (resp.retry_after_sec > 0) ? resp.retry_after_sec : ((1 << attempt) * 2);
+        wait_sec = std::clamp(wait_sec, 1, 10);
+
+        for (int step = 0; step < wait_sec * 10; ++step) {
+            if (AiScanner::is_cancelled()) {
+                resp.status_code = -1;
+                resp.error_message = "Cancelled by user";
+                return resp;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
     }
-    return execute_http_post(url, payload_file, hdrs, timeout_sec);
+    return resp;
 }
 
 // Universal extractor: handles Gemini, OpenAI, Claude, DeepSeek, Ollama, and arbitrary custom payloads
@@ -394,17 +503,145 @@ static std::optional<ScanFinding> try_extract_finding(const json& j) {
     return std::nullopt;
 }
 
+static ScanFinding classify_ai_result(
+    const ScanFinding& h_finding,
+    const HttpResponse& resp,
+    const std::string& model,
+    const std::string& prompt,
+    const std::string& provider_name) {
+    
+    ScanFinding finding = h_finding;
+    finding.detector = "AI Guard (" + model + ")";
+    finding.model = model;
+    finding.ai_input = prompt;
+    finding.ai_output = resp.body.empty() ? ("(Không có phản hồi từ " + provider_name + ")") : resp.body;
+    finding.http_status = resp.status_code;
+    finding.retry_after_sec = resp.retry_after_sec;
+
+    // RULE 1: If cancellation requested
+    if (resp.status_code == -1 || AiScanner::is_cancelled()) {
+        finding.status = ScanStatus::CANCELLED;
+        finding.reason = "⏹️ Đã dừng quét bởi người dùng";
+        return finding;
+    }
+
+    // RULE 2: If Heuristic already detected a secret, SECRET_FOUND is ALWAYS preserved!
+    if (h_finding.has_secret) {
+        finding.has_secret = true;
+        finding.status = ScanStatus::SECRET_FOUND;
+        if (resp.status_code == 429) {
+            finding.reason = h_finding.reason + " [Lưu ý: " + provider_name + " Rate Limit 429]";
+        } else if (resp.status_code >= 500) {
+            finding.reason = h_finding.reason + " [Lưu ý: " + provider_name + " lỗi server " + std::to_string(resp.status_code) + "]";
+        } else if (resp.status_code == 0 || resp.is_timeout) {
+            finding.reason = h_finding.reason + " [Lưu ý: " + provider_name + " Timeout]";
+        }
+        return finding;
+    }
+
+    // Heuristic was clean (has_secret == false). Now evaluate AI response:
+    if (resp.status_code == 429) {
+        finding.status = ScanStatus::RATE_LIMITED;
+        finding.has_secret = false;
+        std::string delay_str = (resp.retry_after_sec > 0) ? (" (Cần chờ " + std::to_string(resp.retry_after_sec) + "s)") : "";
+        finding.reason = "⚠️ " + provider_name + " Rate Limit (429 - Hết hạn ngạch)" + delay_str;
+        return finding;
+    }
+    if (resp.status_code == 503 || resp.status_code == 529) {
+        finding.status = ScanStatus::API_ERROR;
+        finding.has_secret = false;
+        finding.reason = "⚠️ " + provider_name + " Quá Tải (" + std::to_string(resp.status_code) + " - Máy chủ tạm thời bận)";
+        return finding;
+    }
+    if (resp.status_code == 401 || resp.status_code == 403) {
+        finding.status = ScanStatus::API_ERROR;
+        finding.has_secret = false;
+        finding.reason = "❌ " + provider_name + " Lỗi Xác Thực (" + std::to_string(resp.status_code) + " - API Key sai hoặc hết hạn)";
+        return finding;
+    }
+    if (resp.status_code >= 400 && resp.status_code < 500) {
+        finding.status = ScanStatus::API_ERROR;
+        finding.has_secret = false;
+        finding.reason = "❌ " + provider_name + " Lỗi Yêu Cầu (" + std::to_string(resp.status_code) + ")";
+        return finding;
+    }
+    if (resp.status_code >= 500) {
+        finding.status = ScanStatus::API_ERROR;
+        finding.has_secret = false;
+        finding.reason = "❌ " + provider_name + " Lỗi Máy Chủ (" + std::to_string(resp.status_code) + ")";
+        return finding;
+    }
+    if (resp.status_code == 0 || resp.is_timeout || resp.body.empty()) {
+        finding.status = ScanStatus::TIMEOUT;
+        finding.has_secret = false;
+        finding.reason = "⏱️ Timeout (Quá thời gian chờ phản hồi mạng từ " + provider_name + ")";
+        return finding;
+    }
+
+    // Parse JSON
+    try {
+        auto j = json::parse(resp.body);
+        if (j.contains("error")) {
+            auto& err = j["error"];
+            std::string err_msg = err.is_string() ? err.get<std::string>() : err.value("message", "Lỗi API");
+            int err_code = err.is_object() ? err.value("code", 0) : 0;
+            std::string err_status = err.is_object() ? err.value("status", "") : "";
+            
+            if (err_code == 429 || err_status == "RESOURCE_EXHAUSTED") {
+                finding.status = ScanStatus::RATE_LIMITED;
+                finding.reason = "⚠️ " + provider_name + " Rate Limit (429 - Hết hạn ngạch)";
+            } else if (err_code == 503 || err_status == "UNAVAILABLE") {
+                finding.status = ScanStatus::API_ERROR;
+                finding.reason = "⚠️ " + provider_name + " Quá Tải (503 - Máy chủ bận)";
+            } else {
+                finding.status = ScanStatus::API_ERROR;
+                finding.reason = "❌ " + provider_name + " Lỗi: " + err_msg;
+            }
+            finding.has_secret = false;
+            return finding;
+        }
+
+        auto f_opt = try_extract_finding(j);
+        if (f_opt.has_value()) {
+            finding.has_secret = f_opt->has_secret;
+            finding.line_number = f_opt->line_number;
+            finding.matched_snippet = f_opt->matched_snippet;
+            if (f_opt->has_secret) {
+                finding.status = ScanStatus::SECRET_FOUND;
+                finding.reason = provider_name + " AI Audit: " + f_opt->reason;
+            } else {
+                finding.status = ScanStatus::CLEAN;
+                finding.reason = "Clean (" + provider_name + ": Không phát hiện rò rỉ mã bí mật)";
+            }
+            return finding;
+        }
+    } catch (...) {}
+
+    finding.status = ScanStatus::HEURISTIC_ONLY;
+    finding.has_secret = false;
+    finding.reason = "Heuristic Clean (" + provider_name + " phản hồi nhưng định dạng không đúng chuẩn)";
+    return finding;
+}
+
 ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_view content) const {
     auto h_finding = scan_heuristic(file_path, content, false, false);
-    if (h_finding.has_secret) return h_finding;
-    if (!ollama_alive_) return h_finding;
+    if (!ollama_alive_) {
+        if (h_finding.has_secret) {
+            h_finding.status = ScanStatus::SECRET_FOUND;
+            return h_finding;
+        }
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.detector = "AI Guard (Ollama)";
+        f.model = model_.empty() ? "qwen2.5-coder:7b" : model_;
+        f.reason = "⚠️ Ollama không khả dụng (Máy chủ chưa khởi động)";
+        return f;
+    }
 
     auto lines = core::Utils::split(content, '\n');
     std::string snippet;
     size_t scan_limit = std::min(lines.size(), (size_t)80);
-    for (size_t i = 0; i < scan_limit; ++i) {
-        snippet += lines[i] + "\n";
-    }
+    for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
     std::string model = model_.empty() ? "qwen2.5-coder:7b" : model_;
     std::string prompt = "Inspect this code from '" + file_path + "'. Does it contain leaked secrets or credentials? Respond ONLY with JSON: {\"has_secret\": true/false, \"reason\": \"...\", \"line\": 0}.\n\n" + snippet;
@@ -417,45 +654,19 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
     std::string url = endpoint_ + "/api/generate";
     if (!is_safe_shell_param(url)) return h_finding;
 
-    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ollama_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ollama_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string response = execute_http_post(url, tmp_payload, "", "", 3);
+    std::vector<std::pair<std::string, std::string>> hdrs = headers_;
+    auto resp = execute_http_post_with_retry(url, tmp_payload, hdrs, 5, 1);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
-    if (response.empty()) {
-        ollama_alive_ = false; // Fast-fail remaining files if Ollama server is not running
-        h_finding.detector = "AI Guard (Ollama)";
-        h_finding.model = model;
-        h_finding.ai_input = prompt;
-        h_finding.ai_output = "(Không kết nối được tới máy chủ Ollama)";
-        return h_finding;
+    if (resp.status_code == 0 || resp.is_timeout) {
+        ollama_alive_ = false;
     }
-
-    try {
-        auto j = json::parse(response);
-        auto f_opt = try_extract_finding(j);
-        if (f_opt.has_value()) {
-            f_opt->detector = "AI Guard (" + model + ")";
-            f_opt->model = model;
-            f_opt->ai_input = prompt;
-            f_opt->ai_output = response;
-            if (f_opt->has_secret) {
-                f_opt->reason = "Ollama Local Audit: " + f_opt->reason;
-            } else {
-                f_opt->reason = "Clean (Ollama: Không phát hiện rò rỉ mã bí mật)";
-            }
-            return *f_opt;
-        }
-    } catch (...) {}
-
-    h_finding.detector = "AI Guard (" + model + ")";
-    h_finding.model = model;
-    h_finding.ai_input = prompt;
-    h_finding.ai_output = response;
-    return h_finding;
+    return classify_ai_result(h_finding, resp, model, prompt, "Ollama");
 }
 
 ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_view content) const {
@@ -465,19 +676,24 @@ ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_vie
         if (!k) k = std::getenv("SLUG_AI_API_KEY");
         if (k) api_key = k;
     }
-    if (api_key.empty()) {
-        return scan_heuristic(file_path, content, false, false);
-    }
 
     auto h_finding = scan_heuristic(file_path, content, false, false);
-    if (h_finding.has_secret) return h_finding;
+    if (api_key.empty()) {
+        if (h_finding.has_secret) {
+            h_finding.status = ScanStatus::SECRET_FOUND;
+            return h_finding;
+        }
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.detector = "AI Guard (Google Gemini)";
+        f.reason = "❌ Thiếu API Key cho Google Gemini (Chưa cấu hình API Key)";
+        return f;
+    }
 
     auto lines = core::Utils::split(content, '\n');
     std::string snippet;
     size_t scan_limit = std::min(lines.size(), (size_t)100);
-    for (size_t i = 0; i < scan_limit; ++i) {
-        snippet += lines[i] + "\n";
-    }
+    for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
     std::string model = model_.empty() ? "gemini-flash-latest" : model_;
     std::string endpoint = endpoint_;
@@ -508,38 +724,22 @@ ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_vie
         }
     });
 
-    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_gemini_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_gemini_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string response = execute_http_post(url, tmp_payload, "x-goog-api-key", api_key, 8);
+    std::vector<std::pair<std::string, std::string>> hdrs = {
+        {"x-goog-api-key", api_key}
+    };
+    for (const auto& [hk, hv] : headers_) {
+        if (hk != "x-goog-api-key") hdrs.push_back({hk, hv});
+    }
+
+    auto resp = execute_http_post_with_retry(url, tmp_payload, hdrs, 8, 2);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
-    if (!response.empty()) {
-        try {
-            auto resp_j = json::parse(response);
-            auto f_opt = try_extract_finding(resp_j);
-            if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard (" + model + ")";
-                f_opt->model = model;
-                f_opt->ai_input = prompt;
-                f_opt->ai_output = response;
-                if (f_opt->has_secret) {
-                    f_opt->reason = "Gemini AI Audit: " + f_opt->reason;
-                } else {
-                    f_opt->reason = "Clean (Gemini: Không phát hiện rò rỉ mã bí mật)";
-                }
-                return *f_opt;
-            }
-        } catch (...) {}
-    }
-
-    h_finding.detector = "AI Guard (" + model + ")";
-    h_finding.model = model;
-    h_finding.ai_input = prompt;
-    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Gemini API)" : response;
-    return h_finding;
+    return classify_ai_result(h_finding, resp, model, prompt, "Google Gemini");
 }
 
 ScanFinding AiScanner::scan_anthropic(const std::string& file_path, std::string_view content) const {
@@ -549,17 +749,24 @@ ScanFinding AiScanner::scan_anthropic(const std::string& file_path, std::string_
         if (!k) k = std::getenv("SLUG_AI_API_KEY");
         if (k) api_key = k;
     }
-    if (api_key.empty()) return scan_heuristic(file_path, content, false, false);
 
     auto h_finding = scan_heuristic(file_path, content, false, false);
-    if (h_finding.has_secret) return h_finding;
+    if (api_key.empty()) {
+        if (h_finding.has_secret) {
+            h_finding.status = ScanStatus::SECRET_FOUND;
+            return h_finding;
+        }
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.detector = "AI Guard (Anthropic Claude)";
+        f.reason = "❌ Thiếu API Key cho Anthropic Claude";
+        return f;
+    }
 
     auto lines = core::Utils::split(content, '\n');
     std::string snippet;
     size_t scan_limit = std::min(lines.size(), (size_t)100);
-    for (size_t i = 0; i < scan_limit; ++i) {
-        snippet += lines[i] + "\n";
-    }
+    for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
     std::string model = model_.empty() ? "claude-3-5-haiku-20241022" : model_;
     std::string endpoint = endpoint_.empty() ? "https://api.anthropic.com/v1/messages" : endpoint_;
@@ -573,58 +780,35 @@ ScanFinding AiScanner::scan_anthropic(const std::string& file_path, std::string_
         json{{"role", "user"}, {"content", prompt}}
     });
 
-    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_anthropic_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_anthropic_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
     std::vector<std::pair<std::string, std::string>> hdrs = {
         {"x-api-key", api_key},
         {"anthropic-version", "2023-06-01"}
     };
-    std::string response = execute_http_post(endpoint, tmp_payload, hdrs, 10);
+    for (const auto& [hk, hv] : headers_) {
+        if (hk != "x-api-key" && hk != "anthropic-version") hdrs.push_back({hk, hv});
+    }
+
+    auto resp = execute_http_post_with_retry(endpoint, tmp_payload, hdrs, 10, 2);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
-    if (!response.empty()) {
-        try {
-            auto resp_j = json::parse(response);
-            auto f_opt = try_extract_finding(resp_j);
-            if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard (" + model + ")";
-                f_opt->model = model;
-                f_opt->ai_input = prompt;
-                f_opt->ai_output = response;
-                if (f_opt->has_secret) {
-                    f_opt->reason = "Claude AI Audit: " + f_opt->reason;
-                } else {
-                    f_opt->reason = "Clean (Claude: Không phát hiện rò rỉ mã bí mật)";
-                }
-                return *f_opt;
-            }
-        } catch (...) {}
-    }
-
-    h_finding.detector = "AI Guard (" + model + ")";
-    h_finding.model = model;
-    h_finding.ai_input = prompt;
-    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Claude API)" : response;
-    return h_finding;
+    return classify_ai_result(h_finding, resp, model, prompt, "Anthropic Claude");
 }
 
 ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_view content) const {
     auto h_finding = scan_heuristic(file_path, content, false, false);
-    if (h_finding.has_secret) return h_finding;
 
     auto lines = core::Utils::split(content, '\n');
     std::string snippet;
     size_t scan_limit = std::min(lines.size(), (size_t)100);
-    for (size_t i = 0; i < scan_limit; ++i) {
-        snippet += lines[i] + "\n";
-    }
+    for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
     std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + snippet;
 
-    // Render body from template
     std::string raw_body = body_template_;
     json prompt_json = prompt;
     std::string prompt_escaped = prompt_json.dump();
@@ -650,7 +834,7 @@ ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_vie
         replace_all(hv, "{{API_KEY}}", api_key_);
     }
 
-    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_custom_ai_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_custom_ai_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, raw_body);
 
     std::string url = endpoint_;
@@ -666,36 +850,13 @@ ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_vie
         }
     }
 
-    std::string response = execute_http_post(url, tmp_payload, hdrs, 10);
+    auto resp = execute_http_post_with_retry(url, tmp_payload, hdrs, 10, 2);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
     std::string custom_model = model_.empty() ? "Custom LLM" : model_;
-    if (!response.empty()) {
-        try {
-            auto resp_j = json::parse(response);
-            auto f_opt = try_extract_finding(resp_j);
-            if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard (" + custom_model + ")";
-                f_opt->model = custom_model;
-                f_opt->ai_input = raw_body;
-                f_opt->ai_output = response;
-                if (f_opt->has_secret) {
-                    f_opt->reason = "Custom AI Audit: " + f_opt->reason;
-                } else {
-                    f_opt->reason = "Clean (Custom AI: Không phát hiện rò rỉ mã bí mật)";
-                }
-                return *f_opt;
-            }
-        } catch (...) {}
-    }
-
-    h_finding.detector = "AI Guard (" + custom_model + ")";
-    h_finding.model = custom_model;
-    h_finding.ai_input = raw_body;
-    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Custom Endpoint)" : response;
-    return h_finding;
+    return classify_ai_result(h_finding, resp, custom_model, raw_body, "Custom AI");
 }
 
 ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view content) const {
@@ -708,41 +869,47 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
         if (api_key_env) api_key = api_key_env;
     }
 
+    auto h_finding = scan_heuristic(file_path, content, false, false);
     if (api_key.empty()) {
-        return scan_heuristic(file_path, content, false, false);
+        if (h_finding.has_secret) {
+            h_finding.status = ScanStatus::SECRET_FOUND;
+            return h_finding;
+        }
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.detector = "AI Guard (Cloud API)";
+        f.reason = "❌ Thiếu API Key cho Cloud LLM (OpenAI / Groq / OpenRouter)";
+        return f;
     }
 
     std::string endpoint = endpoint_;
     std::string model = model_;
+    std::string prov_name = "Cloud AI";
 
     if (endpoint == "http://127.0.0.1:11434" || endpoint.empty()) {
         if (api_key.rfind("gsk_", 0) == 0 || std::getenv("GROQ_API_KEY")) {
             endpoint = "https://api.groq.com/openai/v1/chat/completions";
             model = "llama-3.3-70b-versatile";
+            prov_name = "Groq";
         } else if (api_key.rfind("sk-or-", 0) == 0 || std::getenv("OPENROUTER_API_KEY")) {
             endpoint = "https://openrouter.ai/api/v1/chat/completions";
             model = "meta-llama/llama-3.2-3b-instruct:free";
+            prov_name = "OpenRouter";
         } else {
             endpoint = "https://api.openai.com/v1/chat/completions";
             model = "gpt-4o-mini";
+            prov_name = "OpenAI";
         }
+    } else {
+        if (endpoint.find("groq") != std::string::npos) prov_name = "Groq";
+        else if (endpoint.find("openrouter") != std::string::npos) prov_name = "OpenRouter";
+        else if (endpoint.find("openai") != std::string::npos) prov_name = "OpenAI";
     }
-
-    const char* custom_endpoint = std::getenv("SLUG_AI_ENDPOINT");
-    if (custom_endpoint && *custom_endpoint) endpoint = custom_endpoint;
-    const char* custom_model = std::getenv("SLUG_AI_MODEL");
-    if (custom_model && *custom_model) model = custom_model;
-
-    // Fast heuristic first without entropy preemption
-    auto h_finding = scan_heuristic(file_path, content, false, false);
-    if (h_finding.has_secret) return h_finding;
 
     auto lines = core::Utils::split(content, '\n');
     std::string snippet;
     size_t scan_limit = std::min(lines.size(), (size_t)100);
-    for (size_t i = 0; i < scan_limit; ++i) {
-        snippet += lines[i] + "\n";
-    }
+    for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
     std::string prompt_text = "Analyze file: " + file_path + "\n\n" + snippet;
     json req_body;
@@ -761,58 +928,47 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
 
     if (!is_safe_shell_param(endpoint) || !is_safe_shell_param(api_key)) return h_finding;
 
-    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ai_req_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ai_req_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string response = execute_http_post(endpoint, tmp_payload, "Authorization", "Bearer " + api_key, 8);
+    std::vector<std::pair<std::string, std::string>> hdrs = {
+        {"Authorization", "Bearer " + api_key}
+    };
+    for (const auto& [hk, hv] : headers_) {
+        if (hk != "Authorization") hdrs.push_back({hk, hv});
+    }
+
+    auto resp = execute_http_post_with_retry(endpoint, tmp_payload, hdrs, 8, 2);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
-    if (!response.empty()) {
-        try {
-            auto resp_j = json::parse(response);
-            auto f_opt = try_extract_finding(resp_j);
-            if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard (" + model + ")";
-                f_opt->model = model;
-                f_opt->ai_input = prompt_text;
-                f_opt->ai_output = response;
-                if (f_opt->has_secret) {
-                    f_opt->reason = "Cloud AI Audit: " + f_opt->reason;
-                } else {
-                    f_opt->reason = "Clean (Cloud AI: Không phát hiện rò rỉ mã bí mật)";
-                }
-                return *f_opt;
-            }
-        } catch (...) {}
-    }
-
-    h_finding.detector = "AI Guard (" + model + ")";
-    h_finding.model = model;
-    h_finding.ai_input = prompt_text;
-    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Cloud Endpoint)" : response;
-    return h_finding;
+    return classify_ai_result(h_finding, resp, model, prompt_text, prov_name);
 }
 
 ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_view content, bool deep, core::FilterLevel level) const {
+    if (is_cancelled()) {
+        ScanFinding cancelled;
+        cancelled.status = ScanStatus::CANCELLED;
+        cancelled.reason = "⏹️ Đã dừng quét bởi người dùng";
+        return cancelled;
+    }
     if (level == core::FilterLevel::LEVEL_0_RAW || level == core::FilterLevel::LEVEL_1_RULES) {
-        // Mức 0 & Mức 1: Hoàn toàn không quét nội dung!
         ScanFinding safe;
+        safe.status = ScanStatus::CLEAN;
         safe.has_secret = false;
         return safe;
     }
     if (!is_scannable_file(file_path)) {
         ScanFinding safe;
+        safe.status = ScanStatus::CLEAN;
         safe.has_secret = false;
         return safe;
     }
     if (level == core::FilterLevel::LEVEL_2_REGEX) {
-        // Mức 2: Regex Secret Guard (Tắt tính entropy)
         return scan_heuristic(file_path, content, deep, false);
     }
     if (level == core::FilterLevel::LEVEL_3_ENTROPY) {
-        // Mức 3: Shannon Entropy trên file văn bản/mã nguồn
         return scan_heuristic(file_path, content, deep, true);
     }
     // Mức 4: AI Model Scan
@@ -864,23 +1020,24 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
         result.model = model_.empty() ? "ollama-model" : model_;
         result.request_payload = "{}";
 
-        auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+        auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
         platform::PathUtils::write_text_file_atomic(tmp_payload, "{}");
-        std::string resp = execute_http_post(url, tmp_payload, "", "", 4);
+        auto resp = execute_http_post_single(url, tmp_payload, {}, 4);
         std::error_code ec;
         std::filesystem::remove(tmp_payload, ec);
 
         auto end_t = std::chrono::steady_clock::now();
         result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
-        result.response_payload = resp;
+        result.response_payload = resp.body;
+        result.http_status = resp.status_code;
 
-        if (resp.empty()) {
+        if (resp.status_code == 0 || resp.body.empty()) {
             result.success = false;
             result.message = "Không thể kết nối tới máy chủ Ollama tại '" + endpoint_ + "'. Hãy đảm bảo Ollama đã được khởi động.";
             return result;
         }
         try {
-            auto j = json::parse(resp);
+            auto j = json::parse(resp.body);
             if (j.contains("models")) {
                 result.success = true;
                 result.message = "Kết nối Ollama thành công! Máy chủ đang hoạt động tại " + endpoint_ + ".";
@@ -933,23 +1090,44 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
             });
             result.request_payload = req_body.dump(2);
 
-            auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_gemini_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+            auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_gemini_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
             platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
-            std::string resp = execute_http_post(url, tmp_payload, "x-goog-api-key", api_key, 6);
+            std::vector<std::pair<std::string, std::string>> hdrs = {
+                {"x-goog-api-key", api_key}
+            };
+            auto resp = execute_http_post_single(url, tmp_payload, hdrs, 6);
             std::error_code ec;
             std::filesystem::remove(tmp_payload, ec);
 
             auto end_t = std::chrono::steady_clock::now();
             result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
-            result.response_payload = resp;
+            result.response_payload = resp.body;
+            result.http_status = resp.status_code;
+            result.retry_after_sec = resp.retry_after_sec;
 
-            if (resp.empty()) {
+            if (resp.status_code == 429) {
+                result.success = false;
+                result.message = "Google Gemini Rate Limit (429): Quá hạn mức gọi API" + (resp.retry_after_sec > 0 ? " (Vui lòng chờ " + std::to_string(resp.retry_after_sec) + "s)" : "") + ".";
+                return result;
+            }
+            if (resp.status_code == 503) {
+                result.success = false;
+                result.message = "Google Gemini Quá Tải (503): Máy chủ Google đang chịu tải cao, vui lòng thử lại sau.";
+                return result;
+            }
+            if (resp.status_code == 400 || resp.status_code == 403) {
+                result.success = false;
+                result.message = "Google Gemini Lỗi Xác Thực (" + std::to_string(resp.status_code) + "): Kiểm tra lại API Key hoặc quyền truy cập model.";
+                return result;
+            }
+            if (resp.status_code == 0 || resp.body.empty()) {
                 result.success = false;
                 result.message = "Không nhận được phản hồi từ Google Gemini API. Vui lòng kiểm tra kết nối mạng và URL endpoint.";
                 return result;
             }
+
             try {
-                auto j = json::parse(resp);
+                auto j = json::parse(resp.body);
                 if (j.contains("error")) {
                     std::string msg = j["error"].value("message", "Lỗi không xác định từ Gemini API");
                     result.success = false;
@@ -974,6 +1152,10 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
             
             std::string api_key = api_key_;
             if (api_key.empty()) {
+                const char* k = std::getenv("ANTHROPIC_API_KEY");
+                if (k) api_key = k;
+            }
+            if (api_key.empty()) {
                 result.success = false;
                 result.message = "Thiếu API Key cho Anthropic Claude. Vui lòng nhập khóa 'sk-ant-...'.";
                 result.endpoint = endpoint_;
@@ -993,27 +1175,34 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
             req_body["messages"] = json::array({json{{"role", "user"}, {"content", "hi"}}});
             result.request_payload = req_body.dump(2);
 
-            auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_claude_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+            auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_claude_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
             platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
             std::vector<std::pair<std::string, std::string>> hdrs = {
                 {"x-api-key", api_key},
                 {"anthropic-version", "2023-06-01"}
             };
-            std::string resp = execute_http_post(endpoint, tmp_payload, hdrs, 6);
+            auto resp = execute_http_post_single(endpoint, tmp_payload, hdrs, 6);
             std::error_code ec;
             std::filesystem::remove(tmp_payload, ec);
 
             auto end_t = std::chrono::steady_clock::now();
             result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
-            result.response_payload = resp;
+            result.response_payload = resp.body;
+            result.http_status = resp.status_code;
+            result.retry_after_sec = resp.retry_after_sec;
 
-            if (resp.empty()) {
+            if (resp.status_code == 429) {
+                result.success = false;
+                result.message = "Anthropic Claude Rate Limit (429): Quá hạn mức gọi API.";
+                return result;
+            }
+            if (resp.status_code == 0 || resp.body.empty()) {
                 result.success = false;
                 result.message = "Không nhận được phản hồi từ Anthropic Claude API.";
                 return result;
             }
             try {
-                auto j = json::parse(resp);
+                auto j = json::parse(resp.body);
                 if (j.contains("error")) {
                     std::string msg = j["error"].value("message", "Lỗi Claude API");
                     result.success = false;
@@ -1043,24 +1232,36 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
         req_body["max_tokens"] = 10;
         result.request_payload = req_body.dump(2);
 
-        auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_cloud_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+        auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_cloud_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
         platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
-        std::string auth_hdr = "Bearer " + api_key_;
-        std::string resp = execute_http_post(ep, tmp_payload, "Authorization", auth_hdr, 6);
+        std::vector<std::pair<std::string, std::string>> hdrs = {
+            {"Authorization", "Bearer " + api_key_}
+        };
+        for (const auto& [hk, hv] : headers_) {
+            if (hk != "Authorization") hdrs.push_back({hk, hv});
+        }
+        auto resp = execute_http_post_single(ep, tmp_payload, hdrs, 6);
         std::error_code ec;
         std::filesystem::remove(tmp_payload, ec);
 
         auto end_t = std::chrono::steady_clock::now();
         result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
-        result.response_payload = resp;
+        result.response_payload = resp.body;
+        result.http_status = resp.status_code;
+        result.retry_after_sec = resp.retry_after_sec;
 
-        if (resp.empty()) {
+        if (resp.status_code == 429) {
+            result.success = false;
+            result.message = "Dịch vụ AI báo Rate Limit (429): Quá hạn ngạch gọi API.";
+            return result;
+        }
+        if (resp.status_code == 0 || resp.body.empty()) {
             result.success = false;
             result.message = "Không nhận được phản hồi từ dịch vụ AI tại '" + ep + "'.";
             return result;
         }
         try {
-            auto j = json::parse(resp);
+            auto j = json::parse(resp.body);
             if (j.contains("error")) {
                 std::string msg = j["error"].value("message", "Lỗi API");
                 result.success = false;
@@ -1084,4 +1285,3 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
 }
 
 } // namespace slug::ai
-

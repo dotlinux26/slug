@@ -6,10 +6,35 @@
 #include <vector>
 #include <optional>
 #include <filesystem>
+#include <atomic>
 
 namespace slug::ai {
 
+enum class ScanStatus {
+    CLEAN,
+    SECRET_FOUND,
+    HEURISTIC_ONLY,
+    RATE_LIMITED,
+    API_ERROR,
+    TIMEOUT,
+    CANCELLED
+};
+
+inline std::string scan_status_to_string(ScanStatus status) {
+    switch (status) {
+        case ScanStatus::CLEAN: return "CLEAN";
+        case ScanStatus::SECRET_FOUND: return "SECRET_FOUND";
+        case ScanStatus::HEURISTIC_ONLY: return "HEURISTIC_ONLY";
+        case ScanStatus::RATE_LIMITED: return "RATE_LIMITED";
+        case ScanStatus::API_ERROR: return "API_ERROR";
+        case ScanStatus::TIMEOUT: return "TIMEOUT";
+        case ScanStatus::CANCELLED: return "CANCELLED";
+    }
+    return "UNKNOWN";
+}
+
 struct ScanFinding {
+    ScanStatus status{ScanStatus::CLEAN};
     bool has_secret{false};
     int line_number{0};
     std::string reason;
@@ -18,6 +43,8 @@ struct ScanFinding {
     std::string ai_input;
     std::string ai_output;
     std::string model;
+    int http_status{0};
+    int retry_after_sec{0};
 };
 
 struct ConnectionTestResult {
@@ -28,6 +55,8 @@ struct ConnectionTestResult {
     std::string request_payload;
     std::string response_payload;
     int64_t duration_ms{0};
+    int http_status{0};
+    int retry_after_sec{0};
 };
 
 class AiScanner {
@@ -66,6 +95,11 @@ public:
     const std::string& api_key() const { return api_key_; }
     const std::string& body_template() const { return body_template_; }
     const std::vector<std::pair<std::string, std::string>>& headers() const { return headers_; }
+
+    // Cancellation API
+    static void request_cancellation();
+    static void reset_cancellation();
+    static bool is_cancelled();
 
 private:
     ProviderType provider_;

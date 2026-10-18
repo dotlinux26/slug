@@ -1401,6 +1401,15 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             return;
         }
 
+        if (ai::AiScanner::is_cancelled()) {
+            json res;
+            res["status"] = "cancelled";
+            res["scan_status"] = "CANCELLED";
+            res["message"] = "Scan cancelled by user";
+            send_resp(200, "OK", "application/json", res.dump());
+            return;
+        }
+
         std::error_code ec_canon;
         fs::path abs_path = fs::weakly_canonical(control_server_.workspace_root() / rel_path, ec_canon);
         fs::path ws_canon = fs::weakly_canonical(control_server_.workspace_root(), ec_canon);
@@ -1444,19 +1453,26 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         idx_entry.ai_output = finding.ai_output;
 
         bool is_ai = (finding.detector.find("AI Guard") != std::string::npos);
-        if (finding.has_secret) {
+        if (finding.status == ai::ScanStatus::SECRET_FOUND) {
             idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
             idx_entry.line_number = finding.line_number;
             idx_entry.reason = finding.reason;
-        } else {
+            audit_idx.update_entry(idx_entry);
+        } else if (finding.status == ai::ScanStatus::CLEAN) {
             idx_entry.status = core::AuditStatus::CLEAN;
             idx_entry.reason = finding.reason.empty() ? "Clean" : finding.reason;
+            audit_idx.update_entry(idx_entry);
+        } else {
+            // HEURISTIC_ONLY, RATE_LIMITED, API_ERROR, TIMEOUT, CANCELLED
+            idx_entry.status = core::AuditStatus::UNKNOWN;
+            idx_entry.reason = finding.reason;
+            audit_idx.update_entry(idx_entry);
         }
-        audit_idx.update_entry(idx_entry);
 
         json res;
-        res["status"] = "ok";
+        res["status"] = (finding.status == ai::ScanStatus::CANCELLED) ? "cancelled" : "ok";
         res["file_path"] = rel_path;
+        res["scan_status"] = ai::scan_status_to_string(finding.status);
         res["has_secret"] = finding.has_secret;
         res["audit_status"] = core::audit_status_to_string(idx_entry.status);
         res["line_number"] = idx_entry.line_number;
@@ -1465,8 +1481,28 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         res["ai_input"] = idx_entry.ai_input;
         res["ai_output"] = idx_entry.ai_output;
         res["model"] = finding.model;
+        res["http_status"] = finding.http_status;
+        res["retry_after_sec"] = finding.retry_after_sec;
         res["duration_ms"] = dur_ms;
 
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/scan/cancel" && method == "POST") {
+        ai::AiScanner::request_cancellation();
+        json res;
+        res["status"] = "ok";
+        res["message"] = "Scan cancellation requested";
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/scan/reset" && method == "POST") {
+        ai::AiScanner::reset_cancellation();
+        json res;
+        res["status"] = "ok";
+        res["message"] = "Scan cancellation reset";
         send_resp(200, "OK", "application/json", res.dump());
         return;
     }
