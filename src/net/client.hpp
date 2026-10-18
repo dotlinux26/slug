@@ -53,11 +53,21 @@ public:
     std::optional<sync::WorkspaceManifest> fetch_manifest();
 
     using StreamProgressCallback = std::function<void(uint64_t bytes_done, uint64_t bytes_total, double instant_mbps)>;
+    using StreamHeaderCallback = std::function<bool(uint64_t file_size, const std::string& blake3_hash)>;
+    using StreamChunkCallback = std::function<bool(const uint8_t* data, size_t len, uint64_t offset)>;
 
     // Downloads a single specified file into local_dest
     bool get_file(const std::string& remote_path,
                   const std::filesystem::path& local_dest,
                   std::function<void(const std::string& msg)> log_callback = nullptr);
+
+    // High performance bounded-memory TCP binary streaming download directly to custom sink/callbacks
+    bool stream_pull_to_sink(const std::string& remote_path,
+                            StreamHeaderCallback on_header,
+                            StreamChunkCallback on_chunk,
+                            const std::vector<std::pair<uint64_t, uint64_t>>& ranges = {},
+                            StreamProgressCallback progress_cb = nullptr,
+                            std::atomic<bool>* cancel_flag = nullptr);
 
     // High performance bounded-memory TCP binary streaming download
     bool stream_pull_file(const std::string& remote_path,

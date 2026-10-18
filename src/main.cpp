@@ -5028,8 +5028,144 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            // High-performance streaming single file download directly to browser
+            // Uses dedicated SlugClient connection and bounded memory to eliminate RAM spikes and mutex contention!
+            if (path == "/download") {
+                std::string host;
+                uint16_t port = 0;
+                core::SuiteID suite = core::SuiteID::SUITE_1_CLASSICAL;
+                std::string ticket;
+                {
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (!g_portal.client || !g_portal.client->is_connected()) {
+                        send_portal_http(sock, 401, "Unauthorized", "text/plain", "Error: Not connected to remote workspace. Please connect via /portal first.");
+                        return;
+                    }
+                    host = g_portal.active_host;
+                    port = g_portal.active_port;
+                    suite = g_portal.active_suite;
+                    ticket = g_portal.client->session_ticket();
+                    if (ticket.empty() && !g_portal.active_id.empty()) {
+                        auto conn_opt = core::ConnectionManager::instance().get_connection(g_portal.active_id);
+                        if (conn_opt) ticket = conn_opt->ticket;
+                    }
+                }
 
-            // Tunnel file browsing, downloads, ZIP archives, uploads, and APIs through the encrypted PQC channel!
+                std::string rel_path = get_query_param(query, "path");
+                if (rel_path.empty()) {
+                    send_portal_http(sock, 400, "Bad Request", "text/plain", "Error: Missing file path parameter.");
+                    return;
+                }
+
+                auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
+                if (!dedicated_client->connect(host, port)) {
+                    send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Failed to connect dedicated streaming channel to " + host + ":" + std::to_string(port));
+                    return;
+                }
+                auto auth = dedicated_client->authenticate_ticket(ticket);
+                if (!auth.success) {
+                    send_portal_http(sock, 401, "Unauthorized", "text/plain", "Error: Dedicated stream authentication failed: " + auth.message);
+                    return;
+                }
+
+                std::string fname = std::filesystem::path(rel_path).filename().string();
+                for (char& c : fname) {
+                    if (c == '\r' || c == '\n' || c == '"' || c == '\\') c = '_';
+                }
+                if (fname.empty()) fname = "downloaded_file";
+
+                bool header_sent = false;
+                auto on_header = [&](uint64_t file_size, const std::string& /*blake3_hash*/) -> bool {
+                    std::string extra = "Content-Disposition: attachment; filename=\"" + fname + "\"\r\n";
+                    std::string resp_hdr = "HTTP/1.1 200 OK\r\n"
+                                           "Content-Type: application/octet-stream\r\n"
+                                           "Content-Length: " + std::to_string(file_size) + "\r\n"
+                                           "Connection: close\r\n" +
+                                           extra + "\r\n";
+                    header_sent = true;
+                    return sock.send_all(resp_hdr);
+                };
+
+                auto on_chunk = [&](const uint8_t* chunk_data, size_t chunk_len, uint64_t /*offset*/) -> bool {
+                    std::span<const uint8_t> sp(chunk_data, chunk_len);
+                    return sock.send_all(sp);
+                };
+
+                bool ok = dedicated_client->stream_pull_to_sink(rel_path, on_header, on_chunk);
+                if (!ok && !header_sent) {
+                    std::string err_msg = dedicated_client->get_last_error();
+                    send_portal_http(sock, 404, "Not Found", "text/plain", "Error downloading file: " + (err_msg.empty() ? "File not found or transfer aborted" : err_msg));
+                }
+                return;
+            }
+
+            // Folder ZIP download handler with memory-guard and dedicated connection
+            if (path == "/download-folder") {
+                std::string host;
+                uint16_t port = 0;
+                core::SuiteID suite = core::SuiteID::SUITE_1_CLASSICAL;
+                std::string ticket;
+                {
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (!g_portal.client || !g_portal.client->is_connected()) {
+                        send_portal_http(sock, 401, "Unauthorized", "text/plain", "Error: Not connected to remote workspace. Please connect via /portal first.");
+                        return;
+                    }
+                    host = g_portal.active_host;
+                    port = g_portal.active_port;
+                    suite = g_portal.active_suite;
+                    ticket = g_portal.client->session_ticket();
+                    if (ticket.empty() && !g_portal.active_id.empty()) {
+                        auto conn_opt = core::ConnectionManager::instance().get_connection(g_portal.active_id);
+                        if (conn_opt) ticket = conn_opt->ticket;
+                    }
+                }
+
+                std::string rel_dir = get_query_param(query, "dir");
+                auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
+                if (!dedicated_client->connect(host, port)) {
+                    send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Failed to connect to remote host.");
+                    return;
+                }
+                auto auth = dedicated_client->authenticate_ticket(ticket);
+                if (!auth.success) {
+                    send_portal_http(sock, 401, "Unauthorized", "text/plain", "Error: Authentication failed: " + auth.message);
+                    return;
+                }
+
+                auto m_opt = dedicated_client->fetch_manifest();
+                if (m_opt) {
+                    std::string norm_dir = rel_dir;
+                    std::replace(norm_dir.begin(), norm_dir.end(), '\\', '/');
+                    while (!norm_dir.empty() && norm_dir.front() == '/') norm_dir.erase(0, 1);
+                    while (!norm_dir.empty() && norm_dir.back() == '/') norm_dir.pop_back();
+                    std::string prefix = norm_dir.empty() ? "" : (norm_dir + "/");
+
+                    uint64_t total_raw_bytes = 0;
+                    for (const auto& f : m_opt->files) {
+                        if (prefix.empty() || f.relative_path.rfind(prefix, 0) == 0 || f.relative_path == norm_dir) {
+                            total_raw_bytes += f.size;
+                        }
+                    }
+
+                    if (total_raw_bytes > 150ULL * 1024 * 1024) {
+                        std::string msg = "Thư mục này có dung lượng lớn (" + core::Utils::format_size(total_raw_bytes) + 
+                                          ") vượt quá giới hạn nén trực tiếp 150 MB của trình duyệt. Vui lòng sử dụng tính năng '⚡ ĐỒNG BỘ DỮ LIỆU VỀ MÁY (slug pull)' ở thanh công cụ để đồng bộ toàn bộ tốc độ cao với phân luồng vi sai FastCDC và mã hóa Post-Quantum.";
+                        send_portal_http(sock, 413, "Payload Too Large", "text/plain; charset=utf-8", msg);
+                        return;
+                    }
+                }
+
+                auto resp = dedicated_client->tunnel_http(raw);
+                if (!resp.empty()) {
+                    sock.send_all(resp);
+                } else {
+                    send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Remote workspace failed to package ZIP.");
+                }
+                return;
+            }
+
+            // Tunnel file browsing, uploads, and APIs through the encrypted PQC channel!
             std::lock_guard<std::mutex> lk(g_portal.mtx);
             if (!g_portal.client || !g_portal.client->is_connected()) {
                 if (path == "/drop" || path == "/browse") {

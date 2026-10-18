@@ -377,13 +377,12 @@ std::optional<std::vector<uint8_t>> SlugClient::fetch_chunk(const std::string& r
     return core::Utils::from_base64(b64);
 }
 
-bool SlugClient::stream_pull_file(const std::string& remote_path,
-                                  const fs::path& local_dest,
-                                  uint64_t expected_size,
-                                  const std::string& expected_hash,
-                                  const std::vector<std::pair<uint64_t, uint64_t>>& ranges,
-                                  StreamProgressCallback progress_cb,
-                                  std::atomic<bool>* cancel_flag) {
+bool SlugClient::stream_pull_to_sink(const std::string& remote_path,
+                                    StreamHeaderCallback on_header,
+                                    StreamChunkCallback on_chunk,
+                                    const std::vector<std::pair<uint64_t, uint64_t>>& ranges,
+                                    StreamProgressCallback progress_cb,
+                                    std::atomic<bool>* cancel_flag) {
     if (!is_connected()) {
         last_error_ = "Client not connected or not encrypted";
         return false;
@@ -428,33 +427,18 @@ bool SlugClient::stream_pull_file(const std::string& remote_path,
         return false;
     }
 
-    uint64_t remote_file_size = resp.value("file_size", expected_size);
-    std::string final_blake3 = resp.value("blake3_hash", expected_hash);
+    uint64_t remote_file_size = resp.value("file_size", 0ULL);
+    std::string final_blake3 = resp.value("blake3_hash", "");
 
-    // Resolve destination path
-    fs::path final_dest = local_dest;
-    if (final_dest.empty()) {
-        final_dest = fs::path(norm_remote).filename();
-    } else if (fs::is_directory(final_dest)) {
-        final_dest = final_dest / fs::path(norm_remote).filename();
-    }
-
-    platform::PathUtils::ensure_directory(final_dest.parent_path());
-
-    // Temporary download file (.slug_tmp.<tid>)
-    fs::path temp_dest = final_dest.parent_path() / (final_dest.filename().string() + ".slug_tmp." + std::to_string(transfer_id));
-
-    // If partial ranges and base file exists, copy existing file as base
-    if (!ranges.empty() && fs::exists(final_dest)) {
-        std::error_code ec_cp;
-        fs::copy_file(final_dest, temp_dest, fs::copy_options::overwrite_existing, ec_cp);
-    }
-
-    std::ofstream out(temp_dest, std::ios::binary | (ranges.empty() ? std::ios::trunc : (std::ios::in | std::ios::out)));
-    if (!out.is_open()) {
-        out.open(temp_dest, std::ios::binary | std::ios::trunc);
-        if (!out.is_open()) {
-            last_error_ = "Failed to open temporary file for writing: " + temp_dest.string();
+    if (on_header) {
+        if (!on_header(remote_file_size, final_blake3)) {
+            StreamDataFrameHeader abort_hdr{};
+            abort_hdr.magic = 0x53;
+            abort_hdr.frame_type = static_cast<uint8_t>(StreamFrameType::ABORT);
+            abort_hdr.transfer_id = transfer_id;
+            std::span<const uint8_t> pt(reinterpret_cast<const uint8_t*>(&abort_hdr), sizeof(abort_hdr));
+            AeadFrameChannel::send_frame(socket_, session_keys_.session_key, session_keys_.client_to_server_salt, tx_seq_++, pt);
+            last_error_ = "Stream aborted by header handler";
             return false;
         }
     }
@@ -508,8 +492,18 @@ bool SlugClient::stream_pull_file(const std::string& remote_path,
                 break;
             }
             const uint8_t* payload = frame_bytes.data() + sizeof(StreamDataFrameHeader);
-            out.seekp(static_cast<std::streamoff>(hdr.offset), std::ios::beg);
-            out.write(reinterpret_cast<const char*>(payload), hdr.payload_len);
+            if (on_chunk) {
+                if (!on_chunk(payload, hdr.payload_len, hdr.offset)) {
+                    StreamDataFrameHeader abort_hdr{};
+                    abort_hdr.magic = 0x53;
+                    abort_hdr.frame_type = static_cast<uint8_t>(StreamFrameType::ABORT);
+                    abort_hdr.transfer_id = transfer_id;
+                    std::span<const uint8_t> pt(reinterpret_cast<const uint8_t*>(&abort_hdr), sizeof(abort_hdr));
+                    AeadFrameChannel::send_frame(socket_, session_keys_.session_key, session_keys_.client_to_server_salt, tx_seq_++, pt);
+                    last_error_ = "Stream aborted by sink handler";
+                    break;
+                }
+            }
             bytes_received += hdr.payload_len;
 
             auto now = std::chrono::steady_clock::now();
@@ -524,24 +518,6 @@ bool SlugClient::stream_pull_file(const std::string& remote_path,
                 }
             }
         } else if (hdr.frame_type == static_cast<uint8_t>(StreamFrameType::END_OF_STREAM)) {
-            out.flush();
-            out.close();
-
-            // Verify BLAKE3 hash of complete assembled file
-            std::string actual_hash = crypto::Blake3::hash_file(temp_dest).value_or("");
-            if (!final_blake3.empty() && actual_hash != final_blake3) {
-                last_error_ = "Integrity check failed: BLAKE3 hash mismatch on " + remote_path;
-                break;
-            }
-
-            // Commit atomically
-            std::error_code ec_ren;
-            fs::rename(temp_dest, final_dest, ec_ren);
-            if (ec_ren) {
-                fs::copy_file(temp_dest, final_dest, fs::copy_options::overwrite_existing, ec_ren);
-                fs::remove(temp_dest, ec_ren);
-            }
-
             if (progress_cb) {
                 auto total_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
                 double avg_speed = (total_elapsed > 0) ? (static_cast<double>(bytes_received) / (1024.0 * 1024.0) / total_elapsed) : smoothed_mbps;
@@ -552,14 +528,101 @@ bool SlugClient::stream_pull_file(const std::string& remote_path,
         }
     }
 
+    return pull_ok;
+}
+
+bool SlugClient::stream_pull_file(const std::string& remote_path,
+                                  const fs::path& local_dest,
+                                  uint64_t expected_size,
+                                  const std::string& expected_hash,
+                                  const std::vector<std::pair<uint64_t, uint64_t>>& ranges,
+                                  StreamProgressCallback progress_cb,
+                                  std::atomic<bool>* cancel_flag) {
+    if (!is_connected()) {
+        last_error_ = "Client not connected or not encrypted";
+        return false;
+    }
+
+    std::string norm_remote = remote_path;
+    std::replace(norm_remote.begin(), norm_remote.end(), '\\', '/');
+    while (!norm_remote.empty() && norm_remote.front() == '/') norm_remote.erase(0, 1);
+
+    static std::atomic<uint32_t> s_file_tmp_seq{1000};
+    uint32_t tmp_id = s_file_tmp_seq++;
+
+    // Resolve destination path
+    fs::path final_dest = local_dest;
+    if (final_dest.empty()) {
+        final_dest = fs::path(norm_remote).filename();
+    } else if (fs::is_directory(final_dest)) {
+        final_dest = final_dest / fs::path(norm_remote).filename();
+    }
+
+    platform::PathUtils::ensure_directory(final_dest.parent_path());
+
+    // Temporary download file (.slug_tmp.<tid>)
+    fs::path temp_dest = final_dest.parent_path() / (final_dest.filename().string() + ".slug_tmp." + std::to_string(tmp_id));
+
+    // If partial ranges and base file exists, copy existing file as base
+    if (!ranges.empty() && fs::exists(final_dest)) {
+        std::error_code ec_cp;
+        fs::copy_file(final_dest, temp_dest, fs::copy_options::overwrite_existing, ec_cp);
+    }
+
+    std::ofstream out;
+    std::string final_blake3 = expected_hash;
+
+    auto on_header = [&](uint64_t remote_file_size, const std::string& hash) -> bool {
+        (void)remote_file_size;
+        if (!hash.empty()) final_blake3 = hash;
+        out.open(temp_dest, std::ios::binary | (ranges.empty() ? std::ios::trunc : (std::ios::in | std::ios::out)));
+        if (!out.is_open()) {
+            out.open(temp_dest, std::ios::binary | std::ios::trunc);
+            if (!out.is_open()) {
+                last_error_ = "Failed to open temporary file for writing: " + temp_dest.string();
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto on_chunk = [&](const uint8_t* payload, size_t payload_len, uint64_t offset) -> bool {
+        if (!out.is_open()) return false;
+        out.seekp(static_cast<std::streamoff>(offset), std::ios::beg);
+        out.write(reinterpret_cast<const char*>(payload), payload_len);
+        return out.good();
+    };
+
+    bool pull_ok = stream_pull_to_sink(norm_remote, on_header, on_chunk, ranges, progress_cb, cancel_flag);
+
     if (out.is_open()) {
+        out.flush();
         out.close();
     }
-    if (!pull_ok) {
+
+    if (pull_ok) {
+        // Verify BLAKE3 hash of complete assembled file
+        std::string actual_hash = crypto::Blake3::hash_file(temp_dest).value_or("");
+        if (!final_blake3.empty() && actual_hash != final_blake3) {
+            last_error_ = "Integrity check failed: BLAKE3 hash mismatch on " + remote_path;
+            std::error_code ec;
+            fs::remove(temp_dest, ec);
+            return false;
+        }
+
+        // Commit atomically
+        std::error_code ec_ren;
+        fs::rename(temp_dest, final_dest, ec_ren);
+        if (ec_ren) {
+            fs::copy_file(temp_dest, final_dest, fs::copy_options::overwrite_existing, ec_ren);
+            fs::remove(temp_dest, ec_ren);
+        }
+        return true;
+    } else {
         std::error_code ec;
         fs::remove(temp_dest, ec);
+        return false;
     }
-    return pull_ok;
 }
 
 bool SlugClient::stream_push_file(const fs::path& local_file,

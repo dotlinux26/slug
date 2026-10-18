@@ -1433,30 +1433,59 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
 
     if (path == "/download") {
         std::string rel_path = get_query_param(req.query, "path");
-        auto [vfs_st, data] = control_server_.vfs().read_file(rel_path, current_session->role);
-        if (vfs_st == core::VfsStatus::ACCESS_DENIED) {
+        auto vres = control_server_.vfs().resolve_and_jail(rel_path, current_session->role, false);
+        if (vres.status == core::VfsStatus::ACCESS_DENIED) {
             send_resp(403, "Forbidden", "text/plain", "Permission Denied: Your role cannot read this file.");
             return;
         }
-        if (vfs_st == core::VfsStatus::PATH_TRAVERSAL) {
+        if (vres.status == core::VfsStatus::PATH_TRAVERSAL) {
             send_resp(403, "Forbidden", "text/plain", "403 Forbidden: Traversal Denied.");
             return;
         }
-        if (vfs_st == core::VfsStatus::FILTERED) {
+        if (vres.status == core::VfsStatus::FILTERED) {
             send_resp(403, "Forbidden", "text/plain", "403 Forbidden: File shielded by Policy or AI Secret Guard.");
             return;
         }
-        if (vfs_st != core::VfsStatus::OK) {
+        if (!vres.is_ok()) {
             send_resp(404, "Not Found", "text/plain", "404 Not Found.");
             return;
         }
+
+        std::error_code ec_sz;
+        if (!std::filesystem::exists(vres.real_path, ec_sz) || std::filesystem::is_directory(vres.real_path, ec_sz)) {
+            send_resp(404, "Not Found", "text/plain", "404 Not Found: Target is not a file.");
+            return;
+        }
+        uint64_t file_sz = std::filesystem::file_size(vres.real_path, ec_sz);
+
         std::string fname = fs::path(rel_path).filename().string();
         for (char& c : fname) {
             if (c == '\r' || c == '\n' || c == '"' || c == '\\') c = '_';
         }
+        if (fname.empty()) fname = "downloaded_file";
+
         std::string extra = "Content-Disposition: attachment; filename=\"" + fname + "\"\r\n";
-        std::string body(reinterpret_cast<const char*>(data.data()), data.size());
-        send_resp(200, "OK", "application/octet-stream", body, extra);
+        std::string hdr = "HTTP/1.1 200 OK\r\n"
+                          "Content-Type: application/octet-stream\r\n"
+                          "Content-Length: " + std::to_string(file_sz) + "\r\n"
+                          "Connection: close\r\n";
+        if (!new_session_token.empty()) {
+            hdr += "Set-Cookie: slug_session=" + new_session_token + "; Path=/; HttpOnly; SameSite=Strict\r\n";
+        }
+        hdr += extra + "\r\n";
+        send_raw(hdr);
+
+        // Bounded-memory disk stream (64KB chunks)
+        std::ifstream src(vres.real_path, std::ios::binary);
+        if (src.is_open()) {
+            std::vector<char> buf(65536);
+            while (src) {
+                src.read(buf.data(), buf.size());
+                std::streamsize n = src.gcount();
+                if (n <= 0) break;
+                send_raw(std::string(buf.data(), static_cast<size_t>(n)));
+            }
+        }
         return;
     }
 
@@ -1486,21 +1515,19 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                 total_raw_bytes += f.size;
             }
         }
-        if (total_raw_bytes > 4ULL * 1024 * 1024 * 1024) {
+        if (total_raw_bytes > 150ULL * 1024 * 1024) {
             std::string err_html = "<html><head><meta charset='utf-8'><title>Thư mục quá lớn</title></head><body style='font-family:sans-serif; text-align:center; padding:40px; background:#0d1117; color:#f85149;'>"
-                "<h2>413 Payload Too Large - Thư mục quá lớn</h2>"
-                "<p style='color:#c9d1d9;'>Thư mục này có dung lượng (" + core::Utils::format_size(total_raw_bytes) + 
-                ") vượt quá giới hạn nén ZIP chuẩn 32-bit (4 GB) qua kênh mã hóa Post-Quantum.</p>"
-                "<p style='color:#58a6ff;'>Vui lòng quay lại và sử dụng lệnh CLI <b>'slug pull'</b> để đồng bộ toàn bộ workspace về máy trạm an toàn với phân luồng vi sai FastCDC.</p>"
+                "<h2>413 Payload Too Large - Thư mục vượt ngưỡng nén trực tiếp</h2>"
+                "<p style='color:#c9d1d9;'>Thư mục này có dung lượng lớn (" + core::Utils::format_size(total_raw_bytes) + 
+                ") vượt quá giới hạn nén trực tiếp 150 MB trên trình duyệt nhằm đảm bảo an toàn bộ nhớ RAM và độ trễ.</p>"
+                "<p style='color:#58a6ff;'>Vui lòng bấm nút <b>'⚡ ĐỒNG BỘ DỮ LIỆU VỀ MÁY BẠN'</b> trên thanh công cụ hoặc sử dụng lệnh CLI <b>'slug pull'</b> để đồng bộ toàn bộ workspace về máy trạm an toàn với phân luồng vi sai FastCDC.</p>"
                 "<br><a href='javascript:history.back()' style='color:#58a6ff;'>&larr; Quay lại</a></body></html>";
             send_resp(413, "Payload Too Large", "text/html; charset=utf-8", err_html);
             return;
         }
 
         std::vector<uint8_t> zip_bytes;
-        if (total_raw_bytes <= 500 * 1024 * 1024) {
-            zip_bytes.reserve(static_cast<size_t>(total_raw_bytes + m_opt->files.size() * 128));
-        }
+        zip_bytes.reserve(static_cast<size_t>(total_raw_bytes + m_opt->files.size() * 128));
 
         struct ZipMeta {
             std::string filename;
