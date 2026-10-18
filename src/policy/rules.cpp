@@ -40,11 +40,6 @@ SlugRule RulesManager::parse_rule_line(const std::string& line) {
         };
 
         rule.id = get_attr("id");
-        if (rule.id.empty()) {
-            static int auto_id = 1;
-            rule.id = "r_" + std::to_string(auto_id++);
-        }
-
         std::string act = get_attr("action");
         rule.action = (act == "allow") ? RuleAction::ALLOW : RuleAction::BLOCK;
 
@@ -70,16 +65,44 @@ SlugRule RulesManager::parse_rule_line(const std::string& line) {
             // It is a comment line, e.g. "# Slug Rules Configuration" - do not convert to rule!
             return rule;
         }
-        // Plain gitignore-style rule in rules.conf / .slugignore
-        static std::atomic<uint64_t> rule_counter{1};
-        rule.id = "rule_" + std::to_string(rule_counter++);
-        rule.type = RuleType::PATH;
-        if (s.front() == '!') {
-            rule.action = RuleAction::ALLOW;
-            rule.value = core::Utils::trim(s.substr(1));
+
+        // Support syntax: ALLOW [type] <value> or BLOCK [type] <value>
+        std::string upper_s = s;
+        std::transform(upper_s.begin(), upper_s.end(), upper_s.begin(), ::toupper);
+        if (upper_s.rfind("ALLOW ", 0) == 0 || upper_s.rfind("BLOCK ", 0) == 0) {
+            bool is_allow = (upper_s.rfind("ALLOW ", 0) == 0);
+            rule.action = is_allow ? RuleAction::ALLOW : RuleAction::BLOCK;
+            std::string rest = core::Utils::trim(s.substr(6));
+            std::string upper_rest = rest;
+            std::transform(upper_rest.begin(), upper_rest.end(), upper_rest.begin(), ::tolower);
+
+            if (upper_rest.rfind("path ", 0) == 0) {
+                rule.type = RuleType::PATH;
+                rule.value = core::Utils::trim(rest.substr(5));
+            } else if (upper_rest.rfind("ext ", 0) == 0) {
+                rule.type = RuleType::EXT;
+                rule.value = core::Utils::trim(rest.substr(4));
+            } else if (upper_rest.rfind("content ", 0) == 0) {
+                rule.type = RuleType::CONTENT;
+                rule.value = core::Utils::trim(rest.substr(8));
+            } else if (upper_rest.rfind("regex ", 0) == 0) {
+                rule.type = RuleType::REGEX;
+                rule.value = core::Utils::trim(rest.substr(6));
+                try { rule.regex = std::regex(rule.value, std::regex::icase); } catch (...) {}
+            } else {
+                rule.type = RuleType::PATH;
+                rule.value = rest;
+            }
         } else {
-            rule.action = RuleAction::BLOCK;
-            rule.value = s;
+            // Plain gitignore-style rule in rules.conf / .slugignore
+            rule.type = RuleType::PATH;
+            if (s.front() == '!') {
+                rule.action = RuleAction::ALLOW;
+                rule.value = core::Utils::trim(s.substr(1));
+            } else {
+                rule.action = RuleAction::BLOCK;
+                rule.value = s;
+            }
         }
     }
     return rule;
@@ -103,6 +126,9 @@ bool RulesManager::load() {
                 rule.value.find("Automatically managed") != std::string::npos ||
                 rule.value.find("Default Slug Rules") != std::string::npos) {
                 continue;
+            }
+            if (rule.id.empty()) {
+                rule.id = "rule_" + std::to_string(rules_.size() + 1);
             }
             rules_.push_back(std::move(rule));
         }
@@ -160,7 +186,9 @@ bool RulesManager::add_rule(const std::string& id, RuleAction action, RuleType t
 
 bool RulesManager::remove_rule(const std::string& id) {
     for (auto it = rules_.begin(); it != rules_.end(); ++it) {
-        if (it->id == id) {
+        if (it->id == id || it->value == id ||
+            ("BLOCK path " + it->value) == id ||
+            ("ALLOW path " + it->value) == id) {
             rules_.erase(it);
             return save();
         }

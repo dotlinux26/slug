@@ -946,7 +946,8 @@ void ControlServer::handle_client(platform::TcpSocket client) {
 sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
     std::lock_guard<std::mutex> lock(manifest_mutex_);
     uint64_t now = core::Utils::current_timestamp();
-    if (!manifest_dirty_ && cached_manifest_.has_value() && (now - manifest_cached_at_ < 300)) {
+    // Cache for at most 2 seconds (instead of 300s) so host filesystem changes are reflected immediately
+    if (!manifest_dirty_ && cached_manifest_.has_value() && (now - manifest_cached_at_ < 2)) {
         return *cached_manifest_;
     }
 

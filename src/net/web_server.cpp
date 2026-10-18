@@ -649,7 +649,16 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         }
     }
 
+    if (path == "/api/fs/refresh") {
+        control_server_.invalidate_manifest_cache();
+        send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"Manifest cache invalidated.\"}");
+        return;
+    }
+
     if (path == "/" || path == "/drop") {
+        if (get_query_param(req.query, "refresh") == "1") {
+            control_server_.invalidate_manifest_cache();
+        }
         std::string rel_dir = get_query_param(req.query, "dir");
         std::string body = render_directory_listing(rel_dir, *current_session);
         send_resp(200, "OK", "text/html; charset=utf-8", body);
@@ -1089,13 +1098,18 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             audit_idx.update_entry(ae);
             audit_idx.save();
 
-            // 2. Remove matching block rule from rules.conf and add allow rule
+            // 2. Remove matching block rule from rules.conf and add explicit allow rule
             fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
             policy::RulesManager mgr(rules_file);
+            std::string fname = fs::path(target_path).filename().string();
+            std::vector<std::string> to_remove;
             for (const auto& r : mgr.rules()) {
-                if (r.value == target_path || r.value == (target_path + "/")) {
-                    mgr.remove_rule(r.id);
+                if (r.value == target_path || r.value == (target_path + "/") || r.value == fname) {
+                    to_remove.push_back(r.id);
                 }
+            }
+            for (const auto& rid : to_remove) {
+                mgr.remove_rule(rid);
             }
             mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, target_path);
 
