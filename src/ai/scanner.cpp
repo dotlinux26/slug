@@ -653,7 +653,20 @@ ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_vie
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_custom_ai_" + std::to_string(core::Utils::current_timestamp()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, raw_body);
 
-    std::string response = execute_http_post(endpoint_, tmp_payload, hdrs, 10);
+    std::string url = endpoint_;
+    if (url.find("generativelanguage.googleapis.com") != std::string::npos) {
+        while (!url.empty() && url.back() == '/') url.pop_back();
+        if (url.find(":generateContent") == std::string::npos) {
+            std::string mod = model_.empty() ? "gemini-flash-latest" : model_;
+            if (url.find("/models/") == std::string::npos) {
+                url = url + "/models/" + mod + ":generateContent";
+            } else {
+                url = url + ":generateContent";
+            }
+        }
+    }
+
+    std::string response = execute_http_post(url, tmp_payload, hdrs, 10);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
@@ -807,9 +820,6 @@ ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_vi
         return scan_ollama(file_path, content);
     }
     if (provider_ == ProviderType::CLOUD_API) {
-        if (!body_template_.empty()) {
-            return scan_custom(file_path, content);
-        }
         if (endpoint_.find("generativelanguage.googleapis.com") != std::string::npos ||
             api_key_.rfind("AIzaSy", 0) == 0 ||
             model_.find("gemini") != std::string::npos) {
@@ -820,33 +830,66 @@ ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_vi
             api_key_.rfind("sk-ant-", 0) == 0) {
             return scan_anthropic(file_path, content);
         }
+        if (!body_template_.empty()) {
+            return scan_custom(file_path, content);
+        }
         return scan_cloud(file_path, content);
     }
     return scan_heuristic(file_path, content, deep, true);
 }
 
 std::pair<bool, std::string> AiScanner::test_connection() const {
+    auto res = test_connection_detailed();
+    return {res.success, res.message};
+}
+
+ConnectionTestResult AiScanner::test_connection_detailed() const {
+    ConnectionTestResult result;
+    auto start_t = std::chrono::steady_clock::now();
+
     if (provider_ == ProviderType::LOCAL_HEURISTIC) {
-        return {true, "Bộ lọc nội bộ (Local Heuristic / Regex) hoạt động bình thường mà không cần kết nối mạng."};
+        result.success = true;
+        result.message = "Bộ lọc nội bộ (Local Heuristic / Regex) hoạt động bình thường mà không cần kết nối mạng.";
+        result.endpoint = "internal://regex-engine";
+        result.model = "builtin-regex-entropy";
+        result.request_payload = "N/A (Chạy trực tiếp trên CPU bộ nhớ trong)";
+        result.response_payload = "N/A (Không có kết nối mạng)";
+        result.duration_ms = 0;
+        return result;
     }
 
     if (provider_ == ProviderType::LOCAL_OLLAMA) {
         std::string url = endpoint_ + "/api/tags";
+        result.endpoint = url;
+        result.model = model_.empty() ? "ollama-model" : model_;
+        result.request_payload = "{}";
+
         auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_" + std::to_string(core::Utils::current_timestamp()) + ".json");
         platform::PathUtils::write_text_file_atomic(tmp_payload, "{}");
         std::string resp = execute_http_post(url, tmp_payload, "", "", 4);
         std::error_code ec;
         std::filesystem::remove(tmp_payload, ec);
+
+        auto end_t = std::chrono::steady_clock::now();
+        result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
+        result.response_payload = resp;
+
         if (resp.empty()) {
-            return {false, "Không thể kết nối tới máy chủ Ollama tại '" + endpoint_ + "'. Hãy đảm bảo Ollama đã được khởi động."};
+            result.success = false;
+            result.message = "Không thể kết nối tới máy chủ Ollama tại '" + endpoint_ + "'. Hãy đảm bảo Ollama đã được khởi động.";
+            return result;
         }
         try {
             auto j = json::parse(resp);
             if (j.contains("models")) {
-                return {true, "Kết nối Ollama thành công! Máy chủ đang hoạt động tại " + endpoint_ + "."};
+                result.success = true;
+                result.message = "Kết nối Ollama thành công! Máy chủ đang hoạt động tại " + endpoint_ + ".";
+                return result;
             }
         } catch (...) {}
-        return {true, "Kết nối Ollama thành công!"};
+        result.success = true;
+        result.message = "Kết nối Ollama thành công!";
+        return result;
     }
 
     if (provider_ == ProviderType::CLOUD_API) {
@@ -861,7 +904,11 @@ std::pair<bool, std::string> AiScanner::test_connection() const {
                 if (k) api_key = k;
             }
             if (api_key.empty()) {
-                return {false, "Thiếu API Key cho Google Gemini. Vui lòng nhập khóa bắt đầu bằng 'AIzaSy...'."};
+                result.success = false;
+                result.message = "Thiếu API Key cho Google Gemini. Vui lòng nhập khóa bắt đầu bằng 'AIzaSy...'.";
+                result.endpoint = endpoint_;
+                result.model = model_;
+                return result;
             }
 
             std::string model = model_.empty() ? "gemini-flash-latest" : model_;
@@ -877,10 +924,14 @@ std::pair<bool, std::string> AiScanner::test_connection() const {
                 url = endpoint + "/models/" + model + ":generateContent";
             }
 
+            result.endpoint = url;
+            result.model = model;
+
             json req_body;
             req_body["contents"] = json::array({
                 json{{"parts", json::array({json{{"text", "ping"}}})}}
             });
+            result.request_payload = req_body.dump(2);
 
             auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_gemini_" + std::to_string(core::Utils::current_timestamp()) + ".json");
             platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
@@ -888,20 +939,32 @@ std::pair<bool, std::string> AiScanner::test_connection() const {
             std::error_code ec;
             std::filesystem::remove(tmp_payload, ec);
 
+            auto end_t = std::chrono::steady_clock::now();
+            result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
+            result.response_payload = resp;
+
             if (resp.empty()) {
-                return {false, "Không nhận được phản hồi từ Google Gemini API. Vui lòng kiểm tra kết nối mạng và URL endpoint."};
+                result.success = false;
+                result.message = "Không nhận được phản hồi từ Google Gemini API. Vui lòng kiểm tra kết nối mạng và URL endpoint.";
+                return result;
             }
             try {
                 auto j = json::parse(resp);
                 if (j.contains("error")) {
                     std::string msg = j["error"].value("message", "Lỗi không xác định từ Gemini API");
-                    return {false, "Google Gemini API trả về lỗi: " + msg};
+                    result.success = false;
+                    result.message = "Google Gemini API trả về lỗi: " + msg;
+                    return result;
                 }
                 if (j.contains("candidates")) {
-                    return {true, "Kết nối Google Gemini API thành công! Mô hình [" + model + "] phản hồi bình thường."};
+                    result.success = true;
+                    result.message = "Kết nối Google Gemini API thành công! Mô hình [" + model + "] phản hồi bình thường.";
+                    return result;
                 }
             } catch (...) {}
-            return {true, "Kết nối Google Gemini API thành công!"};
+            result.success = true;
+            result.message = "Kết nối Google Gemini API thành công!";
+            return result;
         }
 
         // 2. Anthropic Claude API
@@ -910,15 +973,25 @@ std::pair<bool, std::string> AiScanner::test_connection() const {
             api_key_.rfind("sk-ant-", 0) == 0) {
             
             std::string api_key = api_key_;
-            if (api_key.empty()) return {false, "Thiếu API Key cho Anthropic Claude. Vui lòng nhập khóa 'sk-ant-...'."};
+            if (api_key.empty()) {
+                result.success = false;
+                result.message = "Thiếu API Key cho Anthropic Claude. Vui lòng nhập khóa 'sk-ant-...'.";
+                result.endpoint = endpoint_;
+                result.model = model_;
+                return result;
+            }
             
             std::string model = model_.empty() ? "claude-3-5-haiku-20241022" : model_;
             std::string endpoint = endpoint_.empty() ? "https://api.anthropic.com/v1/messages" : endpoint_;
+
+            result.endpoint = endpoint;
+            result.model = model;
 
             json req_body;
             req_body["model"] = model;
             req_body["max_tokens"] = 10;
             req_body["messages"] = json::array({json{{"role", "user"}, {"content", "hi"}}});
+            result.request_payload = req_body.dump(2);
 
             auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_claude_" + std::to_string(core::Utils::current_timestamp()) + ".json");
             platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
@@ -930,24 +1003,45 @@ std::pair<bool, std::string> AiScanner::test_connection() const {
             std::error_code ec;
             std::filesystem::remove(tmp_payload, ec);
 
-            if (resp.empty()) return {false, "Không nhận được phản hồi từ Anthropic Claude API."};
+            auto end_t = std::chrono::steady_clock::now();
+            result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
+            result.response_payload = resp;
+
+            if (resp.empty()) {
+                result.success = false;
+                result.message = "Không nhận được phản hồi từ Anthropic Claude API.";
+                return result;
+            }
             try {
                 auto j = json::parse(resp);
                 if (j.contains("error")) {
                     std::string msg = j["error"].value("message", "Lỗi Claude API");
-                    return {false, "Claude API trả về lỗi: " + msg};
+                    result.success = false;
+                    result.message = "Claude API trả về lỗi: " + msg;
+                    return result;
                 }
-                if (j.contains("content")) return {true, "Kết nối Claude API thành công! Mô hình [" + model + "] hoạt động bình thường."};
+                if (j.contains("content")) {
+                    result.success = true;
+                    result.message = "Kết nối Claude API thành công! Mô hình [" + model + "] hoạt động bình thường.";
+                    return result;
+                }
             } catch (...) {}
-            return {true, "Kết nối Anthropic Claude API thành công!"};
+            result.success = true;
+            result.message = "Kết nối Anthropic Claude API thành công!";
+            return result;
         }
 
         // 3. OpenAI / Custom Cloud API
         std::string ep = endpoint_.empty() ? "https://api.openai.com/v1/chat/completions" : endpoint_;
+        std::string model = model_.empty() ? "gpt-4o-mini" : model_;
+        result.endpoint = ep;
+        result.model = model;
+
         json req_body;
-        req_body["model"] = model_.empty() ? "gpt-4o-mini" : model_;
+        req_body["model"] = model;
         req_body["messages"] = json::array({json{{"role", "user"}, {"content", "hi"}}});
         req_body["max_tokens"] = 10;
+        result.request_payload = req_body.dump(2);
 
         auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_cloud_" + std::to_string(core::Utils::current_timestamp()) + ".json");
         platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
@@ -956,23 +1050,37 @@ std::pair<bool, std::string> AiScanner::test_connection() const {
         std::error_code ec;
         std::filesystem::remove(tmp_payload, ec);
 
+        auto end_t = std::chrono::steady_clock::now();
+        result.duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
+        result.response_payload = resp;
+
         if (resp.empty()) {
-            return {false, "Không nhận được phản hồi từ dịch vụ AI tại '" + ep + "'."};
+            result.success = false;
+            result.message = "Không nhận được phản hồi từ dịch vụ AI tại '" + ep + "'.";
+            return result;
         }
         try {
             auto j = json::parse(resp);
             if (j.contains("error")) {
                 std::string msg = j["error"].value("message", "Lỗi API");
-                return {false, "Dịch vụ AI trả về lỗi: " + msg};
+                result.success = false;
+                result.message = "Dịch vụ AI trả về lỗi: " + msg;
+                return result;
             }
             if (j.contains("choices")) {
-                return {true, "Kết nối dịch vụ AI thành công! Mô hình [" + model_ + "] phản hồi bình thường."};
+                result.success = true;
+                result.message = "Kết nối dịch vụ AI thành công! Mô hình [" + model + "] phản hồi bình thường.";
+                return result;
             }
         } catch (...) {}
-        return {true, "Dịch vụ AI đã phản hồi kết nối!"};
+        result.success = true;
+        result.message = "Dịch vụ AI đã phản hồi kết nối!";
+        return result;
     }
 
-    return {true, "Dịch vụ sẵn sàng."};
+    result.success = true;
+    result.message = "Dịch vụ sẵn sàng.";
+    return result;
 }
 
 } // namespace slug::ai

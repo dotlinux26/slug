@@ -302,7 +302,10 @@ WorkspaceManifest ManifestBuilder::build(
                         file_data = platform::PathUtils::read_binary_file(entry.path(), 10 * 1024 * 1024);
                         if (file_data) {
                             std::string text(file_data->begin(), file_data->end());
-                            auto finding = scanner.scan_content(proto_path, text, false, filter_level);
+                            core::FilterLevel eval_level = (filter_level == core::FilterLevel::LEVEL_4_AI)
+                                ? core::FilterLevel::LEVEL_3_ENTROPY
+                                : filter_level;
+                            auto finding = scanner.scan_content(proto_path, text, false, eval_level);
 
                             ai::AuditIndexEntry idx_entry;
                             idx_entry.file_path = proto_path;
@@ -324,10 +327,12 @@ WorkspaceManifest ManifestBuilder::build(
                                 manifest.skipped.push_back({proto_path, finding.reason + " (Line " + std::to_string(finding.line_number) + ")", tag});
                                 continue;
                             } else {
-                                idx_entry.status = core::AuditStatus::CLEAN;
-                                idx_entry.reason = finding.reason.empty() ? "Clean" : finding.reason;
-                                audit_index.update_entry(idx_entry);
-                                scan_status = "SCANNED";
+                                if (filter_level != core::FilterLevel::LEVEL_4_AI) {
+                                    idx_entry.status = core::AuditStatus::CLEAN;
+                                    idx_entry.reason = finding.reason.empty() ? "Clean" : finding.reason;
+                                    audit_index.update_entry(idx_entry);
+                                }
+                                scan_status = (filter_level == core::FilterLevel::LEVEL_4_AI) ? "NOT_SCANNED" : "SCANNED";
                             }
                         }
                     } else {

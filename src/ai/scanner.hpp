@@ -20,6 +20,16 @@ struct ScanFinding {
     std::string model;
 };
 
+struct ConnectionTestResult {
+    bool success{false};
+    std::string message;
+    std::string endpoint;
+    std::string model;
+    std::string request_payload;
+    std::string response_payload;
+    int64_t duration_ms{0};
+};
+
 class AiScanner {
 public:
     enum class ProviderType {
@@ -45,6 +55,7 @@ public:
 
     // Actively tests connection and API key validity against the configured AI service
     std::pair<bool, std::string> test_connection() const;
+    ConnectionTestResult test_connection_detailed() const;
 
     // Checks if a file path is a code/config file worth scanning
     static bool is_scannable_file(const std::filesystem::path& path);

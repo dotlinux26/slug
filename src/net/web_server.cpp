@@ -1385,7 +1385,14 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         std::string lvl_str = "level4";
         try {
             auto j = json::parse(req.body);
-            rel_path = j.value("path", "");
+            if (j.contains("path")) {
+                if (j["path"].is_string()) rel_path = j["path"].get<std::string>();
+                else if (j["path"].is_object() && j["path"].contains("path")) rel_path = j["path"]["path"].get<std::string>();
+            }
+            if (rel_path.empty() && j.contains("file_path")) {
+                if (j["file_path"].is_string()) rel_path = j["file_path"].get<std::string>();
+                else if (j["file_path"].is_object() && j["file_path"].contains("path")) rel_path = j["file_path"]["path"].get<std::string>();
+            }
             lvl_str = j.value("level", "level4");
         } catch (...) {}
 
@@ -1394,7 +1401,15 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             return;
         }
 
-        fs::path abs_path = control_server_.workspace_root() / rel_path;
+        std::error_code ec_canon;
+        fs::path abs_path = fs::weakly_canonical(control_server_.workspace_root() / rel_path, ec_canon);
+        fs::path ws_canon = fs::weakly_canonical(control_server_.workspace_root(), ec_canon);
+        std::string abs_str = abs_path.generic_string();
+        std::string ws_str = ws_canon.generic_string();
+        if (abs_str.find(ws_str) != 0 || platform::PathUtils::is_internal_slug_path(rel_path)) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"error\",\"message\":\"Access denied: Path outside workspace or protected internal path\"}");
+            return;
+        }
         if (!fs::exists(abs_path) || fs::is_directory(abs_path)) {
             send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}");
             return;
@@ -1486,7 +1501,10 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         res["level"] = core::filter_level_to_string(flevel);
         res["files_count"] = manifest.files.size();
         res["flagged_count"] = manifest.skipped.size();
-        if (flevel == core::FilterLevel::LEVEL_0_RAW) {
+        if (flevel == core::FilterLevel::LEVEL_4_AI) {
+            res["trigger_seq_scan"] = true;
+            res["message"] = "Đã áp dụng mức lọc [Level 4 - AI Guard]. Tự động khởi chạy quét trực quan từng tệp...";
+        } else if (flevel == core::FilterLevel::LEVEL_0_RAW) {
             res["message"] = "Đã chuyển sang cấp [level0 - Không Lọc]. Toàn bộ " + std::to_string(manifest.files.size()) + " tệp trong workspace được chia sẻ trực tiếp (chỉ bảo vệ nội bộ .slug/).";
         } else {
             res["message"] = "Đã hoàn thành quét bảo mật cấp [" + lvl_str + "]. Tổng file khả dụng: " + std::to_string(manifest.files.size()) + ", Bị chặn: " + std::to_string(manifest.skipped.size());
@@ -1654,11 +1672,16 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
 
             ai::AiScanner::ProviderType ptype = (prov == "ollama") ? ai::AiScanner::ProviderType::LOCAL_OLLAMA : ai::AiScanner::ProviderType::CLOUD_API;
             ai::AiScanner test_scanner(ptype, endpoint, model, api_key, body_template, headers);
-            auto [test_ok, test_msg] = test_scanner.test_connection();
+            auto res_detail = test_scanner.test_connection_detailed();
 
             json res;
-            res["status"] = test_ok ? "ok" : "error";
-            res["message"] = test_msg;
+            res["status"] = res_detail.success ? "ok" : "error";
+            res["message"] = res_detail.message;
+            res["endpoint"] = res_detail.endpoint;
+            res["model"] = res_detail.model;
+            res["request_payload"] = res_detail.request_payload;
+            res["response_payload"] = res_detail.response_payload;
+            res["duration_ms"] = res_detail.duration_ms;
             send_resp(200, "OK", "application/json", res.dump());
         } catch (const std::exception& e) {
             json res;
