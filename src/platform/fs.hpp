@@ -30,7 +30,7 @@ public:
     static bool is_internal_slug_path(const fs::path& path);
 
     // Read full file content safely
-    static std::optional<std::vector<uint8_t>> read_binary_file(const fs::path& path, size_t max_bytes = 100 * 1024 * 1024);
+    static std::optional<std::vector<uint8_t>> read_binary_file(const fs::path& path, size_t max_bytes = 2048ULL * 1024 * 1024);
     
     // Read text file
     static std::optional<std::string> read_text_file(const fs::path& path);

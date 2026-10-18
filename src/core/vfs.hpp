@@ -86,6 +86,11 @@ public:
     policy::PolicyEngine& policy_engine() { return policy_engine_; }
     const policy::PolicyEngine& policy_engine() const { return policy_engine_; }
 
+    void reload_policy() {
+        policy_engine_.rules().load();
+        policy_engine_.gitignore().scan_and_load_all(server_root_);
+    }
+
 private:
     std::filesystem::path server_root_;
     bool enable_ai_{false};

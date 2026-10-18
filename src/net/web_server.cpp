@@ -1081,11 +1081,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             
             // Read file hash if exists to ensure zero-cost cache hit for USER_ALLOWED
             fs::path abs_target = control_server_.workspace_root() / target_path;
-            std::string file_hash = "";
-            auto file_data = platform::PathUtils::read_binary_file(abs_target);
-            if (file_data) {
-                file_hash = crypto::Blake3::hash_hex(*file_data);
-            }
+            std::string file_hash = crypto::Blake3::hash_file(abs_target).value_or("");
             
             ai::AuditIndexEntry ae;
             ae.file_path = target_path;

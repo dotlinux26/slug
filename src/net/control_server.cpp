@@ -979,6 +979,7 @@ void ControlServer::invalidate_manifest_cache() {
     manifest_dirty_ = true;
     cached_manifest_.reset();
     cached_manifest_json_.clear();
+    vfs_.reload_policy();
 }
 
 } // namespace slug::net

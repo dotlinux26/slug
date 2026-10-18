@@ -185,8 +185,13 @@ WorkspaceManifest ManifestBuilder::build(
             bool ignore_gi = (filter_mode == core::FilterMode::INCLUDE_IGNORED);
             auto decision = policy_engine.evaluate(rel, false, {}, ignore_gi);
             if (!decision.is_allowed) {
-                manifest.skipped.push_back({proto_path, decision.reason, "RULE_OR_GITIGNORE_BLOCKED"});
-                continue;
+                // If Host Admin explicitly unblocked/whitelisted this file, permit it
+                if (audit_index.check_cached_status(proto_path, "") == core::AuditStatus::USER_ALLOWED) {
+                    is_explicitly_allowed_by_rule = true;
+                } else {
+                    manifest.skipped.push_back({proto_path, decision.reason, "RULE_OR_GITIGNORE_BLOCKED"});
+                    continue;
+                }
             }
             if (!decision.rule_id.empty() && decision.rule_id != "gitignore") {
                 is_explicitly_allowed_by_rule = true;
@@ -214,12 +219,12 @@ WorkspaceManifest ManifestBuilder::build(
 
         std::optional<std::vector<uint8_t>> file_data;
         if (!cache_hit) {
-            file_data = platform::PathUtils::read_binary_file(entry.path());
-            if (!file_data) {
+            auto h_opt = crypto::Blake3::hash_file(entry.path());
+            if (!h_opt) {
                 manifest.skipped.push_back({proto_path, "Failed to read file", "IO_ERROR"});
                 continue;
             }
-            current_hash = crypto::Blake3::hash_hex(*file_data);
+            current_hash = *h_opt;
         }
 
         // Step 2: Stateful AI & Smart Filter Audit evaluation
@@ -262,32 +267,32 @@ WorkspaceManifest ManifestBuilder::build(
             if (cached_status == core::AuditStatus::USER_ALLOWED) {
                 // Whitelisted by user override - Always permitted!
             } else if (cached_status == core::AuditStatus::UNKNOWN || cached_status == core::AuditStatus::STALE) {
-                if (!file_data) {
-                    file_data = platform::PathUtils::read_binary_file(entry.path());
-                }
-                if (file_data && ai::AiScanner::is_scannable_file(entry.path())) {
-                    std::string text(file_data->begin(), file_data->end());
-                    auto finding = scanner.scan_content(proto_path, text, false, filter_level);
+                if (ai::AiScanner::is_scannable_file(entry.path()) && cur_sz <= 10ULL * 1024 * 1024) {
+                    file_data = platform::PathUtils::read_binary_file(entry.path(), 10 * 1024 * 1024);
+                    if (file_data) {
+                        std::string text(file_data->begin(), file_data->end());
+                        auto finding = scanner.scan_content(proto_path, text, false, filter_level);
 
-                    ai::AuditIndexEntry idx_entry;
-                    idx_entry.file_path = proto_path;
-                    idx_entry.blake3_hash = current_hash;
-                    idx_entry.scanned_at = core::Utils::current_timestamp();
+                        ai::AuditIndexEntry idx_entry;
+                        idx_entry.file_path = proto_path;
+                        idx_entry.blake3_hash = current_hash;
+                        idx_entry.scanned_at = core::Utils::current_timestamp();
 
-                    if (finding.has_secret) {
-                        bool is_ai = (finding.detector == "AI Guard");
-                        idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
-                        idx_entry.line_number = finding.line_number;
-                        idx_entry.reason = finding.reason;
-                        audit_index.update_entry(idx_entry);
+                        if (finding.has_secret) {
+                            bool is_ai = (finding.detector == "AI Guard");
+                            idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
+                            idx_entry.line_number = finding.line_number;
+                            idx_entry.reason = finding.reason;
+                            audit_index.update_entry(idx_entry);
 
-                        std::string tag = is_ai ? "AI_FLAGGED" : "SMART_FILTER_FLAGGED";
-                        manifest.skipped.push_back({proto_path, finding.reason + " (Line " + std::to_string(finding.line_number) + ")", tag});
-                        continue;
-                    } else {
-                        idx_entry.status = core::AuditStatus::CLEAN;
-                        idx_entry.reason = "Clean";
-                        audit_index.update_entry(idx_entry);
+                            std::string tag = is_ai ? "AI_FLAGGED" : "SMART_FILTER_FLAGGED";
+                            manifest.skipped.push_back({proto_path, finding.reason + " (Line " + std::to_string(finding.line_number) + ")", tag});
+                            continue;
+                        } else {
+                            idx_entry.status = core::AuditStatus::CLEAN;
+                            idx_entry.reason = "Clean";
+                            audit_index.update_entry(idx_entry);
+                        }
                     }
                 }
             }
@@ -302,11 +307,8 @@ WorkspaceManifest ManifestBuilder::build(
         if (cache_hit && !cached_chunks.empty()) {
             fe.chunks = std::move(cached_chunks);
         } else {
-            if (!file_data) {
-                file_data = platform::PathUtils::read_binary_file(entry.path());
-            }
-            if (file_data) {
-                fe.chunks = Chunker::chunk_buffer(*file_data);
+            fe.chunks = Chunker::chunk_file(entry.path());
+            if (!fe.chunks.empty()) {
                 std::lock_guard<std::mutex> lk(g_state_cache_mtx);
                 g_state_cache[proto_path] = {cur_mtime, cur_sz, current_hash, fe.chunks};
             }
