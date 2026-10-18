@@ -105,21 +105,105 @@ AiScanner AiScanner::create_for_level(core::FilterLevel level, core::AiModelProv
     return AiScanner(ProviderType::LOCAL_HEURISTIC);
 }
 
+bool AiScanner::is_binary_content(std::string_view content) {
+    if (content.empty()) return false;
+    size_t check_len = std::min(content.size(), (size_t)4096);
+    size_t non_text = 0;
+    for (size_t i = 0; i < check_len; ++i) {
+        unsigned char c = static_cast<unsigned char>(content[i]);
+        if (c == 0) return true; // Null byte indicates binary content
+        if (c < 7 || (c > 13 && c < 32)) {
+            non_text++;
+        }
+    }
+    return (non_text * 100 / check_len) > 20;
+}
+
+std::string AiScanner::sanitize_utf8(std::string_view input) {
+    std::string out;
+    out.reserve(input.size());
+    size_t i = 0;
+    while (i < input.size()) {
+        unsigned char c = static_cast<unsigned char>(input[i]);
+        if (c == 0) {
+            out += ' ';
+            i++;
+        } else if (c < 0x80) {
+            out += static_cast<char>(c);
+            i++;
+        } else if ((c >> 5) == 0x06) { // 2-byte sequence
+            if (i + 1 < input.size() && (static_cast<unsigned char>(input[i+1]) >> 6) == 0x02) {
+                out += input[i];
+                out += input[i+1];
+                i += 2;
+            } else {
+                out += '?';
+                i++;
+            }
+        } else if ((c >> 4) == 0x0E) { // 3-byte sequence
+            if (i + 2 < input.size() && 
+                (static_cast<unsigned char>(input[i+1]) >> 6) == 0x02 &&
+                (static_cast<unsigned char>(input[i+2]) >> 6) == 0x02) {
+                out += input[i];
+                out += input[i+1];
+                out += input[i+2];
+                i += 3;
+            } else {
+                out += '?';
+                i++;
+            }
+        } else if ((c >> 3) == 0x1E) { // 4-byte sequence
+            if (i + 3 < input.size() &&
+                (static_cast<unsigned char>(input[i+1]) >> 6) == 0x02 &&
+                (static_cast<unsigned char>(input[i+2]) >> 6) == 0x02 &&
+                (static_cast<unsigned char>(input[i+3]) >> 6) == 0x02) {
+                out += input[i];
+                out += input[i+1];
+                out += input[i+2];
+                out += input[i+3];
+                i += 4;
+            } else {
+                out += '?';
+                i++;
+            }
+        } else {
+            out += '?';
+            i++;
+        }
+    }
+    return out;
+}
+
+static std::string safe_dump_json(const json& j, int indent = -1) {
+    try {
+        return j.dump(indent, ' ', false, json::error_handler_t::replace);
+    } catch (...) {
+        return "{}";
+    }
+}
+
 bool AiScanner::is_scannable_file(const std::filesystem::path& path) {
     std::string fname = path.filename().string();
     std::string ext = path.extension().string();
     for (auto& c : fname) c = static_cast<char>(std::tolower(c));
     for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
-    // Absolute exclusion for binary, compiled, compressed, and media files
+    // Absolute exclusion for binary, compiled, compressed, database, and encrypted files
     static const std::vector<std::string> binary_exts = {
         ".pyd", ".dll", ".exe", ".bin", ".pak", ".so", ".dylib", ".obj", ".o",
         ".class", ".pyc", ".dat", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp",
         ".svg", ".mp4", ".mp3", ".pdf", ".zip", ".tar", ".gz", ".7z", ".iso",
-        ".ttf", ".woff", ".woff2", ".wasm", ".pdb", ".lib", ".a", ".node"
+        ".ttf", ".woff", ".woff2", ".wasm", ".pdb", ".lib", ".a", ".node",
+        ".pqc", ".vault", ".enc", ".sealed", ".sig", ".db", ".sqlite", ".sqlite3"
     };
     for (const auto& be : binary_exts) {
         if (ext == be) return false;
+    }
+
+    // Encrypted files or Slug env containers (.env.pqc, .env.vault) are NOT plaintext code/secrets
+    if (fname.ends_with(".pqc") || fname.ends_with(".vault") || fname.ends_with(".enc") || fname.ends_with(".sealed") ||
+        ext == ".pqc" || ext == ".vault" || ext == ".enc" || ext == ".sealed") {
+        return false;
     }
 
     // Support .env and variants (.env.local, .env.production, etc.)
@@ -169,13 +253,15 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
 
     // Direct check for environment secret files (.env, .env.local, .env.production, etc.)
     // Exclude documentation or template examples: .env.example, .env.sample, .env.template
+    // Exclude sealed/encrypted files: .env.pqc, .env.vault, .env.enc, .env.sealed
     if ((fname == ".env" || fname.rfind(".env.", 0) == 0 || std::filesystem::path(file_path).extension().string() == ".env") &&
-        fname != ".env.example" && fname != ".env.sample" && fname != ".env.template") {
+        fname != ".env.example" && fname != ".env.sample" && fname != ".env.template" &&
+        !fname.ends_with(".pqc") && !fname.ends_with(".vault") && !fname.ends_with(".enc") && !fname.ends_with(".sealed")) {
         finding.has_secret = true;
         finding.status = ScanStatus::SECRET_FOUND;
         finding.line_number = 1;
         finding.reason = "Environment Secret File (" + fname + ")";
-        finding.matched_snippet = content.empty() ? fname : std::string(content.substr(0, std::min(content.size(), (size_t)80)));
+        finding.matched_snippet = content.empty() ? fname : sanitize_utf8(content.substr(0, std::min(content.size(), (size_t)80)));
         return finding;
     }
 
@@ -513,8 +599,9 @@ static ScanFinding classify_ai_result(
     ScanFinding finding = h_finding;
     finding.detector = "AI Guard (" + model + ")";
     finding.model = model;
-    finding.ai_input = prompt;
-    finding.ai_output = resp.body.empty() ? ("(Không có phản hồi từ " + provider_name + ")") : resp.body;
+    finding.ai_input = AiScanner::sanitize_utf8(prompt);
+    finding.ai_output = AiScanner::sanitize_utf8(resp.body.empty() ? ("(Không có phản hồi từ " + provider_name + ")") : resp.body);
+    finding.matched_snippet = AiScanner::sanitize_utf8(finding.matched_snippet);
     finding.http_status = resp.status_code;
     finding.retry_after_sec = resp.retry_after_sec;
 
@@ -643,19 +730,27 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
     size_t scan_limit = std::min(lines.size(), (size_t)80);
     for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
+    std::string safe_snippet = sanitize_utf8(snippet);
     std::string model = model_.empty() ? "qwen2.5-coder:7b" : model_;
-    std::string prompt = "Inspect this code from '" + file_path + "'. Does it contain leaked secrets or credentials? Respond ONLY with JSON: {\"has_secret\": true/false, \"reason\": \"...\", \"line\": 0}.\n\n" + snippet;
+    std::string prompt = "Inspect this code from '" + file_path + "'. Does it contain leaked secrets or credentials? Respond ONLY with JSON: {\"has_secret\": true/false, \"reason\": \"...\", \"line\": 0}.\n\n" + safe_snippet;
 
     json req_body;
-    req_body["model"] = model;
-    req_body["prompt"] = prompt;
-    req_body["stream"] = false;
+    try {
+        req_body["model"] = model;
+        req_body["prompt"] = prompt;
+        req_body["stream"] = false;
+    } catch (const std::exception& e) {
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.reason = "Lỗi chuẩn bị dữ liệu Ollama: " + std::string(e.what());
+        return f;
+    }
 
     std::string url = endpoint_ + "/api/generate";
     if (!is_safe_shell_param(url)) return h_finding;
 
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ollama_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
-    platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+    platform::PathUtils::write_text_file_atomic(tmp_payload, safe_dump_json(req_body));
 
     std::vector<std::pair<std::string, std::string>> hdrs = headers_;
     auto resp = execute_http_post_with_retry(url, tmp_payload, hdrs, 5, 1);
@@ -695,6 +790,7 @@ ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_vie
     size_t scan_limit = std::min(lines.size(), (size_t)100);
     for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
+    std::string safe_snippet = sanitize_utf8(snippet);
     std::string model = model_.empty() ? "gemini-flash-latest" : model_;
     std::string endpoint = endpoint_;
     if (endpoint.empty() || endpoint.find("localhost") != std::string::npos || endpoint.find("127.0.0.1") != std::string::npos) {
@@ -713,19 +809,26 @@ ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_vie
 
     if (!is_safe_shell_param(url) || !is_safe_shell_param(api_key)) return h_finding;
 
-    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + snippet;
+    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + safe_snippet;
 
     json req_body;
-    req_body["contents"] = json::array({
-        json{
-            {"parts", json::array({
-                json{{"text", prompt}}
-            })}
-        }
-    });
+    try {
+        req_body["contents"] = json::array({
+            json{
+                {"parts", json::array({
+                    json{{"text", prompt}}
+                })}
+            }
+        });
+    } catch (const std::exception& e) {
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.reason = "Lỗi chuẩn bị dữ liệu Gemini: " + std::string(e.what());
+        return f;
+    }
 
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_gemini_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
-    platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+    platform::PathUtils::write_text_file_atomic(tmp_payload, safe_dump_json(req_body));
 
     std::vector<std::pair<std::string, std::string>> hdrs = {
         {"x-goog-api-key", api_key}
@@ -768,20 +871,28 @@ ScanFinding AiScanner::scan_anthropic(const std::string& file_path, std::string_
     size_t scan_limit = std::min(lines.size(), (size_t)100);
     for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
+    std::string safe_snippet = sanitize_utf8(snippet);
     std::string model = model_.empty() ? "claude-3-5-haiku-20241022" : model_;
     std::string endpoint = endpoint_.empty() ? "https://api.anthropic.com/v1/messages" : endpoint_;
 
-    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + snippet;
+    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + safe_snippet;
 
     json req_body;
-    req_body["model"] = model;
-    req_body["max_tokens"] = 1024;
-    req_body["messages"] = json::array({
-        json{{"role", "user"}, {"content", prompt}}
-    });
+    try {
+        req_body["model"] = model;
+        req_body["max_tokens"] = 1024;
+        req_body["messages"] = json::array({
+            json{{"role", "user"}, {"content", prompt}}
+        });
+    } catch (const std::exception& e) {
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.reason = "Lỗi chuẩn bị dữ liệu Claude: " + std::string(e.what());
+        return f;
+    }
 
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_anthropic_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
-    platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+    platform::PathUtils::write_text_file_atomic(tmp_payload, safe_dump_json(req_body));
 
     std::vector<std::pair<std::string, std::string>> hdrs = {
         {"x-api-key", api_key},
@@ -807,11 +918,12 @@ ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_vie
     size_t scan_limit = std::min(lines.size(), (size_t)100);
     for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
-    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + snippet;
+    std::string safe_snippet = sanitize_utf8(snippet);
+    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + safe_snippet;
 
     std::string raw_body = body_template_;
     json prompt_json = prompt;
-    std::string prompt_escaped = prompt_json.dump();
+    std::string prompt_escaped = safe_dump_json(prompt_json);
     if (prompt_escaped.size() >= 2 && prompt_escaped.front() == '"' && prompt_escaped.back() == '"') {
         prompt_escaped = prompt_escaped.substr(1, prompt_escaped.size() - 2);
     }
@@ -911,25 +1023,33 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     size_t scan_limit = std::min(lines.size(), (size_t)100);
     for (size_t i = 0; i < scan_limit; ++i) snippet += lines[i] + "\n";
 
-    std::string prompt_text = "Analyze file: " + file_path + "\n\n" + snippet;
+    std::string safe_snippet = sanitize_utf8(snippet);
+    std::string prompt_text = "Analyze file: " + file_path + "\n\n" + safe_snippet;
     json req_body;
-    req_body["model"] = model;
-    req_body["messages"] = json::array({
-        {
-            {"role", "system"},
-            {"content", "You are an automated code security auditor. Detect hardcoded credentials, API keys, passwords, or secrets. Respond ONLY with a valid JSON object in this format: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}."}
-        },
-        {
-            {"role", "user"},
-            {"content", prompt_text}
-        }
-    });
-    req_body["temperature"] = 0.0;
+    try {
+        req_body["model"] = model;
+        req_body["messages"] = json::array({
+            {
+                {"role", "system"},
+                {"content", "You are an automated code security auditor. Detect hardcoded credentials, API keys, passwords, or secrets. Respond ONLY with a valid JSON object in this format: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}."}
+            },
+            {
+                {"role", "user"},
+                {"content", prompt_text}
+            }
+        });
+        req_body["temperature"] = 0.0;
+    } catch (const std::exception& e) {
+        ScanFinding f = h_finding;
+        f.status = ScanStatus::API_ERROR;
+        f.reason = "Lỗi chuẩn bị dữ liệu Cloud AI: " + std::string(e.what());
+        return f;
+    }
 
     if (!is_safe_shell_param(endpoint) || !is_safe_shell_param(api_key)) return h_finding;
 
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ai_req_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
-    platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+    platform::PathUtils::write_text_file_atomic(tmp_payload, safe_dump_json(req_body));
 
     std::vector<std::pair<std::string, std::string>> hdrs = {
         {"Authorization", "Bearer " + api_key}
@@ -963,6 +1083,14 @@ ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_vi
         ScanFinding safe;
         safe.status = ScanStatus::CLEAN;
         safe.has_secret = false;
+        safe.reason = "Tệp nhị phân hoặc đã được mã hóa an toàn (bỏ qua)";
+        return safe;
+    }
+    if (is_binary_content(content)) {
+        ScanFinding safe;
+        safe.status = ScanStatus::CLEAN;
+        safe.has_secret = false;
+        safe.reason = "Tệp định dạng nhị phân (bỏ qua quét AI)";
         return safe;
     }
     if (level == core::FilterLevel::LEVEL_2_REGEX) {
@@ -1088,10 +1216,10 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
             req_body["contents"] = json::array({
                 json{{"parts", json::array({json{{"text", "ping"}}})}}
             });
-            result.request_payload = req_body.dump(2);
+            result.request_payload = safe_dump_json(req_body, 2);
 
             auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_gemini_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
-            platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+            platform::PathUtils::write_text_file_atomic(tmp_payload, safe_dump_json(req_body));
             std::vector<std::pair<std::string, std::string>> hdrs = {
                 {"x-goog-api-key", api_key}
             };
@@ -1173,10 +1301,10 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
             req_body["model"] = model;
             req_body["max_tokens"] = 10;
             req_body["messages"] = json::array({json{{"role", "user"}, {"content", "hi"}}});
-            result.request_payload = req_body.dump(2);
+            result.request_payload = safe_dump_json(req_body, 2);
 
             auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_claude_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
-            platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+            platform::PathUtils::write_text_file_atomic(tmp_payload, safe_dump_json(req_body));
             std::vector<std::pair<std::string, std::string>> hdrs = {
                 {"x-api-key", api_key},
                 {"anthropic-version", "2023-06-01"}
@@ -1230,10 +1358,10 @@ ConnectionTestResult AiScanner::test_connection_detailed() const {
         req_body["model"] = model;
         req_body["messages"] = json::array({json{{"role", "user"}, {"content", "hi"}}});
         req_body["max_tokens"] = 10;
-        result.request_payload = req_body.dump(2);
+        result.request_payload = safe_dump_json(req_body, 2);
 
         auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_cloud_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(rand()) + ".json");
-        platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+        platform::PathUtils::write_text_file_atomic(tmp_payload, safe_dump_json(req_body));
         std::vector<std::pair<std::string, std::string>> hdrs = {
             {"Authorization", "Bearer " + api_key_}
         };

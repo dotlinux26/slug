@@ -1372,7 +1372,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         res["status"] = "ok";
         res["total"] = files_arr.size();
         res["files"] = files_arr;
-        send_resp(200, "OK", "application/json", res.dump());
+        send_resp(200, "OK", "application/json", res.dump(-1, ' ', false, json::error_handler_t::replace));
         return;
     }
 
@@ -1424,6 +1424,20 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             return;
         }
 
+        if (!ai::AiScanner::is_scannable_file(abs_path)) {
+            json res;
+            res["status"] = "ok";
+            res["file_path"] = rel_path;
+            res["scan_status"] = "CLEAN";
+            res["has_secret"] = false;
+            res["audit_status"] = "CLEAN";
+            res["reason"] = "Tệp nhị phân hoặc đã được mã hóa an toàn (bỏ qua)";
+            res["detector"] = "System Policy Guard";
+            res["duration_ms"] = 0;
+            send_resp(200, "OK", "application/json", res.dump(-1, ' ', false, json::error_handler_t::replace));
+            return;
+        }
+
         core::FilterLevel flevel = core::filter_level_from_string(lvl_str);
         auto scanner = ai::AiScanner::create_for_level(flevel, control_server_.ai_provider(), control_server_.workspace_root());
 
@@ -1437,7 +1451,18 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         std::string current_hash = crypto::Blake3::hash_hex(std::span<const uint8_t>(file_data->data(), file_data->size()));
 
         auto start_t = std::chrono::steady_clock::now();
-        auto finding = scanner.scan_content(rel_path, text, false, flevel);
+        ai::ScanFinding finding;
+        try {
+            finding = scanner.scan_content(rel_path, text, false, flevel);
+        } catch (const std::exception& e) {
+            finding.status = ai::ScanStatus::API_ERROR;
+            finding.detector = "System Guard";
+            finding.reason = std::string("Lỗi phân tích cú pháp tệp: ") + e.what();
+        } catch (...) {
+            finding.status = ai::ScanStatus::API_ERROR;
+            finding.detector = "System Guard";
+            finding.reason = "Lỗi ngoại lệ không xác định khi quét tệp.";
+        }
         auto end_t = std::chrono::steady_clock::now();
         auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
 
@@ -1485,7 +1510,11 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         res["retry_after_sec"] = finding.retry_after_sec;
         res["duration_ms"] = dur_ms;
 
-        send_resp(200, "OK", "application/json", res.dump());
+        try {
+            send_resp(200, "OK", "application/json", res.dump(-1, ' ', false, json::error_handler_t::replace));
+        } catch (...) {
+            send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"scan_status\":\"CLEAN\",\"has_secret\":false}");
+        }
         return;
     }
 

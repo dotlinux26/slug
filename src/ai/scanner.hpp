@@ -89,6 +89,12 @@ public:
     // Checks if a file path is a code/config file worth scanning
     static bool is_scannable_file(const std::filesystem::path& path);
 
+    // Checks if content is binary (null bytes or high ratio of non-printable bytes)
+    static bool is_binary_content(std::string_view content);
+
+    // Sanitizes any string into valid UTF-8, replacing null bytes and invalid sequences
+    static std::string sanitize_utf8(std::string_view input);
+
     ProviderType provider() const { return provider_; }
     const std::string& endpoint() const { return endpoint_; }
     const std::string& model() const { return model_; }
