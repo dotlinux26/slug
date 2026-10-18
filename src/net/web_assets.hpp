@@ -255,7 +255,7 @@ public:
           << "html { overflow-y: scroll; scrollbar-gutter: stable; } .container { width: 96%; max-width: 1360px; min-width: 1040px; margin: 0 auto; background: var(--bg-surface); border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 24px; box-shadow: 0 1px 3px rgba(31,35,40,0.08); box-sizing: border-box; }"
           << ".top-bar { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-primary); padding-bottom: 16px; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }"
           << "h1 { color: var(--text-main); font-size: 18px; margin: 0; display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-weight: 600; }"
-          << ".badge { padding: 2px 7px; border-radius: var(--radius-sharp); font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.3px; }"
+          << ".badge { padding: 2px 7px; border-radius: var(--radius-sharp); font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.3px; display: inline-block; white-space: nowrap; }"
           << ".badge-available { background: var(--success-bg); color: var(--success); border: 1px solid rgba(26,127,55,0.25); }"
           << ".badge-excluded { background: var(--bg-surface-hover); color: var(--text-muted); border: 1px solid var(--border-primary); }"
           << ".badge-quarantined { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(207,34,46,0.3); }"
@@ -769,16 +769,26 @@ public:
 
                     std::string scan_lbl = "";
                     if (item.scan_status == "NOT_SCANNED") {
-                        scan_lbl = " <span class='badge' style='background:#f6f8fa; color:#57606a; border:1px solid #d0d7de; font-size:10px; padding:1px 5px; margin-left:4px; font-weight:600;' title='File chưa qua kiểm tra nội dung (do vượt kích thước 10MB hoặc định dạng nhị phân)'>NOT SCANNED</span>";
+                        scan_lbl = "<span class='badge' style='background:#f6f8fa; color:#57606a; border:1px solid #d0d7de; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='File chưa qua kiểm tra nội dung (do vượt kích thước 10MB hoặc định dạng nhị phân)'>NOT SCANNED</span>";
                     } else if (item.scan_status == "SCANNED") {
-                        scan_lbl = " <span class='badge' style='background:#dafbe1; color:#1a7f37; border:1px solid #aceebb; font-size:10px; padding:1px 5px; margin-left:4px; font-weight:600;' title='Nội dung đã được quét an toàn'>Đã quét</span>";
+                        scan_lbl = "<span class='badge' style='background:#dafbe1; color:#1a7f37; border:1px solid #aceebb; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='Nội dung đã được quét an toàn'>Đã quét</span>";
+                    }
+
+                    std::string status_cell;
+                    if (scan_lbl.empty()) {
+                        status_cell = "<span class='badge " + item.status_badge_class + "' title='" + html_escape(item.status_detail) + "'>" + item.status + "</span>";
+                    } else {
+                        status_cell = "<div style='display:inline-flex; flex-direction:column; align-items:flex-start; gap:4px;'>"
+                                      "<span class='badge " + item.status_badge_class + "' title='" + html_escape(item.status_detail) + "'>" + item.status + "</span>"
+                                      + scan_lbl +
+                                      "</div>";
                     }
 
                     h << "<td>" << chk << "</td>"
                       << "<td><span style='display:inline-flex; align-items:center; gap:6px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline></svg> " << html_escape(item.name) << "</span></td>"
                       << "<td style='color:var(--text-muted);'>file</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
-                      << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span>" << scan_lbl << "</td>"
+                      << "<td>" << status_cell << "</td>"
                       << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'>" << act << "</div></td>";
                 }
                 h << "</tr>";
