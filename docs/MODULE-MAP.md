@@ -36,7 +36,7 @@
 |  ├── ACL & TotpManager (src/core/acl*)  : 3-Role OTP (rw/r/w) + Ephemeral RBAC    |
 |  ├── PolicyEngine (src/policy/*)        : Hierarchical .gitignore + rules.conf    |
 |  │                                        Whitelist Exception Support (!prefix)   |
-|  ├── Slug Guard (100% Offline Core)     : Heuristic Regex + Shannon Entropy H>=4.0|
+|  ├── Slug Guard (Offline Core)           : Heuristic Regex + Shannon Entropy H>=4.0|
 |  │                                        BLAKE3 Content Cache (index.db: 0.015us)|
 |  └── Slug AI (Optional Advisory)        : LLM Structured JSON Schema Advisory     |
 +-----------------------------------------+-----------------------------------------+
@@ -63,7 +63,7 @@
    - Chiều Server -> Client: Nonce = ServerToClient_Salt || tx_seq.
    - AAD = [Len (4B) || SeqNum (8B)] bảo vệ toàn vẹn Header.
    - Bộ lọc `AntiReplaySlidingWindow` (64-bit) ở phía nhận ngăn chặn tấn công phát lại.
-3. **Zero Remote HTTP Architecture:** Tuyệt đối không phơi bày cổng Web HTTP ra ngoài Internet. Giao diện Web chạy cục bộ trên loopback `127.0.0.1:8080/` và tunnel các thao tác qua kết nối nhị phân PQC.
+3. **Zero Remote HTTP Architecture:** Không mở cổng Web HTTP ra ngoài Internet. Giao diện Web chạy cục bộ trên loopback `127.0.0.1:8080/` và chuyển tiếp các thao tác qua kết nối nhị phân PQC.
 
 ### Chốt chặn 2: Tầng Hệ Thống Tập Tin Ảo `SlugVFS` (Layer 3)
 1. **Jail & Path Traversal Prevention:**
@@ -78,6 +78,6 @@
    - Hỗ trợ luật ngoại lệ Whitelist bằng tiền tố `!` (ví dụ: `!.env.example`, `!*.example` vẫn được truyền an toàn).
 
 ### Chốt chặn 3: Tầng Kiểm Duyệt Bí Mật Slug Guard & AI (Layer 4)
-- **Slug Guard (Chặn cứng 100% offline):** Heuristic Regex quét các mẫu key phổ biến (AWS, OpenAI, Stripe, Private Key) + Shannon Entropy Analyzer ($H(X) \ge 4.0$) phát hiện token sinh ngẫu nhiên.
-- **Slug AI (Cố vấn tùy chọn):** Khi có cờ `--ai`, gửi trích đoạn mã đến LLM nội bộ hoặc Cloud để nhận schema JSON (`has_secret`, `reason`, `line`) tham vấn ngữ cảnh, tuyệt đối không thay thế luật cứng của Slug Guard.
+- **Slug Guard (Chặn cứng offline):** Heuristic Regex quét các mẫu key phổ biến (AWS, OpenAI, Stripe, Private Key) + Shannon Entropy Analyzer ($H(X) \ge 4.0$) phát hiện token sinh ngẫu nhiên.
+- **Slug AI (Cố vấn tùy chọn):** Khi có cờ `--ai`, gửi trích đoạn mã đến LLM nội bộ hoặc Cloud để nhận schema JSON (`has_secret`, `reason`, `line`) tham vấn ngữ cảnh, không thay thế luật cứng của Slug Guard.
 - File nghi vấn tự động bị đánh dấu `QUARANTINED` và ghi nhật ký kiểm toán `.slug/audit.log`.

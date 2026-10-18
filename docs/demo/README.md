@@ -4,7 +4,7 @@ Thư mục này chứa các script tái tạo môi trường thử nghiệm (Sho
 
 Script được thiết kế để:
 1. **Tạo ra một dự án mẫu hoàn chỉnh** (`demo_env_workspace`) ngay tại vị trí bạn chạy script.
-2. **Sinh ngẫu nhiên 100% các biến môi trường nhạy cảm** (Database Password, Stripe API Key, AI Token, JWT Secret) bằng GUID và Random Bytes tại runtime.
+2. **Sinh ngẫu nhiên các biến môi trường nhạy cảm** (Database Password, Stripe API Key, AI Token, JWT Secret) bằng GUID và Random Bytes tại runtime.
    > **Lưu ý bảo mật:** Script hoàn toàn **không chứa static secret / hardcoded credential** để đảm bảo không kích hoạt cảnh báo của GitHub Secret Scanning / Push Protection.
 3. **Cung cấp ứng dụng mẫu Python Zero-Dependency** (`app.py`), chỉ sử dụng thư viện chuẩn của hệ điều hành (`os.environ`), không cần cài thêm bất kỳ thư viện ngoài nào (`pip install`).
 
@@ -61,7 +61,7 @@ cd demo_env_workspace
                                           │
                                           ▼ (Giải mã trên RAM & Inject vào Process)
                                   App chạy thành công!
-                                  (Ổ đĩa vẫn sạch 100%, 0 byte plaintext)
+                                  (Ổ đĩa không lưu plaintext, 0 byte file rác)
 ```
 
 ### Bước 1: Trạng thái ban đầu (Chưa bảo vệ)
@@ -95,7 +95,7 @@ Chạy ứng dụng qua cơ chế nạp bộ nhớ tạm của Slug:
 slug env run -- python app.py
 ```
 **Kết quả:** 
-Slug giải mã `.env.pqc` trực tiếp trên RAM, bơm biến môi trường vào Process Table của `python app.py` và khởi chạy thành công. Ổ đĩa vẫn sạch 100%, không sinh ra bất kỳ file tạm plaintext nào.
+Slug giải mã `.env.pqc` trực tiếp trên RAM, bơm biến môi trường vào Process Table của `python app.py` và khởi chạy thành công. Ổ đĩa không lưu file tạm plaintext nào.
 
 ### Bước 5: Xem lịch sử và Khôi phục (1-Touch Restore)
 Xem lịch sử các phiên bản niêm phong:

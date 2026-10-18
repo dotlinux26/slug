@@ -8,7 +8,7 @@ Slug tiếp cận AI theo một triết lý kỹ thuật thực dụng và có k
 
 ```text
 +---------------------------------------------------------------------------------+
-| TẦNG 1: SLUG GUARD - LOGIC TOÁN HỌC & HỆ THỐNG XÁC ĐỊNH (100% OFFLINE)           |
+| TẦNG 1: SLUG GUARD - LOGIC TOÁN HỌC & HỆ THỐNG XÁC ĐỊNH (OFFLINE CORE)            |
 | - Mật mã học: NIST FIPS 203/204 (ML-KEM-768, ML-DSA-65), AEAD XChaCha20-Poly1305|
 | - Phân quyền: RBAC (r / w / rw), TTL tự hủy, TOTP Anti-Replay                   |
 | - Lọc cấu trúc: Đọc phân tầng file .gitignore                                   |
@@ -45,7 +45,7 @@ Slug phân định rạch ròi thành **Hệ thống 5 Cấp Độ Lọc (Filter
 | **Level 0** | **Raw / Không Lọc** | Không áp dụng rule hay AI | Chia sẻ thô toàn bộ dữ liệu workspace, tắt rules/gitignore/quét nội dung, đánh dấu tất cả tệp là `AVAILABLE` (chỉ bảo vệ nội bộ `.slug/` và `.git/`). |
 | **Level 1** | **Rules** | `.gitignore` + `.slug/rules.conf` | Lọc theo đường dẫn và quy tắc Host chỉ định, hỗ trợ Whitelist (`!.env.example`). Không quét Regex hay Entropy. |
 | **Level 2** | **Regex** | Level 1 + Mẫu nhận diện Secret | Tự động phát hiện AWS/GitHub/Stripe keys, Private Keys, JWT, URLs chứa password. [Mặc Định] |
-| **Level 3** | **Entropy** | Level 2 + Shannon Entropy | Tính toán $H(X) \ge 4.0$ **chỉ trên tệp văn bản/code (`is_scannable_file`)**. Miễn nhiễm hoàn toàn false positive cho `.pyd`, binary, video, ảnh, archive. |
+| **Level 3** | **Entropy** | Level 2 + Shannon Entropy | Tính toán $H(X) \ge 4.0$ **chỉ trên tệp văn bản/code (`is_scannable_file`)**. Hạn chế false positive cho `.pyd`, binary, video, ảnh, archive. |
 | **Level 4** | **AI** | Level 3 + AI Contextual Advisor | Kết nối LLM (Ollama / OpenAI / Gemini) phân tích ngữ cảnh, trả về schema JSON (`has_secret`, `reason`, `line`). |
 
 - **Directory Visibility Invariant:** Trên giao diện Explorer của người dùng cuối, toàn bộ cây thư mục được giữ nguyên vẹn với 2 trạng thái chuẩn hóa: `AVAILABLE` (màu xanh lá) và `BLOCKED` (màu đỏ). Lý do chi tiết (`RULE_BLOCKED`, `SECRET_DETECTED`, `ENTROPY_FLAGGED`) được chuyển vào bảng quản trị của Host.
@@ -62,7 +62,7 @@ Hệ thống bảo vệ cốt lõi của Slug (`src/ai/stateful_audit.hpp`, `src
    * **Nhận diện Unquoted & Quoted Token:** Quét các dòng gán biến `KEY=VALUE` hoặc `KEY: VALUE` cho các từ khóa nhạy cảm (`api_key`, `secret`, `token`, `password`, `auth`) ngay cả khi không đặt trong dấu ngoặc kép.
    * **Mẫu định danh nhà cung cấp phổ biến:** OpenAI (`sk-proj-...`, `sk-...`), Stripe (`sk_live_...`), GitHub (`ghp_...`), AWS (`AKIA...`), Private Key Headers (`-----BEGIN ... PRIVATE KEY-----`).
 2. **Phân Tích Độ Hỗn Loạn Toán Học Có Chọn Lọc (Shannon Entropy Analyzer - Level 3):**
-   * **Bộ lọc tệp có thể quét (`is_scannable_file`):** Loại trừ tuyệt đối toàn bộ file nhị phân, compiled, media, nén (`.pyd`, `.dll`, `.exe`, `.bin`, `.pak`, `.so`, `.png`, `.jpg`, `.mp4`, `.zip`, `.iso`...).
+   * **Bộ lọc tệp có thể quét (`is_scannable_file`):** Bỏ qua các file nhị phân, compiled, media, nén (`.pyd`, `.dll`, `.exe`, `.bin`, `.pak`, `.so`, `.png`, `.jpg`, `.mp4`, `.zip`, `.iso`...).
    * **Tính toán Shannon Entropy:** Chỉ áp dụng cho các file văn bản/mã nguồn:
      $$H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
    * Bất kỳ chuỗi nào dài $\ge 20$ ký tự có $H(X) \ge 4.0$ bits/byte sẽ được đánh dấu cảnh báo.
@@ -120,12 +120,10 @@ Slug cung cấp module **PQC EnvShield** (`slug env`):
   ```
 * **Bơm biến môi trường trực tiếp trong RAM:** Slug giải mã bí mật duy nhất trong bộ nhớ RAM tạm thời của tiến trình con, nạp trực tiếp vào biến môi trường của hệ điều hành mà **không ghi byte plaintext nào xuống đĩa cứng**. AI hoàn toàn không có cơ hội tiếp xúc trực tiếp với file secret bản rõ từ hệ thống tệp.
 
-### 5.3. Nhận Thức Thực Tế & Tránh Overclaim (No-Overclaim Principle)
-* **Secret có thể bị đọc khi ứng dụng đang chạy không?**
-  **Có!** Để phần mềm hoạt động, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ tiến trình (RAM). Một đoạn mã cố tình chạy `printenv` hoặc cố tình dump bộ nhớ tiến trình vẫn có thể lấy được giá trị đó.
-* **Vậy giá trị bảo vệ thực tế của Slug là gì?**
-  Các trợ lý AI là tác nhân hỗ trợ (cooperative assistants), chúng **không bao giờ chủ động tìm cách bypass hay viết mã exploit để trích xuất bộ nhớ RAM** (trừ phi lập trình viên cố tình viết prompt hướng dẫn AI làm điều đó).
-* **Kết luận:** Slug cung cấp một **lớp ma sát bảo vệ chủ động (proactive friction barrier)** ngăn chặn hành vi đọc plaintext thụ động từ ổ đĩa, hạn chế tối đa nguy cơ secret bị nạp vào context window của LLM trong quá trình làm việc hàng ngày. Đồng thời khi chia sẻ workspace giữa người với người, hệ thống **Slug Guard đa cơ chế** (`.gitignore` -> `rules.conf` -> `Smart Regex & Entropy Guard` -> `AI Semantic Guard`) giúp tự động loại bỏ rác build và rà soát, cách ly các file bí mật nghi vấn trước khi truyền tải.
+### 5.3. Giới Hạn Kỹ Thuật & Phạm Vi Bảo Vệ (Technical Boundaries)
+* **Đặc tính trong bộ nhớ tiến trình:** Khi ứng dụng thực thi, các biến môi trường tồn tại trong bảng tiến trình (Process Environment Block / RAM) để ứng dụng hoạt động bình thường. Một tiến trình con nếu cố tình đọc bảng biến môi trường (như lệnh `printenv` hoặc `os.environ`) vẫn truy cập được các biến đã được nạp.
+* **Phạm vi bảo vệ của EnvShield:** Cơ chế này loại bỏ tệp `.env` plaintext trên hệ thống tệp đĩa cứng, ngăn chặn việc các trợ lý AI hoặc tiến trình quét tệp tự động đọc nội dung bí mật và đưa vào context window hoặc gửi lên dịch vụ đám mây bên ngoài.
+* **Tổng thể kiến trúc:** Slug cung cấp cơ chế bảo vệ theo chiều sâu: ngăn chặn rò rỉ secret thụ động từ ổ đĩa khi làm việc với AI Agent; đồng thời khi chia sẻ workspace qua mạng nội bộ, hệ thống **Slug Guard đa cơ chế** (`.gitignore` -> `rules.conf` -> `Regex & Entropy Guard` -> `AI Semantic Guard`) tự động loại bỏ rác build và cách ly các tệp cấu hình nhạy cảm trước khi truyền tải.
 
 ### 5.4. Centralized Env Vault & Nghệ Thuật Dạy AI (Agent Directive)
 

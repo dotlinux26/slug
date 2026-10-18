@@ -7,26 +7,25 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![C++ Standard](https://img.shields.io/badge/Language-C%2B%2B20-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B20)
 [![Post-Quantum Cryptography](https://img.shields.io/badge/PQC-ML--KEM--768%20%7C%20ML--DSA--65-success.svg)](https://csrc.nist.gov/Projects/post-quantum-cryptography)
-[![Zero-Dependency Static Binary](https://img.shields.io/badge/Linux_Static-100%25_Portable-brightgreen.svg)](BUILD.md)
+[![Zero-Dependency Static Binary](https://img.shields.io/badge/Linux_Static-Portable-brightgreen.svg)](BUILD.md)
 
-> **Slug: Lớp lá chắn bảo vệ bí mật chủ động trước các trợ lý AI & Nền tảng chia sẻ Workspace an toàn giữa người với người không lo thừa hoặc nhầm file bí mật.**  
-> *(Proactive Secret Shield Against AI Assistants & Safe Human-to-Human P2P Workspace Sharing)*
+> **Slug: Nền tảng chia sẻ Workspace P2P an toàn và quản lý cấu hình nhạy cảm trước các tác nhân lập chỉ mục tự động.**  
+> *(Secure P2P Workspace Sharing & In-Memory Environment Management)*
 
 ---
 
-## 1. Tuyên Bố Giá Trị Cốt Lõi & Nhận Thức Thực Tế (No-Overclaim Philosophy)
+## 1. Tính Năng & Giá Trị Kỹ Thuật (Core Features & Architecture)
 
-### 1.1. Lá Chắn Bảo Vệ Bí Mật Chủ Động Trước Các Trợ Lý AI (EnvShield)
-Trong kỷ nguyên lập trình hiện đại với các trợ lý AI (Cursor, Copilot, Claude Code, Antigravity, Devin, v.v.), AI liên tục lập chỉ mục và đọc các tệp trong workspace để nạp context vào mô hình ngôn ngữ lớn (LLM) gửi về cloud.
-- **Rủi ro thực tế:** Nếu tệp cấu hình chứa secret (`.env`, private key, API token) nằm dưới dạng bản rõ (plaintext) trên ổ đĩa, AI sẽ tự động đọc lén và đưa toàn bộ bí mật vào context window hoặc log chat mà lập trình viên không hề hay biết.
-- **Cách Slug giải quyết:**
-  - `slug env init`: Mã hóa file `.env` thành `.env.pqc` bằng mật mã hậu lượng tử, lưu bản sao niêm phong vào Central Vault (`~/.slug/env_vault/`) và **xóa hoàn toàn bản rõ khỏi đĩa cứng trong repo**.
-  - `slug env prompt`: Xuất hướng dẫn tự động tạo `.slug/ai-rule.md` để huấn luyện AI luôn thực thi lệnh qua công cụ wrapper.
-  - `slug env run -- <command>`: Slug giải mã bí mật duy nhất trong bộ nhớ RAM tạm thời của tiến trình con lúc chạy. **AI không bao giờ được tiếp xúc trực tiếp với tệp plaintext trên đĩa cứng.**
-- **Góc nhìn kỹ thuật thẳng thắn (Tránh Overclaim):**
-  - *Có đọc được không nếu cố tình?* **Có!** Khi ứng dụng chạy, các biến môi trường hiển nhiên phải tồn tại trong bộ nhớ RAM của process để code hoạt động. Nếu người dùng cố tình viết lệnh `printenv` hoặc dump memory thì vẫn đọc được.
-  - *Tại sao cách tiếp cận này lại hiệu quả?* Các trợ lý AI là tác nhân hỗ trợ (cooperative agents), chúng **không bao giờ chủ động tìm cách bypass hay khai thác bộ nhớ RAM** (trừ phi người dùng cố tình viết prompt yêu cầu AI làm điều đó).
-  - *Giá trị thực chất:* Slug tạo ra một **rào cản ma sát chủ động (proactive friction barrier)** ngăn chặn triệt để hành vi đọc plaintext thụ động từ ổ đĩa, đảm bảo secret không bị nuốt chửng vào context window của LLM trong công việc hàng ngày.
+### 1.1. Quản Lý Cấu Hình Nhạy Cảm Trong Bộ Nhớ (EnvShield)
+Trong môi trường phát triển hiện đại với các công cụ lập chỉ mục tự động và trợ lý AI (Cursor, Copilot, Claude Code, v.v.), các tệp trong workspace thường xuyên được đọc để nạp context:
+- **Thực tế:** Các tệp cấu hình bản rõ (`.env`, private key, API token) lưu trực tiếp trên ổ đĩa có thể bị đọc tự động và đưa vào ngữ cảnh hoặc nhật ký phát triển.
+- **Cơ chế xử lý của Slug:**
+  - `slug env init`: Mã hóa tệp `.env` thành `.env.pqc` bằng thuật toán PQC (ML-KEM-768/XChaCha20), lưu bản sao vào Central Vault (`~/.slug/env_vault/`) và xóa tệp bản rõ khỏi thư mục làm việc.
+  - `slug env prompt`: Xuất hướng dẫn `.slug/ai-rule.md` định hướng công cụ thực thi lệnh qua wrapper.
+  - `slug env run -- <command>`: Giải mã cấu hình trực tiếp trong bộ nhớ RAM tạm thời của tiến trình con khi chạy lệnh. Tệp bản rõ không tồn tại trên ổ đĩa trong quá trình này.
+- **Đặc tính kỹ thuật:**
+  - Biến môi trường được nạp trực tiếp vào không gian địa chỉ tiến trình con trong RAM khi thực thi lệnh.
+  - Cơ chế này tạo rào cản ngăn chặn hành vi đọc file cấu hình bản rõ từ ổ đĩa của các công cụ lập chỉ mục tự động và trợ lý AI, giảm thiểu rủi ro đưa secret vào context window.
 
 ### 1.2. Chia Sẻ An Toàn Giữa Người Với Người (Không Lo Thừa Rác, Không Lo Nhầm Bí Mật)
 Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc đối tác:
@@ -39,14 +38,14 @@ Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc 
 - **Directory Visibility Invariant (Bất biến hiển thị cây thư mục):** Cấu trúc cây thư mục luôn được giữ nguyên trọn vẹn, không bao giờ tự ý tỉa cành hay ẩn file bị lọc. File chỉ có 2 trạng thái chuẩn hóa trên Explorer: `AVAILABLE` (màu xanh lá, được phép tải) hoặc `BLOCKED` (màu đỏ, bị chặn ở backend). Chỉ có metadata nội bộ (`.slug/`, `.git/`) là bị ẩn và bảo vệ bất biến.
 
 ### 1.3. Kiến Trúc Engine Viewing Nội Bộ (Zero Remote HTTP)
-- Trên mạng dây LAN/Internet **chỉ tồn tại kết nối nhị phân PQC an toàn lượng tử** (mặc định cổng `9443`). Tuyệt đối không phơi bày cổng Web HTTP ra ngoài Internet!
-- Giao diện Web chỉ là một **Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080`** của máy client và **Host Admin Dashboard tại `http://127.0.0.1:<port>/admin`**. Mọi thao tác duyệt cây thư mục, tải file đơn, tải file nén ZIP toàn thư mục hay upload đều được tunnel mã hóa qua các frame PQC nhị phân. Không có bất kỳ byte HTTP lộ thiên nào trên mạng!
+- Trên mạng LAN/Internet, kết nối giữa hai máy sử dụng kênh nhị phân mã hóa Hậu Lượng Tử (PQC AEAD, mặc định cổng `9443`), không mở cổng HTTP ra mạng ngoài.
+- Giao diện Web là Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080` của client và Host Admin Dashboard trên loopback `http://127.0.0.1:<port>/admin`. Mọi thao tác duyệt cây thư mục, tải tệp đơn, tải nén ZIP hoặc đẩy dữ liệu đều được chuyển tiếp qua frame nhị phân mã hóa.
 
 ---
 
 ## 2. Cài Đặt & Biên Dịch Nhanh (Installation & Build)
 
-Slug được đóng gói dưới dạng binary tĩnh độc lập (100% Static Binary, ~8.4 MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy mượt mà trên mọi bản phân phối Linux và Windows.
+Slug có thể đóng gói dưới dạng binary tĩnh độc lập (Static Binary, ~8.4 MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy trên các bản phân phối Linux và Windows.
 
 ### 2.1. Cài Đặt Nhanh (Quick Install)
 
@@ -99,7 +98,7 @@ Yêu cầu: Trình biên dịch hỗ trợ C++20 (`g++-11+`, `clang++-14+`, ho�
 # Trên Linux: Biên dịch binary động:
 make -j$(nproc)
 
-# Trên Linux: Biên dịch binary tĩnh 100% portable:
+# Trên Linux: Biên dịch binary tĩnh portable:
 make static -j$(nproc)
 
 # Trên Windows (MSVC 2022 Developer Command Prompt / PowerShell):
@@ -113,7 +112,7 @@ bash scripts/test_local.sh
 
 ## 3. Trải Nghiệm Giao Diện Người Dùng & Web Viewing Engine
 
-Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, 100% SVG vector offline không phụ thuộc internet).
+Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, SVG vector offline không phụ thuộc internet).
 
 > **Chỉ cần gõ `slug` (không tham số) hoặc `slug portal`:** Hệ thống tự động kích hoạt Web Viewing Engine trên `http://127.0.0.1:8080/` và tự động mở trình duyệt mặc định của bạn!
 
@@ -314,26 +313,26 @@ Hệ thống tài liệu chuyên sâu được phân định chi tiết theo t�
 
 ---
 
-## 7. Kiểm Định An Toàn Kênh Mật Mã Bằng Wireshark (Wire Packet Inspection Guide)
+## 7. Kiểm Định Kênh Mật Mã Bằng Wireshark (Wire Packet Inspection Guide)
 
-Để chứng minh cam kết **"100% Zero-Plaintext Wire Encryption"** (tuyệt đối không lộ bản rõ tên file, nội dung code, hay header HTTP trên đường truyền), người dùng và giám khảo có thể sử dụng Wireshark để kiểm chứng trực tiếp gói tin mạng vật lý:
+Để kiểm chứng cơ chế mã hóa đường truyền (Zero-Plaintext Wire Encryption), người dùng có thể sử dụng Wireshark để phân tích gói tin mạng:
 
 ### 7.1. Các Bộ Lọc Hiển Thị Wireshark (Display Filters)
 
 | Mục tiêu kiểm chứng | Wireshark Display Filter | Kết quả kỳ vọng |
 | :--- | :--- | :--- |
-| **1. Cô lập toàn bộ lưu lượng Slug** | `tcp.port == 9443` | Bắt được toàn bộ frame bắt tay PQC và các chunk dữ liệu mã hóa. |
-| **2. Kiểm tra rò rỉ HTTP bản rõ** | `tcp.port == 9443 && (http \|\| http2)` | **0 packet (Trống hoàn toàn)**. Xác nhận HTTP chỉ chạy trên loopback `127.0.0.1`, không bay ra LAN/Internet. |
-| **3. Truy lùng từ khóa nhạy cảm (Leak Hunter)** | `tcp.port == 9443 && (frame contains "GET " \|\| frame contains "POST " \|\| frame contains "HTTP/" \|\| frame contains "password" \|\| frame contains "token" \|\| frame contains "api_key" \|\| frame contains "secret")` | **0 packet**. Không có bất kỳ byte từ khóa nhạy cảm nào xuất hiện dưới dạng bản rõ. |
-| **4. Kiểm tra rò rỉ tên file và mã nguồn** | `tcp.port == 9443 && (frame contains "main.cpp" \|\| frame contains "include" \|\| frame contains "import" \|\| frame contains "def ")` | **0 packet**. Tên file, cấu trúc manifest và nội dung dữ liệu đều được bọc trong payload AEAD. |
-| **5. Nhận diện các khối dữ liệu AEAD** | `tcp.port == 9443 && tcp.len > 100` | Toàn bộ payload là byte ngẫu nhiên phân bổ đồng đều ($H(X) \approx 7.98\text{ bits/byte}$). |
+| **1. Cô lập lưu lượng Slug** | `tcp.port == 9443` | Bắt được frame bắt tay PQC và các khối dữ liệu mã hóa. |
+| **2. Kiểm tra giao thức HTTP** | `tcp.port == 9443 && (http \|\| http2)` | **0 packet**. Xác nhận HTTP chỉ chạy trên loopback `127.0.0.1`, không xuất hiện trên LAN/Internet. |
+| **3. Kiểm tra từ khóa nhạy cảm** | `tcp.port == 9443 && (frame contains "GET " \|\| frame contains "POST " \|\| frame contains "HTTP/" \|\| frame contains "password" \|\| frame contains "token" \|\| frame contains "api_key" \|\| frame contains "secret")` | **0 packet**. Không có chuỗi từ khóa nhạy cảm xuất hiện dưới dạng bản rõ. |
+| **4. Kiểm tra tên file và mã nguồn** | `tcp.port == 9443 && (frame contains "main.cpp" \|\| frame contains "include" \|\| frame contains "import" \|\| frame contains "def ")` | **0 packet**. Tên file, manifest và nội dung dữ liệu được đóng gói trong payload AEAD. |
+| **5. Nhận diện các khối dữ liệu AEAD** | `tcp.port == 9443 && tcp.len > 100` | Payload là chuỗi byte ngẫu nhiên phân bổ đồng đều ($H(X) \approx 7.98\text{ bits/byte}$). |
 
 ### 7.2. Quy Trình 3 Bước Thực Nghiệm Bắt Gói Tin
 1. **Khởi chạy bắt gói tin trên Wireshark:** Chọn card mạng Wi-Fi hoặc Ethernet đang kết nối.
-2. **Thực hiện truyền dữ liệu:** Chạy lệnh `slug pull` kéo một dự án có chứa nhiều file `.cpp`, `.py`, `.env.example`.
+2. **Thực hiện truyền dữ liệu:** Chạy lệnh `slug pull` kéo một dự án có chứa các file `.cpp`, `.py`, `.env.example`.
 3. **Phân tích dòng luồng TCP Stream:** Nhấp chuột phải vào một gói tin trong danh sách -> chọn **Follow -> TCP Stream**.
-   - Toàn bộ luồng dữ liệu hiển thị dưới dạng chuỗi byte nhị phân ngẫu nhiên thuần túy của mật mã XChaCha20-Poly1305.
-   - Kẻ tấn công đứng giữa mạng (Man-in-the-Middle) dù thu thập toàn bộ tệp `.pcapng` cũng hoàn toàn vô giá trị trước mật mã Hậu Lượng Tử NIST FIPS 203.
+   - Toàn bộ luồng dữ liệu hiển thị dưới dạng chuỗi byte nhị phân của mật mã XChaCha20-Poly1305.
+   - Dữ liệu thu thập trên đường truyền chỉ có thể giải mã khi có khóa phiên thương lượng qua ML-KEM-768.
    - File mẫu bắt gói tin thực tế sẵn có trong kho: [`docs/real_capture_from_a_to_b.pcapng`](docs/real_capture_from_a_to_b.pcapng).
 
 ---

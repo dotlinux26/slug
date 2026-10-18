@@ -7,7 +7,7 @@
 
 ## Mục Lục
 
-1. [Giới thiệu Slug & Tôn chỉ No-Overclaim](#1-giới-thiệu-slug--tôn-chỉ-no-overclaim)
+1. [Giới thiệu Slug & Kiến trúc Tổng quan](#1-giới-thiệu-slug--kiến-trúc-tổng-quan)
 2. [Cài đặt & Biên dịch nhanh](#2-cài-đặt--biên-dịch-nhanh)
 3. [Giao diện Web Viewing Engine & Lối tắt Desktop](#3-giao-diện-web-viewing-engine--lối-tắt-desktop)
 4. [3 Bộ mật mã (Crypto Suites) & Kiến trúc Directional AEAD](#4-3-bộ-mật-mã-crypto-suites--kiến-trúc-directional-aead)
@@ -22,14 +22,14 @@
 
 ---
 
-## 1. Giới thiệu Slug & Tôn chỉ No-Overclaim
+## 1. Giới thiệu Slug & Kiến trúc Tổng quan
 
 Slug được thiết kế để giải quyết bài toán: **Làm thế nào để chia sẻ và đồng bộ mã nguồn/workspace an toàn giữa các máy tính mà không phải đẩy lên cloud, không cần Git repository công khai, không lãng phí băng thông WAN, không để lộ bí mật và không bị nghe lén bởi máy tính lượng tử trong tương lai?**
 
 ### So sánh Slug với Git, Rsync và HTTP Server:
 - **Khác Git:** Git lưu toàn bộ lịch sử commit vĩnh viễn trên remote repository. Slug tạo phiên chia sẻ tạm thời (ephemeral), tự hủy theo thời gian (TTL) và đồng bộ vi sai trực tiếp P2P.
-- **Khác Rsync/SCP:** Rsync chuyển nguyên vẹn file chứa mật khẩu, key, token. Slug tích hợp **Slug Guard** (100% offline, Regex + Shannon Entropy $H(X) \ge 4.0$) tự động cách ly credential và hỗ trợ kênh truyền mã hóa **ML-KEM-768 / XChaCha20-Poly1305**.
-- **Khác `python -m http.server`:** Không phơi bày plaintext HTTP ra mạng LAN. Kênh truyền trên dây mạng là **100% nhị phân PQC an toàn lượng tử (Zero Remote HTTP)**; hỗ trợ phân quyền rõ ràng (`[rw]` Đọc/Ghi, `[r]` Chỉ Đọc, `[w]` Hộp Thư Nộp Bài chống nhìn trộm).
+- **Khác Rsync/SCP:** Rsync chuyển nguyên vẹn file chứa mật khẩu, key, token. Slug tích hợp **Slug Guard** (quét offline, Regex + Shannon Entropy $H(X) \ge 4.0$) tự động cách ly credential và hỗ trợ kênh truyền mã hóa **ML-KEM-768 / XChaCha20-Poly1305**.
+- **Khác `python -m http.server`:** Không phơi bày plaintext HTTP ra mạng LAN. Kênh truyền trên dây mạng là **nhị phân PQC an toàn lượng tử (Zero Remote HTTP)**; hỗ trợ phân quyền rõ ràng (`[rw]` Đọc/Ghi, `[r]` Chỉ Đọc, `[w]` Hộp Thư Nộp Bài chống nhìn trộm).
 
 ---
 
@@ -73,7 +73,7 @@ scripts\build_windows.bat
 
 ## 3. Giao diện Web Viewing Engine & Lối tắt Desktop
 
-Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, 100% SVG vector offline không phụ thuộc internet).
+Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, SVG vector offline không phụ thuộc internet).
 
 ### 3.1. Khởi chạy 1-Chạm (Zero-Config GUI)
 Chỉ cần gõ lệnh không tham số:
@@ -105,9 +105,9 @@ Slug cung cấp 3 bộ mật mã phù hợp với từng nhu cầu:
 | **Chữ ký số (Sign/Verify)** | Ed25519 (128-bit) | Ed25519 (128-bit) | **ML-DSA-65 (Dilithium NIST FIPS 204)** |
 | **Hàm băm (Hashing)** | SHA-256 | BLAKE3 (Băm cây đa luồng) | **BLAKE3 (Băm cây đa luồng)** |
 | **Mã hóa luồng (AEAD)** | XChaCha20-Poly1305 | XChaCha20-Poly1305 | **XChaCha20-Poly1305 (256-bit)** |
-| **Kháng Lượng Tử (PQC)** | ❌ Không | ❌ Không | ✅ **Kháng lượng tử 100% FIPS 203/204** |
+| **Kháng Lượng Tử (PQC)** | ❌ Không | ❌ Không | ✅ **Kháng lượng tử (NIST FIPS 203/204)** |
 
-### Kỹ thuật mật mã chuyên sâu (Hardcore Crypto Internals):
+### Cơ chế Mật mã Kỹ thuật (Crypto Internals):
 - **Directional Salt AEAD:** Khóa phiên được dẫn xuất qua `BLAKE3-KDF` thành 2 muối độc lập: `ClientToServer_Salt` (16B) và `ServerToClient_Salt` (16B). Đảm bảo 2 chiều gửi và nhận không bao giờ dùng chung Nonce, triệt tiêu hoàn toàn rủi ro Nonce-Reuse trong XChaCha20.
 - **Cửa sổ trượt chống phát lại (Anti-Replay Window 64-bit):** Mỗi frame nhị phân mang số thứ tự tăng dần `tx_seq`. Phía nhận duy trì bitmap 64-bit để phát hiện và hủy ngay các gói tin phát lại.
 - **Chunk-Level AEAD:** File lớn được chia thành các khối 64 KiB. Mỗi khối đều được xác thực độc lập bằng mã MAC Poly1305 (16B) trước khi giải mã, bảo vệ chống giả mạo dữ liệu trung gian (MITM).
@@ -201,7 +201,7 @@ Slug không truyền lại toàn bộ dữ liệu nếu file chỉ sửa đổi 
 
 ### 8.1. 5 Cấp Độ Lọc Bảo Mật & Chia Sẻ (5 Filter Levels)
 Slug phân tách rõ ràng cơ chế lọc thành 5 cấp độ lựa chọn linh hoạt:
-- **Level 0 — Raw / Không Lọc (`--filter-level 0` hoặc `--raw` / `--no-filter`):** Chia sẻ trực tiếp toàn bộ dữ liệu workspace mà không áp dụng bất kỳ bộ lọc nào (tắt Rules, `.gitignore`, Regex Secret, Shannon Entropy và AI Semantic). Không quét nội dung, đánh dấu tất cả tệp là `AVAILABLE` (chỉ duy trì cách ly bất biến an toàn tuyệt đối với thư mục nội bộ `.slug/` và `.git/`).
+- **Level 0 — Raw / Không Lọc (`--filter-level 0` hoặc `--raw` / `--no-filter`):** Chia sẻ trực tiếp toàn bộ dữ liệu workspace mà không áp dụng bất kỳ bộ lọc nào (tắt Rules, `.gitignore`, Regex Secret, Shannon Entropy và AI Semantic). Không quét nội dung, đánh dấu tất cả tệp là `AVAILABLE` (chỉ duy trì cách ly bất biến với thư mục nội bộ `.slug/` và `.git/`).
 - **Level 1 — Rules (`--filter-level 1`):** Áp dụng `.gitignore` và quy tắc Host cấu hình trong `.slug/rules.conf`. Không quét regex và entropy.
 - **Level 2 — Regex (`--filter-level 2`):** Level 1 + quét mẫu phát hiện secrets, API keys (AWS, GitHub, Stripe), private keys, JWT tokens.
 - **Level 3 — Entropy (`--filter-level 3` - Khuyến nghị):** Level 2 + phân tích Shannon Entropy $H(X) \ge 4.0$ trên các tệp văn bản/code (`is_scannable_file`). Tự động bỏ qua file nhị phân, `.pyd`, `.dll`, media, zip để loại bỏ triệt để false positive.
@@ -317,7 +317,7 @@ Kết quả đo đạc thực tế trên CPU phổ thông:
 
 ## 13. Hướng Dẫn Kiểm Tra An Toàn Mật Mã Bằng Wireshark
 
-Để chứng minh dữ liệu bay trên mạng vật lý được bảo vệ 100% bằng mật mã Hậu Lượng Tử (PQC AEAD) và **không có bất kỳ byte bản rõ nào**:
+Để kiểm chứng dữ liệu truyền trên mạng vật lý được mã hóa bằng mật mã Hậu Lượng Tử (PQC AEAD) và **không có byte bản rõ**:
 
 ### 13.1. Các Bộ Lọc Wireshark Trực Quan (Display Filters)
 

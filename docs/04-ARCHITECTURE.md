@@ -58,7 +58,7 @@ Khi máy chủ host mở port và trình duyệt của máy khách truy cập tr
 * Kẻ tấn công bắt gói tin trên cùng mạng Wi-Fi (Wireshark / ARP Spoofing) có thể nhìn thấy nội dung file tải về và ticket xác thực.
 
 ### 2.2. Lựa Chọn Kiến Trúc A: Web UI Là Localhost Proxy Của Slug Client
-Để đảm bảo **100% dữ liệu bay trên dây mạng LAN/Internet đều là PQC AEAD Ciphertext**, Slug áp dụng **Kiến trúc A (Localhost Client Proxy)** tương tự mô hình của `kubectl proxy`, Tor Browser hoặc SSH Dynamic SOCKS:
+Để đảm bảo dữ liệu truyền trên mạng LAN/Internet là PQC AEAD Ciphertext, Slug áp dụng **Kiến trúc A (Localhost Client Proxy)** tương tự mô hình của `kubectl proxy`, Tor Browser hoặc SSH Dynamic SOCKS:
 
 ```text
 [MÁY KHÁCH - CLIENT MACHINE]                                    [MÁY CHỦ - HOST MACHINE]
@@ -72,11 +72,11 @@ Khi máy chủ host mở port và trình duyệt của máy khách truy cập tr
 +------------+-------------+                                    +-----------------------+
 | Slug CLI Client          |     KÊNH TRUYỀN DẪN VẬT LÝ         | Slug Server Engine    |
 | (Localhost Proxy Engine) | =================================> | (PQC Listener + VFS)  |
-| - Nhận lệnh từ browser   |   100% PQC AEAD CIPHERTEXT         | - SlugVFS Jail        |
+| - Nhận lệnh từ browser   |   PQC AEAD CIPHERTEXT              | - SlugVFS Jail        |
 | - Đóng gói PQC Chunks    |   - ML-KEM-768 Shared Secret       | - RBAC Enforcement    |
 | - Giải mã an toàn        |   - XChaCha20-Poly1305             | - Stateful AI Guard   |
 +--------------------------+   - Directional Salts              +-----------------------+
-                               (Không ai ngửi được trên Wi-Fi!)
+                               (Bảo vệ trên kênh vật lý)
 ```
 
 * **Nguyên lý hoạt động:**
@@ -149,46 +149,46 @@ Slug thiết kế kiến trúc mật mã theo mô hình trừu tượng hóa đa
 | **Mã hóa đối xứng (AEAD)** | **XChaCha20-Poly1305** (24B Nonce)| **XChaCha20-Poly1305** (24B Nonce)| **XChaCha20-Poly1305** (24B Nonce)|
 | **Kích thước Public Key** | 32 bytes | 32 bytes | **1.184 bytes** |
 | **Kích thước Ciphertext KEM**| 32 bytes | 32 bytes | **1.088 bytes** |
-| **Kháng Máy Tính Lượng Tử** | ❌ Không (Bị thuật toán Shor phá) | ⚠️ Kháng lượng tử tầng đối xứng | ✅ **100% Kháng Lượng Tử Toàn Diện** |
+| **Kháng Máy Tính Lượng Tử** | ❌ Không (Bị thuật toán Shor phá) | ⚠️ Kháng lượng tử tầng đối xứng | ✅ **Kháng lượng tử cả tầng KEM và Chữ ký** |
 | **Tốc độ bắt tay (Handshake)**| Cực nhanh (< 1 ms LAN) | Siêu tốc (< 0.5 ms LAN) | Rất nhanh (~1–2 ms LAN) |
-| **Mục đích sử dụng** | Thiết bị nhúng, CPU đời cũ, chuẩn tương thích quốc tế rộng rãi | Cân bằng hoàn hảo tốc độ & hiệu năng cao cho môi trường lập trình hàng ngày | Bảo mật tuyệt đối trước mối đe dọa "Thu thập trước, giải mã sau" (Store-Now-Decrypt-Later) |
+| **Mục đích sử dụng** | Thiết bị nhúng, CPU đời cũ, chuẩn tương thích quốc tế rộng rãi | Cân bằng tốc độ & hiệu năng cao cho môi trường lập trình hàng ngày | Bảo vệ trước mối đe dọa "Thu thập trước, giải mã sau" (Store-Now-Decrypt-Later) |
 
 ---
 
 ### 5.2. Bản Chất Khác Biệt Của Từng Bộ Suite
 
-1. **Suite 1 (Classical - Chuẩn Cổ Điển Tin Cậy):**
-   - Sử dụng hoàn toàn các nguyên thủy mật mã đã được kiểm chứng qua hàng chục năm: **SHA-256**, **HKDF-SHA256**, **X25519**, **Ed25519**.
-   - Phù hợp nhất cho môi trường yêu cầu tuân thủ nghiêm ngặt các chứng chỉ kế thừa hoặc chạy trên phần cứng vi điều khiển/nhúng không có tập lệnh mở rộng SIMD.
+1. **Suite 1 (Classical - Chuẩn Cổ Điển):**
+   - Sử dụng các nguyên thủy mật mã phổ biến: **SHA-256**, **HKDF-SHA256**, **X25519**, **Ed25519**.
+   - Phù hợp nhất cho môi trường yêu cầu tuân thủ các chuẩn kế thừa hoặc chạy trên phần cứng nhúng không có tập lệnh mở rộng SIMD.
 
 2. **Suite 2 (Modern - Hiện Đại Tối Ưu Tốc Độ):**
-   - Đột phá về tốc độ nhờ thay thế toàn bộ tầng băm và KDF bằng **BLAKE3**.
-   - BLAKE3 tận dụng cấu trúc cây Merkle kết hợp song song hóa phần cứng SIMD (AVX-512, AVX2, ARM Neon), cho tốc độ băm tệp nhanh hơn SHA-256 từ 6–12 lần, giúp việc tính toán checksum của các file dự án lớn hàng gigabyte diễn ra tức thì.
-   - Vẫn sử dụng khóa trao đổi X25519 siêu nhẹ (32 bytes), giữ độ trễ kết nối ở mức tối thiểu.
+   - Tối ưu tốc độ nhờ thay thế tầng băm và KDF bằng **BLAKE3**.
+   - BLAKE3 tận dụng cấu trúc cây Merkle kết hợp song song hóa phần cứng SIMD (AVX-512, AVX2, ARM Neon), cho tốc độ băm tệp nhanh hơn SHA-256 từ 6–12 lần, giúp việc tính toán checksum của các file dự án lớn hàng gigabyte diễn ra nhanh chóng.
+   - Vẫn sử dụng khóa trao đổi X25519 nhẹ (32 bytes), giữ độ trễ kết nối ở mức tối thiểu.
 
-3. **Suite 3 (Pure PQC - Hậu Lượng Tử Thuần Khiết):**
-   - Triển khai đầy đủ hai bộ tiêu chuẩn mật mã Hậu Lượng Tử chính thức được Viện Tiêu chuẩn và Công nghệ Quốc gia Hoa Kỳ ban hành vào tháng 8/2024:
-     - **ML-KEM-768 (FIPS 203)**: Cơ chế đóng gói khóa dựa trên bài toán Mạng Tinh Thể (Module Lattice - M-LWE), thay thế hoàn toàn thuật toán Diffie-Hellman / RSA.
-     - **ML-DSA-65 (FIPS 204)**: Thuật toán chữ ký số hậu lượng tử dựa trên Module Learning with Errors, đảm bảo định danh không thể bị giả mạo ngay cả khi máy tính lượng tử quy mô lớn xuất hiện.
-   - Triệt tiêu hoàn toàn kịch bản tấn công **"Thu thập dữ liệu hôm nay, chờ có máy tính lượng tử để giải mã trong tương lai" (Store-Now-Decrypt-Later)**.
+3. **Suite 3 (Pure PQC - Hậu Lượng Tử):**
+   - Triển khai hai bộ tiêu chuẩn mật mã Hậu Lượng Tử do Viện Tiêu chuẩn và Công nghệ Quốc gia Hoa Kỳ ban hành vào tháng 8/2024:
+     - **ML-KEM-768 (FIPS 203)**: Cơ chế đóng gói khóa dựa trên bài toán Mạng Tinh Thể (Module Lattice - M-LWE), thay thế thuật toán Diffie-Hellman / RSA.
+     - **ML-DSA-65 (FIPS 204)**: Thuật toán chữ ký số hậu lượng tử dựa trên Module Learning with Errors, bảo vệ tính xác thực định danh trước năng lực tính toán lượng tử.
+   - Giảm thiểu rủi ro từ kịch bản tấn công **"Thu thập dữ liệu hôm nay, chờ có máy tính lượng tử để giải mã trong tương lai" (Store-Now-Decrypt-Later)**.
 
 ---
 
-### 5.3. Các Kỹ Thuật Mật Mã "Hardcore" Được Ứng Dụng Tổng Quát Trong Toàn Bộ Slug
+### 5.3. Các Kỹ Thuật Mật Mã Được Ứng Dụng Trong Slug
 
-Kiến trúc mật mã của Slug không dừng lại ở việc gọi API thư viện, mà áp dụng các nguyên lý bảo mật thực chiến ở mức sâu nhất:
+Kiến trúc mật mã của Slug áp dụng các nguyên lý bảo mật hệ thống:
 
-#### 1. Forward Secrecy Tuyệt Đối (Bảo Mật Chuyển Tiếp Từng Phiên)
+#### 1. Forward Secrecy (Bảo Mật Chuyển Tiếp Từng Phiên)
 - Mọi phiên kết nối đều sinh ra cặp khóa KEM dùng một lần (**Ephemeral Keypair**). 
 - `SharedSecret` chỉ tồn tại trong bộ nhớ RAM tạm thời và được dọn dẹp bằng kỹ thuật ghi đè an toàn (`explicit_bzero` / `SecureZeroMemory`) ngay khi phiên làm việc chấm dứt.
-- Kể cả khi kẻ tấn công đánh cắp được máy tính của Host hoặc Client sau đó, toàn bộ dữ liệu gói tin bắt được trên mạng trước đây vĩnh viễn không thể giải mã được.
+- Nếu thiết bị bị xâm nhập sau khi phiên đã đóng, các gói tin thu thập trên đường truyền trước đó không thể giải mã lại do không lưu khóa phiên.
 
 #### 2. Kỹ Thuật Directional Salt & Nonce Anti-Collision (Chống Đụng Độ Nonce Cho XChaCha20)
-- Với mật mã dòng ChaCha20, việc **tái sử dụng Nonce với cùng một khóa (Nonce Reuse)** là thảm họa bảo mật (dẫn đến việc giải mã được cả hai luồng bản rõ qua phép XOR).
-- Slug giải quyết triệt để vấn đề này trong môi trường mạng Full-Duplex (cả hai chiều gửi nhận đồng thời) bằng cơ chế:
+- Với mật mã dòng ChaCha20, việc **tái sử dụng Nonce với cùng một khóa (Nonce Reuse)** là lỗi bảo mật nghiêm trọng.
+- Slug xử lý vấn đề này trong môi trường mạng Full-Duplex (cả hai chiều gửi nhận đồng thời) bằng cơ chế:
   - Sinh **2 Muối Độc Lập** từ `SharedSecret`: `ClientToServer_Salt` (16 bytes) và `ServerToClient_Salt` (16 bytes).
   - Ghép với bộ đếm gói tin đơn điệu tăng dần (**Monotonic 64-bit SeqNum**): $\text{Nonce} = \text{Salt}_{16} \parallel \text{SeqNum}_8$.
-  - Dù hai bên gửi gói tin số `SeqNum = 1` tại cùng một tích tắc, Nonce 24 bytes ở hai chiều vẫn hoàn toàn độc lập, đảm bảo an toàn tuyệt đối.
+  - Dù hai bên gửi gói tin số `SeqNum = 1` tại cùng một tích tắc, Nonce 24 bytes ở hai chiều vẫn độc lập, đảm bảo an toàn cho luồng mã hóa.
 
 #### 3. Bọc Khối Dữ Liệu Phân Mảnh Kèm AAD (Chunk-Level Authenticated Streaming)
 - Slug không mã hóa cả file lớn vào một mảng bộ nhớ (tránh cạn kiệt RAM). Dữ liệu được băm nhỏ thành các khối chuẩn 64 KiB.
@@ -238,7 +238,7 @@ Kiến trúc mật mã của Slug không dừng lại ở việc gọi API thư 
 ```
 
 ### 6.1. Bộ Nhớ Đệm Chỉ Mục Kiểm Toán Trạng Thái (`.slug/index.db`)
-- **Bản chất lưu trữ:** Tệp `.slug/index.db` được quản lý bởi engine SQLite 3.46.1 nhúng trực tiếp dưới dạng C-amalgamation độc lập (`third_party/sqlite/sqlite3.c`), không đòi hỏi bất kỳ thư viện ngoài nào (100% zero-dependency).
+- **Bản chất lưu trữ:** Tệp `.slug/index.db` được quản lý bởi engine SQLite 3.46.1 nhúng trực tiếp dưới dạng C-amalgamation độc lập (`third_party/sqlite/sqlite3.c`), không đòi hỏi bất kỳ thư viện ngoài nào (zero-dependency).
 - **Cơ chế WAL Mode (Write-Ahead Logging):** Slug kích hoạt `PRAGMA journal_mode=WAL` và `PRAGMA synchronous=NORMAL`, cho phép các tiến trình đọc (Web Portal, CLI list) và tiến trình ghi (Scanner, Host Admin) hoạt động đồng thời mà không bị khóa bảng (`database is locked`).
 - **Tối ưu tra cứu $O(1)$:** Kết hợp giữa SQLite database trên đĩa và bảng băm `std::unordered_map` trong RAM. Mỗi tệp được kiểm tra qua BLAKE3 hash; nếu hash không thay đổi, Slug trả về trạng thái ngay lập tức (0ms).
 - **Cơ chế Tự Động Chữa Lành (Auto-Healing):** Khi nạp database, hệ thống tự động chạy truy vấn dọn dẹp các cờ lỗi lịch sử trên các file nhị phân, compiled hoặc media (như `.pyd`, `.dll`, `.png`), khôi phục trạng thái sạch tức thì.
@@ -265,7 +265,7 @@ Kiến trúc mật mã của Slug không dừng lại ở việc gọi API thư 
 | :--- | :---: | :---: | :--- |
 | `AVAILABLE` | Có | Được phép tải | Vượt qua các chốt kiểm duyệt chính sách và bảo mật. |
 | `BLOCKED` | Có | Bị từ chối | Bị chặn bởi `.gitignore`, rule của Host, hoặc bộ quét secret. |
-| `.slug/`, `.git/` | Không hiển thị | Tuyệt đối cấm | Thư mục metadata nội bộ, được bảo vệ ở tầng thấp nhất (`is_internal_slug_path`). |
+| `.slug/`, `.git/` | Không hiển thị | Bị chặn | Thư mục metadata nội bộ, được bảo vệ ở tầng thấp nhất (`is_internal_slug_path`). |
 
 Mọi thao tác cấm tải được cưỡng chế trực tiếp tại backend (`vfs_.read_file`, `get_chunk`). Frontend không bao giờ quyết định quyền truy cập dữ liệu.
 
@@ -279,7 +279,7 @@ Level 0: Raw / Không Lọc (Chia sẻ thô toàn bộ dữ liệu, tắt Rules,
     │                       └── Level 4: AI (Bổ sung Contextual LLM Advisor: Ollama / OpenAI / Gemini)
 ```
 
-- **Tách biệt với Scope Override:** Các cờ `--include-ignored` và `--no-filter` (tương đương `--filter-level 0`) chỉ là tùy chọn phạm vi chia sẻ (scope), tuyệt đối không bao giờ làm vô hiệu hóa xác thực, mã hóa AEAD, RBAC, chống path traversal hoặc bảo vệ thư mục metadata `.slug/`.
+- **Tách biệt với Scope Override:** Các cờ `--include-ignored` và `--no-filter` (tương đương `--filter-level 0`) chỉ là tùy chọn phạm vi chia sẻ (scope), không làm vô hiệu hóa xác thực, mã hóa AEAD, RBAC, chống path traversal hoặc bảo vệ thư mục metadata `.slug/`.
 
 ---
 
@@ -299,9 +299,9 @@ Slug xây dựng mô hình thời gian sống (TTL) 4 tầng độc lập và ch
 
 ---
 
-## 9. Kiểm Định An Toàn Kênh Mật Mã Bằng Wireshark (Deep Packet Inspection)
+## 9. Kiểm Định Kênh Mật Mã Bằng Wireshark (Deep Packet Inspection)
 
-Mọi gói tin truyền qua mạng giữa Client và Host (trên cổng `9443`) đều được mã hóa hoàn toàn bằng **ML-KEM-768 + XChaCha20-Poly1305 AEAD**. Dưới đây là bộ truy vấn Wireshark chính xác để kiểm chứng:
+Mọi gói tin truyền qua mạng giữa Client và Host (trên cổng `9443`) đều được mã hóa bằng **ML-KEM-768 + XChaCha20-Poly1305 AEAD**. Dưới đây là bộ truy vấn Wireshark để kiểm chứng:
 
 ### 9.1. Bộ Lọc Hiển Thị (Display Filters) Kiểm Tra Bảo Mật
 
@@ -309,7 +309,7 @@ Mọi gói tin truyền qua mạng giữa Client và Host (trên cổng `9443`) 
 # 1. Bắt toàn bộ luồng dữ liệu của Slug
 tcp.port == 9443
 
-# 2. Chứng minh KHÔNG có HTTP bản rõ trên mạng (Kỳ vọng: 0 packets)
+# 2. Kiểm tra giao thức HTTP trên mạng (Kỳ vọng: 0 packets)
 tcp.port == 9443 && (http || http2)
 
 # 3. Quét tìm bản rõ từ khóa nhạy cảm / headers (Kỳ vọng: 0 packets)
@@ -322,10 +322,10 @@ tcp.port == 9443 && (frame contains "main.cpp" || frame contains "include" || fr
 tcp.port == 9443 && tcp.len > 100
 ```
 
-### 9.2. Phân Tích Thực Tế Dòng Luồng TCP Stream
+### 9.2. Phân Tích Dòng Luồng TCP Stream
 Khi nhấp chuột phải vào một gói tin và chọn **Follow -> TCP Stream**:
-- **Khung bắt tay (Handshake Frame):** Ciphertext ML-KEM-768 (1088 bytes) và Public Key (1184 bytes) có phân bổ entropy ngẫu nhiên cao.
+- **Khung bắt tay (Handshake Frame):** Ciphertext ML-KEM-768 (1088 bytes) và Public Key (1184 bytes) có phân bổ entropy ngẫu nhiên.
 - **Khung dữ liệu (Data Frames):** Từng chunk 64 KiB được bọc trong 16-byte Poly1305 Auth Tag, Nonce độc lập phân hướng và ciphertext.
-- **Kết luận:** Dù kẻ tấn công đứng cùng mạng Wi-Fi và dump toàn bộ gói tin bằng `tcpdump` hay `Wireshark`, 100% dữ liệu thu được chỉ là ciphertext ngẫu nhiên thuần túy, bảo vệ tuyệt đối tính riêng tư của dữ liệu người dùng. Mẫu capture thực tế: [`docs/real_capture_from_a_to_b.pcapng`](real_capture_from_a_to_b.pcapng).
+- **Kết luận:** Dữ liệu thu được trên đường truyền là ciphertext, bảo vệ tính riêng tư của dữ liệu người dùng. Mẫu capture thực tế: [`docs/real_capture_from_a_to_b.pcapng`](real_capture_from_a_to_b.pcapng).
 
 

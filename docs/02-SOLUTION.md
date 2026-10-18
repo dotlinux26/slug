@@ -61,7 +61,7 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
      # Hoặc mở giao diện Web Viewing Engine cục bộ trên máy mình (gõ 'slug' -> http://127.0.0.1:8080/):
      # Kết nối tới 192.168.1.105:9443 bằng OTP và nhấn "Tải ZIP Toàn Bộ Thư Mục"
      ```
-  - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768). Tuyệt đối Zero Remote HTTP trên mạng!
+  - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768), áp dụng mô hình Zero Remote HTTP trên mạng ngoài.
 
 ---
 
@@ -108,28 +108,27 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
   slug env run -- npm test      # Giải mã trực tiếp trong RAM và nạp biến môi trường lúc chạy
   slug env restore              # Khôi phục lại .env bản rõ khi cần cấu hình lại
   ```
-  - **Lợi ích:** Tạo ra rào cản ma sát chủ động (friction barrier) ngăn chặn AI đọc trộm secret từ ổ đĩa, trong khi tiến trình test và run vẫn chạy bình thường với 100% biến môi trường được cấp từ RAM.
+  - **Lợi ích:** Tạo ra rào cản ngăn chặn công cụ lập chỉ mục tự động và AI đọc cấu hình bản rõ từ ổ đĩa, trong khi tiến trình nhận biến môi trường trực tiếp từ RAM khi thực thi.
 
 ---
 
-## 3. Bảng So Sánh Toàn Diện Giữa Slug và Các Công Cụ Khác
+## 3. Bảng So Sánh Giữa Slug và Các Công Cụ Khác
 
 | Tiêu chí | `python -m http.server` | FTP / SFTP | Google Drive / Zalo | **Slug** |
 | :--- | :---: | :---: | :---: | :---: |
-| **Bảo mật kênh truyền (Wire Security)** | ❌ Plaintext (HTTP) | ⚠️ SFTP có TLS/SSH, FTP là bản rõ | ⚠️ TLS tới Cloud bên thứ ba | ✅ **100% PQC AEAD** (ML-KEM-768 + XChaCha20) |
+| **Bảo mật kênh truyền (Wire Security)** | ❌ Plaintext (HTTP) | ⚠️ SFTP có TLS/SSH, FTP là bản rõ | ⚠️ TLS tới Cloud bên thứ ba | ✅ **PQC AEAD** (ML-KEM-768 + XChaCha20) |
 | **Băng thông & Tốc độ** | ✅ Tối đa LAN | ✅ Tối đa LAN | ❌ Phụ thuộc tốc độ WAN Internet | ✅ **Tối đa LAN gigabit (0 byte WAN)** |
 | **Cài đặt & Thiết lập** | ✅ Cực nhanh (cần Python) | ❌ Rất phức tạp (cần root/admin) | ⚠️ Cần tài khoản, login mạng | ✅ **1 file nhị phân (~8MB, zero-setup)** |
 | **Phân quyền nộp bài (Write-Only)** | ❌ Không có | ⚠️ Cấu hình quyền thư mục phức tạp | ❌ Khó kiểm soát bài nộp chép nhau | ✅ **Hỗ trợ sẵn OTP quyền Ghi `[w]` (Blind Drop)** |
 | **Nhận thức cấu trúc dự án** | ❌ Không (gửi cả rác build) | ❌ Không (gửi nguyên thư mục) | ❌ Không (phải tự nén thủ công) | ✅ **Tự động đọc `.gitignore` lọc rác build** |
 | **Kiểm duyệt bí mật (Secret Scanner)** | ❌ Không (lộ sạch `.env`) | ❌ Không có | ❌ Không có | ✅ **Slug Guard (Entropy + AI Semantic Guard)** |
-| **Bảo vệ RAM cho tiến trình chạy AI** | ❌ Không có | ❌ Không có | ❌ Không có | ✅ **PQC EnvShield (RAM-Only Injection)** |
+| **Quản lý biến môi trường trong RAM** | ❌ Không có | ❌ Không có | ❌ Không có | ✅ **PQC EnvShield (RAM-Only Injection)** |
 
 ---
 
-## 4. Tôn Chỉ "Nói Đúng - Nói Đủ - Không Overclaim"
+## 4. Đặc Tính Kỹ Thuật & Giới Hạn Hệ Thống
 
-Slug cam kết tính trung thực và minh bạch trong mọi tài liệu kỹ thuật:
-1. **Không thần thánh hóa AI:** AI trong Slug không thể "đoán mò" hay "ngăn chặn 100% mọi lỗi lập trình". AI chỉ đóng vai trò là một người cố vấn ngữ cảnh (Advisor) hỗ trợ phân loại mức độ rủi ro của các chuỗi bí mật nghi vấn.
-2. **Quyền quyết định tối thượng thuộc về người dùng:** Mọi quyết định gắn cờ của AI đều có thể được người dùng phê duyệt hoặc bỏ qua thông qua lệnh `slug audit allow`.
-3. **Thẳng thắn về giới hạn bộ nhớ:** Slug EnvShield bảo vệ secret khỏi sự quét ngầm của AI từ đĩa cứng. Khi ứng dụng chạy, biến môi trường hiển nhiên tồn tại trong RAM; nếu người dùng cố tình viết code `printenv` để trích xuất thì dữ liệu vẫn sẽ hiển thị.
-4. **Không phóng đại hiệu năng mạng:** Lệnh `slug bench` chỉ đo hiệu năng CPU mật mã (ML-KEM, BLAKE3, ChaCha20), tốc độ phân mảnh vi sai In-Memory và tốc độ đọc ghi đĩa vật lý của máy; tốc độ truyền mạng thực tế phụ thuộc vào hạ tầng đường truyền giữa hai máy.
+1. **Phạm vi của AI:** AI trong Slug đóng vai trò cố vấn ngữ cảnh (Advisor) hỗ trợ phân tích mức độ nghi vấn của chuỗi ký tự, không thay thế các quy tắc kiểm tra xác định.
+2. **Quyền kiểm soát của người dùng:** Người dùng có quyền phê duyệt hoặc bỏ qua cảnh báo của AI thông qua lệnh `slug audit allow`.
+3. **Phạm vi bộ nhớ RAM:** EnvShield quản lý tệp cấu hình trên đĩa và nạp trực tiếp vào bộ nhớ RAM của tiến trình con. Khi tiến trình thực thi, biến môi trường nằm trong không gian tiến trình; các lệnh đọc môi trường trực tiếp từ tiến trình (như `printenv`) vẫn có thể truy cập giá trị này.
+4. **Đo lường hiệu năng:** Lệnh `slug bench` đo lường năng lực tính toán CPU với các nguyên mẫu mật mã (ML-KEM, BLAKE3, ChaCha20), tốc độ xử lý phân mảnh vi sai In-Memory và tốc độ I/O đĩa cục bộ. Băng thông mạng thực tế phụ thuộc vào hạ tầng mạng vật lý giữa các máy.
