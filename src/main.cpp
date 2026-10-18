@@ -3158,6 +3158,11 @@ static void send_portal_http(platform::TcpSocket& sock, int code, const std::str
                        (extra_headers.empty() ? "" : (extra_headers + "\r\n")) +
                        "\r\n" + body;
     sock.send_all(resp);
+#if defined(SLUG_PLATFORM_WINDOWS)
+    ::shutdown(sock.native_handle(), SD_SEND);
+#else
+    ::shutdown(sock.native_handle(), SHUT_WR);
+#endif
 }
 
 static std::string pick_folder_native() {
@@ -4837,7 +4842,7 @@ int cmd_portal(int argc, char* argv[]) {
                     job->worker_thread = std::make_unique<std::thread>([job, host, port, suite, ticket, target_dir, opts]() {
                         job->status.store(JobStatus::RUNNING);
                         auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
-                        if (!dedicated_client->connect(host, port)) {
+                        if (!dedicated_client->is_connected() && !dedicated_client->connect(host, port)) {
                             job->status.store(JobStatus::FAILED);
                             job->error_message = "Không thể kết nối kênh truyền dữ liệu chuyên dụng tới " + host + ":" + std::to_string(port);
                             return;
@@ -4978,7 +4983,7 @@ int cmd_portal(int argc, char* argv[]) {
                     }
 
                     auto upload_client = std::make_unique<net::SlugClient>(host, port, suite);
-                    if (!upload_client->connect(host, port)) {
+                    if (!upload_client->is_connected() && !upload_client->connect(host, port)) {
                         send_portal_http(sock, 500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Không thể kết nối kênh truyền tải dữ liệu\"}");
                         return;
                     }
@@ -5051,20 +5056,12 @@ int cmd_portal(int argc, char* argv[]) {
                     }
                 }
 
+                std::string q_ticket = get_query_param(query, "ticket");
+                if (!q_ticket.empty()) ticket = q_ticket;
+
                 std::string rel_path = get_query_param(query, "path");
                 if (rel_path.empty()) {
                     send_portal_http(sock, 400, "Bad Request", "text/plain", "Error: Missing file path parameter.");
-                    return;
-                }
-
-                auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
-                if (!dedicated_client->connect(host, port)) {
-                    send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Failed to connect dedicated streaming channel to " + host + ":" + std::to_string(port));
-                    return;
-                }
-                auto auth = dedicated_client->authenticate_ticket(ticket);
-                if (!auth.success) {
-                    send_portal_http(sock, 401, "Unauthorized", "text/plain", "Error: Dedicated stream authentication failed: " + auth.message);
                     return;
                 }
 
@@ -5091,10 +5088,37 @@ int cmd_portal(int argc, char* argv[]) {
                     return sock.send_all(sp);
                 };
 
-                bool ok = dedicated_client->stream_pull_to_sink(rel_path, on_header, on_chunk);
+                bool ok = false;
+
+                // Priority 1: Use dedicated connection so g_portal.mtx is free for other UI requests
+                if (!ticket.empty() && !host.empty() && port > 0) {
+                    try {
+                        auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
+                        if (dedicated_client->is_connected()) {
+                            auto auth = dedicated_client->authenticate_ticket(ticket);
+                            if (auth.success) {
+                                ok = dedicated_client->stream_pull_to_sink(rel_path, on_header, on_chunk);
+                            }
+                        }
+                    } catch (...) {}
+                }
+
+                // Priority 2: Seamless fallback to already-authenticated primary client channel
                 if (!ok && !header_sent) {
-                    std::string err_msg = dedicated_client->get_last_error();
-                    send_portal_http(sock, 404, "Not Found", "text/plain", "Error downloading file: " + (err_msg.empty() ? "File not found or transfer aborted" : err_msg));
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (g_portal.client && g_portal.client->is_connected()) {
+                        ok = g_portal.client->stream_pull_to_sink(rel_path, on_header, on_chunk);
+                    }
+                }
+
+                if (!ok && !header_sent) {
+                    send_portal_http(sock, 404, "Not Found", "text/plain", "Error downloading file: File not found or remote workspace rejected download.");
+                } else if (header_sent) {
+#if defined(SLUG_PLATFORM_WINDOWS)
+                    ::shutdown(sock.native_handle(), SD_SEND);
+#else
+                    ::shutdown(sock.native_handle(), SHUT_WR);
+#endif
                 }
                 return;
             }
@@ -5121,19 +5145,20 @@ int cmd_portal(int argc, char* argv[]) {
                     }
                 }
 
+                std::string q_ticket = get_query_param(query, "ticket");
+                if (!q_ticket.empty()) ticket = q_ticket;
+
                 std::string rel_dir = get_query_param(query, "dir");
-                auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
-                if (!dedicated_client->connect(host, port)) {
-                    send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Failed to connect to remote host.");
-                    return;
-                }
-                auto auth = dedicated_client->authenticate_ticket(ticket);
-                if (!auth.success) {
-                    send_portal_http(sock, 401, "Unauthorized", "text/plain", "Error: Authentication failed: " + auth.message);
-                    return;
+
+                // Check manifest size first via g_portal or dedicated
+                std::optional<sync::WorkspaceManifest> m_opt;
+                {
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (g_portal.client && g_portal.client->is_connected()) {
+                        m_opt = g_portal.client->fetch_manifest();
+                    }
                 }
 
-                auto m_opt = dedicated_client->fetch_manifest();
                 if (m_opt) {
                     std::string norm_dir = rel_dir;
                     std::replace(norm_dir.begin(), norm_dir.end(), '\\', '/');
@@ -5156,9 +5181,36 @@ int cmd_portal(int argc, char* argv[]) {
                     }
                 }
 
-                auto resp = dedicated_client->tunnel_http(raw);
+                std::vector<uint8_t> resp;
+
+                // Priority 1: dedicated client connection
+                if (!ticket.empty() && !host.empty() && port > 0) {
+                    try {
+                        auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
+                        if (dedicated_client->is_connected()) {
+                            auto auth = dedicated_client->authenticate_ticket(ticket);
+                            if (auth.success) {
+                                resp = dedicated_client->tunnel_http(raw);
+                            }
+                        }
+                    } catch (...) {}
+                }
+
+                // Priority 2: fallback to primary client
+                if (resp.empty()) {
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (g_portal.client && g_portal.client->is_connected()) {
+                        resp = g_portal.client->tunnel_http(raw);
+                    }
+                }
+
                 if (!resp.empty()) {
                     sock.send_all(resp);
+#if defined(SLUG_PLATFORM_WINDOWS)
+                    ::shutdown(sock.native_handle(), SD_SEND);
+#else
+                    ::shutdown(sock.native_handle(), SHUT_WR);
+#endif
                 } else {
                     send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Remote workspace failed to package ZIP.");
                 }
