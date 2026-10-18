@@ -3165,8 +3165,8 @@ static void send_portal_http(platform::TcpSocket& sock, int code, const std::str
 #endif
 }
 
-static std::string pick_folder_native() {
-    return slug::platform::NativeDialog::pick_folder_native();
+static std::string pick_folder_native(const std::wstring& title = L"Slug: Chọn Thư Mục", const std::string& posix_title = "Slug: Chọn Thư Mục") {
+    return slug::platform::NativeDialog::pick_folder_native(title, posix_title);
 }
 
 static std::string pick_file_native() {
@@ -4947,19 +4947,26 @@ int cmd_portal(int argc, char* argv[]) {
                         fname = std::filesystem::path(fpath).filename().string();
                     }
 
-                    // Native Save As dialog on client machine
+                    // Native Folder Picker dialog on client machine: user selects folder, filename is preserved
                     if (dest.empty()) {
-                        dest = save_file_native(fname);
+                        dest = pick_folder_native(L"Slug: Chọn Thư Mục Lưu Tệp Tin", "Slug: Chọn Thư Mục Lưu Tệp Tin");
                         if (dest.empty()) {
                             res["status"] = "cancelled";
-                            res["message"] = "Đã hủy chọn nơi lưu tệp.";
+                            res["message"] = "Đã hủy chọn thư mục lưu tệp.";
                             send_portal_http(sock, 200, "OK", "application/json", res.dump());
                             return;
                         }
                     }
 
-                    std::filesystem::path target_file(dest);
+                    std::filesystem::path chosen_folder(dest);
+                    std::filesystem::path target_file;
                     std::error_code ec;
+                    if (std::filesystem::is_directory(chosen_folder, ec) || !chosen_folder.has_extension()) {
+                        target_file = chosen_folder / fname;
+                    } else {
+                        target_file = chosen_folder;
+                    }
+
                     if (target_file.has_parent_path()) {
                         std::filesystem::create_directories(target_file.parent_path(), ec);
                     }

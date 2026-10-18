@@ -25,7 +25,7 @@ namespace slug::platform {
 
 class NativeDialog {
 public:
-    static std::string pick_folder_native(const std::wstring& title = L"Slug: Chọn Thư Mục Workspace Chia Sẻ") {
+    static std::string pick_folder_native(const std::wstring& title = L"Slug: Chọn Thư Mục", const std::string& posix_title = "Slug: Chọn Thư Mục") {
 #if defined(SLUG_PLATFORM_WINDOWS)
         std::string result = "";
         HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -70,7 +70,8 @@ public:
 #elif defined(SLUG_PLATFORM_POSIX)
         std::string chosen_path = "";
         // 1. Zenity modal
-        FILE* pipe = popen("zenity --file-selection --directory --title='Slug: Chọn Thư Mục Workspace Chia Sẻ' --modal 2>/dev/null", "r");
+        std::string cmd = "zenity --file-selection --directory --title='" + posix_title + "' --modal 2>/dev/null";
+        FILE* pipe = popen(cmd.c_str(), "r");
         if (pipe) {
             char buf[512];
             while (fgets(buf, sizeof(buf), pipe)) {
@@ -80,7 +81,8 @@ public:
         }
         // 2. Fallback to kdialog
         if (chosen_path.empty()) {
-            pipe = popen("kdialog --getexistingdirectory . --title 'Slug: Chọn Thư Mục Workspace Chia Sẻ' 2>/dev/null", "r");
+            std::string kcmd = "kdialog --getexistingdirectory . --title '" + posix_title + "' 2>/dev/null";
+            pipe = popen(kcmd.c_str(), "r");
             if (pipe) {
                 char buf[512];
                 while (fgets(buf, sizeof(buf), pipe)) {
