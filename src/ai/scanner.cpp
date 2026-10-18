@@ -35,17 +35,21 @@ static bool is_safe_shell_param(const std::string& s) {
     return true;
 }
 
-AiScanner::AiScanner(ProviderType provider, std::string endpoint, std::string model, std::string api_key)
-    : provider_(provider), endpoint_(std::move(endpoint)), model_(std::move(model)), api_key_(std::move(api_key)) {}
+AiScanner::AiScanner(ProviderType provider, std::string endpoint, std::string model, std::string api_key,
+                     std::string body_template, std::vector<std::pair<std::string, std::string>> headers)
+    : provider_(provider), endpoint_(std::move(endpoint)), model_(std::move(model)), api_key_(std::move(api_key)),
+      body_template_(std::move(body_template)), headers_(std::move(headers)) {}
 
 AiScanner AiScanner::create_for_level(core::FilterLevel level, core::AiModelProvider ai_provider, const std::filesystem::path& workspace_root) {
     if (level == core::FilterLevel::LEVEL_4_AI) {
         std::string prov_str = core::ai_model_to_string(ai_provider);
         std::string endpoint = (ai_provider == core::AiModelProvider::OPENAI) ? "https://api.openai.com/v1/chat/completions" :
-                               ((ai_provider == core::AiModelProvider::GEMINI) ? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" : "http://127.0.0.1:11434");
+                               ((ai_provider == core::AiModelProvider::GEMINI) ? "https://generativelanguage.googleapis.com/v1beta" : "http://127.0.0.1:11434");
         std::string model = (ai_provider == core::AiModelProvider::OPENAI) ? "gpt-4o-mini" :
-                            ((ai_provider == core::AiModelProvider::GEMINI) ? "gemini-2.0-flash" : "qwen2.5-coder:7b");
+                            ((ai_provider == core::AiModelProvider::GEMINI) ? "gemini-flash-latest" : "deepseek-r1");
         std::string api_key = "";
+        std::string body_template = "";
+        std::vector<std::pair<std::string, std::string>> headers;
 
         if (!workspace_root.empty()) {
             std::filesystem::path ai_file = workspace_root / ".slug" / "ai.json";
@@ -58,15 +62,27 @@ AiScanner AiScanner::create_for_level(core::FilterLevel level, core::AiModelProv
                         if (j.contains("ai_endpoint") && j["ai_endpoint"].is_string()) endpoint = j["ai_endpoint"].get<std::string>();
                         if (j.contains("ai_model") && j["ai_model"].is_string()) model = j["ai_model"].get<std::string>();
                         if (j.contains("ai_api_key") && j["ai_api_key"].is_string()) api_key = j["ai_api_key"].get<std::string>();
+                        if (j.contains("body_template")) {
+                            if (j["body_template"].is_string()) {
+                                body_template = j["body_template"].get<std::string>();
+                            } else {
+                                body_template = j["body_template"].dump(2);
+                            }
+                        }
+                        if (j.contains("headers") && j["headers"].is_object()) {
+                            for (auto& [hk, hv] : j["headers"].items()) {
+                                if (hv.is_string()) headers.push_back({hk, hv.get<std::string>()});
+                            }
+                        }
                     } catch (...) {}
                 }
             }
         }
 
-        if (prov_str == "openai" || prov_str == "gemini") {
-            return AiScanner(ProviderType::CLOUD_API, endpoint, model, api_key);
+        if (prov_str == "openai" || prov_str == "gemini" || prov_str == "anthropic" || prov_str == "custom" || !body_template.empty()) {
+            return AiScanner(ProviderType::CLOUD_API, endpoint, model, api_key, body_template, headers);
         } else {
-            return AiScanner(ProviderType::LOCAL_OLLAMA, endpoint, model, api_key);
+            return AiScanner(ProviderType::LOCAL_OLLAMA, endpoint, model, api_key, body_template, headers);
         }
     }
     return AiScanner(ProviderType::LOCAL_HEURISTIC);
@@ -222,15 +238,24 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
 
 static std::string execute_http_post(const std::string& url,
                                      const std::filesystem::path& payload_file,
-                                     const std::string& auth_bearer,
+                                     const std::vector<std::pair<std::string, std::string>>& headers,
                                      int timeout_sec) {
     std::string response;
 
     // 1. Primary Attempt: curl.exe (standard on Windows 10 build 1803+, Windows 11, Linux, macOS)
-    std::string auth_header = auth_bearer.empty() ? "" : "-H \"Authorization: Bearer " + auth_bearer + "\" ";
+    std::string headers_cmd = "";
+    bool has_content_type = false;
+    for (const auto& [name, val] : headers) {
+        if (!name.empty()) {
+            headers_cmd += "-H \"" + name + ": " + val + "\" ";
+            if (name == "Content-Type" || name == "content-type") has_content_type = true;
+        }
+    }
+    if (!has_content_type) {
+        headers_cmd = "-H \"Content-Type: application/json\" " + headers_cmd;
+    }
     std::string curl_cmd = "curl -s -m " + std::to_string(timeout_sec) + " -X POST \"" + url + "\" "
-                         + "-H \"Content-Type: application/json\" "
-                         + auth_header
+                         + headers_cmd
                          + "-d @\"" + payload_file.generic_string() + "\"" + NULL_DEV;
 
     FILE* fp = popen(curl_cmd.c_str(), "r");
@@ -241,8 +266,7 @@ static std::string execute_http_post(const std::string& url,
     }
 
 #if defined(_WIN32)
-    // 2. Windows Fallback: If curl.exe is missing (Windows 7 SP1 or older Windows 10 < 1803),
-    // automatically fallback to PowerShell + .NET HttpWebRequest which is built into System32 out-of-the-box.
+    // 2. Windows Fallback via PowerShell + HttpWebRequest
     if (response.empty()) {
         std::string win_path = payload_file.string();
         for (auto& c : win_path) { if (c == '/') c = '\\'; }
@@ -255,8 +279,10 @@ static std::string execute_http_post(const std::string& url,
             "$req.Method = 'POST'; "
             "$req.ContentType = 'application/json; charset=utf-8'; "
             "$req.Timeout = " + std::to_string(timeout_ms) + "; ";
-        if (!auth_bearer.empty()) {
-            ps_cmd += "$req.Headers.Add('Authorization', 'Bearer " + auth_bearer + "'); ";
+        for (const auto& [name, val] : headers) {
+            if (!name.empty() && name != "Content-Type" && name != "content-type") {
+                ps_cmd += "$req.Headers.Add('" + name + "', '" + val + "'); ";
+            }
         }
         ps_cmd += "$data = [System.IO.File]::ReadAllBytes('" + win_path + "'); "
                   "$req.ContentLength = $data.Length; "
@@ -288,9 +314,57 @@ static std::string execute_http_post(const std::string& url,
     return response;
 }
 
+static std::string execute_http_post(const std::string& url,
+                                     const std::filesystem::path& payload_file,
+                                     const std::string& header_name,
+                                     const std::string& header_val,
+                                     int timeout_sec) {
+    std::vector<std::pair<std::string, std::string>> hdrs;
+    if (!header_name.empty() && !header_val.empty()) {
+        hdrs.push_back({header_name, header_val});
+    }
+    return execute_http_post(url, payload_file, hdrs, timeout_sec);
+}
+
+// Universal extractor: handles Gemini, OpenAI, Claude, DeepSeek, Ollama, and arbitrary custom payloads
+static std::optional<ScanFinding> try_extract_finding(const json& j) {
+    if (j.is_object()) {
+        if (j.contains("has_secret") && (j["has_secret"].is_boolean() || j["has_secret"].is_number())) {
+            ScanFinding f;
+            f.has_secret = j["has_secret"].get<bool>();
+            f.line_number = j.value("line", 1);
+            f.reason = j.value("reason", "Secret detected by AI model");
+            f.detector = "AI Guard";
+            return f;
+        }
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            auto res = try_extract_finding(it.value());
+            if (res.has_value()) return res;
+        }
+    } else if (j.is_array()) {
+        for (const auto& elem : j) {
+            auto res = try_extract_finding(elem);
+            if (res.has_value()) return res;
+        }
+    } else if (j.is_string()) {
+        std::string s = j.get<std::string>();
+        size_t b1 = s.find('{');
+        size_t b2 = s.rfind('}');
+        if (b1 != std::string::npos && b2 != std::string::npos && b2 > b1) {
+            try {
+                auto sub_j = json::parse(s.substr(b1, b2 - b1 + 1));
+                auto res = try_extract_finding(sub_j);
+                if (res.has_value()) return res;
+            } catch (...) {}
+        }
+    }
+    return std::nullopt;
+}
+
 ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_view content) const {
     auto h_finding = scan_heuristic(file_path, content, false);
     if (h_finding.has_secret) return h_finding;
+    if (!ollama_alive_) return h_finding;
 
     auto lines = core::Utils::split(content, '\n');
     std::string snippet;
@@ -310,27 +384,215 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ollama_" + std::to_string(core::Utils::current_timestamp()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string response = execute_http_post(url, tmp_payload, "", 5);
+    std::string response = execute_http_post(url, tmp_payload, "", "", 3);
+
+    std::error_code ec;
+    std::filesystem::remove(tmp_payload, ec);
+
+    if (response.empty()) {
+        ollama_alive_ = false; // Fast-fail remaining files if Ollama server is not running
+        return h_finding;
+    }
+
+    try {
+        auto j = json::parse(response);
+        auto f_opt = try_extract_finding(j);
+        if (f_opt.has_value()) {
+            f_opt->detector = "AI Guard";
+            f_opt->reason = "Ollama Local Audit: " + f_opt->reason;
+            return *f_opt;
+        }
+    } catch (...) {}
+
+    return h_finding;
+}
+
+ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_view content) const {
+    std::string api_key = api_key_;
+    if (api_key.empty()) {
+        const char* k = std::getenv("GEMINI_API_KEY");
+        if (!k) k = std::getenv("SLUG_AI_API_KEY");
+        if (k) api_key = k;
+    }
+    if (api_key.empty()) {
+        return scan_heuristic(file_path, content, false);
+    }
+
+    auto h_finding = scan_heuristic(file_path, content, false);
+    if (h_finding.has_secret) return h_finding;
+
+    auto lines = core::Utils::split(content, '\n');
+    std::string snippet;
+    size_t scan_limit = std::min(lines.size(), (size_t)100);
+    for (size_t i = 0; i < scan_limit; ++i) {
+        snippet += lines[i] + "\n";
+    }
+
+    std::string model = model_.empty() ? "gemini-flash-latest" : model_;
+    std::string endpoint = endpoint_;
+    if (endpoint.empty() || endpoint.find("localhost") != std::string::npos || endpoint.find("127.0.0.1") != std::string::npos) {
+        endpoint = "https://generativelanguage.googleapis.com/v1beta";
+    }
+    while (!endpoint.empty() && endpoint.back() == '/') endpoint.pop_back();
+
+    std::string url;
+    if (endpoint.find(":generateContent") != std::string::npos) {
+        url = endpoint;
+    } else if (endpoint.find("/models/") != std::string::npos) {
+        url = endpoint + ":generateContent";
+    } else {
+        url = endpoint + "/models/" + model + ":generateContent";
+    }
+
+    if (!is_safe_shell_param(url) || !is_safe_shell_param(api_key)) return h_finding;
+
+    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + snippet;
+
+    json req_body;
+    req_body["contents"] = json::array({
+        json{
+            {"parts", json::array({
+                json{{"text", prompt}}
+            })}
+        }
+    });
+
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_gemini_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+
+    std::string response = execute_http_post(url, tmp_payload, "x-goog-api-key", api_key, 8);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
     if (!response.empty()) {
         try {
-            auto j = json::parse(response);
-            std::string text = j.value("response", "");
-            size_t b1 = text.find('{');
-            size_t b2 = text.rfind('}');
-            if (b1 != std::string::npos && b2 != std::string::npos && b2 > b1) {
-                auto res_obj = json::parse(text.substr(b1, b2 - b1 + 1));
-                if (res_obj.value("has_secret", false)) {
-                    ScanFinding finding;
-                    finding.has_secret = true;
-                    finding.detector = "AI Guard";
-                    finding.line_number = res_obj.value("line", 1);
-                    finding.reason = "Ollama Local Audit: " + res_obj.value("reason", "Secret detected by local model");
-                    return finding;
-                }
+            auto resp_j = json::parse(response);
+            auto f_opt = try_extract_finding(resp_j);
+            if (f_opt.has_value()) {
+                f_opt->detector = "AI Guard";
+                f_opt->reason = "Gemini AI Audit: " + f_opt->reason;
+                return *f_opt;
+            }
+        } catch (...) {}
+    }
+
+    return h_finding;
+}
+
+ScanFinding AiScanner::scan_anthropic(const std::string& file_path, std::string_view content) const {
+    std::string api_key = api_key_;
+    if (api_key.empty()) {
+        const char* k = std::getenv("ANTHROPIC_API_KEY");
+        if (!k) k = std::getenv("SLUG_AI_API_KEY");
+        if (k) api_key = k;
+    }
+    if (api_key.empty()) return scan_heuristic(file_path, content, false);
+
+    auto h_finding = scan_heuristic(file_path, content, false);
+    if (h_finding.has_secret) return h_finding;
+
+    auto lines = core::Utils::split(content, '\n');
+    std::string snippet;
+    size_t scan_limit = std::min(lines.size(), (size_t)100);
+    for (size_t i = 0; i < scan_limit; ++i) {
+        snippet += lines[i] + "\n";
+    }
+
+    std::string model = model_.empty() ? "claude-3-5-haiku-20241022" : model_;
+    std::string endpoint = endpoint_.empty() ? "https://api.anthropic.com/v1/messages" : endpoint_;
+
+    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + snippet;
+
+    json req_body;
+    req_body["model"] = model;
+    req_body["max_tokens"] = 1024;
+    req_body["messages"] = json::array({
+        json{{"role", "user"}, {"content", prompt}}
+    });
+
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_anthropic_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+
+    std::vector<std::pair<std::string, std::string>> hdrs = {
+        {"x-api-key", api_key},
+        {"anthropic-version", "2023-06-01"}
+    };
+    std::string response = execute_http_post(endpoint, tmp_payload, hdrs, 10);
+
+    std::error_code ec;
+    std::filesystem::remove(tmp_payload, ec);
+
+    if (!response.empty()) {
+        try {
+            auto resp_j = json::parse(response);
+            auto f_opt = try_extract_finding(resp_j);
+            if (f_opt.has_value()) {
+                f_opt->detector = "AI Guard";
+                f_opt->reason = "Claude AI Audit: " + f_opt->reason;
+                return *f_opt;
+            }
+        } catch (...) {}
+    }
+
+    return h_finding;
+}
+
+ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_view content) const {
+    auto h_finding = scan_heuristic(file_path, content, false);
+    if (h_finding.has_secret) return h_finding;
+
+    auto lines = core::Utils::split(content, '\n');
+    std::string snippet;
+    size_t scan_limit = std::min(lines.size(), (size_t)100);
+    for (size_t i = 0; i < scan_limit; ++i) {
+        snippet += lines[i] + "\n";
+    }
+
+    std::string prompt = "You are an automated code security auditor. Inspect this code from '" + file_path + "'. Does it contain hardcoded credentials, API keys, private keys, or passwords? Respond ONLY with a valid JSON object: {\"has_secret\": true/false, \"reason\": \"<short description>\", \"line\": <line_number>}.\n\n" + snippet;
+
+    // Render body from template
+    std::string raw_body = body_template_;
+    json prompt_json = prompt;
+    std::string prompt_escaped = prompt_json.dump();
+    if (prompt_escaped.size() >= 2 && prompt_escaped.front() == '"' && prompt_escaped.back() == '"') {
+        prompt_escaped = prompt_escaped.substr(1, prompt_escaped.size() - 2);
+    }
+
+    auto replace_all = [](std::string& str, const std::string& from, const std::string& to) {
+        size_t start_pos = 0;
+        while((start_pos = str.find(from, start_pos)) != std::string::npos) {
+            str.replace(start_pos, from.length(), to);
+            start_pos += to.length();
+        }
+    };
+
+    replace_all(raw_body, "{{PROMPT}}", prompt_escaped);
+    replace_all(raw_body, "{{MODEL}}", model_);
+    replace_all(raw_body, "{{FILE_PATH}}", file_path);
+    replace_all(raw_body, "{{API_KEY}}", api_key_);
+
+    std::vector<std::pair<std::string, std::string>> hdrs = headers_;
+    for (auto& [hk, hv] : hdrs) {
+        replace_all(hv, "{{API_KEY}}", api_key_);
+    }
+
+    auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_custom_ai_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+    platform::PathUtils::write_text_file_atomic(tmp_payload, raw_body);
+
+    std::string response = execute_http_post(endpoint_, tmp_payload, hdrs, 10);
+
+    std::error_code ec;
+    std::filesystem::remove(tmp_payload, ec);
+
+    if (!response.empty()) {
+        try {
+            auto resp_j = json::parse(response);
+            auto f_opt = try_extract_finding(resp_j);
+            if (f_opt.has_value()) {
+                f_opt->detector = "AI Guard";
+                f_opt->reason = "Custom AI Audit: " + f_opt->reason;
+                return *f_opt;
             }
         } catch (...) {}
     }
@@ -343,7 +605,6 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     if (api_key.empty()) {
         const char* api_key_env = std::getenv("SLUG_AI_API_KEY");
         if (!api_key_env) api_key_env = std::getenv("GROQ_API_KEY");
-        if (!api_key_env) api_key_env = std::getenv("GEMINI_API_KEY");
         if (!api_key_env) api_key_env = std::getenv("OPENROUTER_API_KEY");
         if (!api_key_env) api_key_env = std::getenv("OPENAI_API_KEY");
         if (api_key_env) api_key = api_key_env;
@@ -363,9 +624,6 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
         } else if (api_key.rfind("sk-or-", 0) == 0 || std::getenv("OPENROUTER_API_KEY")) {
             endpoint = "https://openrouter.ai/api/v1/chat/completions";
             model = "meta-llama/llama-3.2-3b-instruct:free";
-        } else if (std::getenv("GEMINI_API_KEY") || api_key.rfind("AIzaSy", 0) == 0) {
-            endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-            model = "gemini-2.0-flash";
         } else {
             endpoint = "https://api.openai.com/v1/chat/completions";
             model = "gpt-4o-mini";
@@ -407,7 +665,7 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ai_req_" + std::to_string(core::Utils::current_timestamp()) + ".json");
     platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
 
-    std::string response = execute_http_post(endpoint, tmp_payload, api_key, 8);
+    std::string response = execute_http_post(endpoint, tmp_payload, "Authorization", "Bearer " + api_key, 8);
 
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
@@ -415,21 +673,11 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     if (!response.empty()) {
         try {
             auto resp_j = json::parse(response);
-            if (resp_j.contains("choices") && resp_j["choices"].is_array() && !resp_j["choices"].empty()) {
-                std::string text = resp_j["choices"][0]["message"].value("content", "");
-                size_t b1 = text.find('{');
-                size_t b2 = text.rfind('}');
-                if (b1 != std::string::npos && b2 != std::string::npos && b2 > b1) {
-                    auto res_obj = json::parse(text.substr(b1, b2 - b1 + 1));
-                    if (res_obj.value("has_secret", false)) {
-                        ScanFinding finding;
-                        finding.has_secret = true;
-                        finding.detector = "AI Guard";
-                        finding.line_number = res_obj.value("line", 1);
-                        finding.reason = "AI Cloud Audit: " + res_obj.value("reason", "Credential detected by LLM");
-                        return finding;
-                    }
-                }
+            auto f_opt = try_extract_finding(resp_j);
+            if (f_opt.has_value()) {
+                f_opt->detector = "AI Guard";
+                f_opt->reason = "Cloud AI Audit: " + f_opt->reason;
+                return *f_opt;
             }
         } catch (...) {}
     }
@@ -462,9 +710,172 @@ ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_vi
         return scan_ollama(file_path, content);
     }
     if (provider_ == ProviderType::CLOUD_API) {
+        if (!body_template_.empty()) {
+            return scan_custom(file_path, content);
+        }
+        if (endpoint_.find("generativelanguage.googleapis.com") != std::string::npos ||
+            api_key_.rfind("AIzaSy", 0) == 0 ||
+            model_.find("gemini") != std::string::npos) {
+            return scan_gemini(file_path, content);
+        }
+        if (endpoint_.find("api.anthropic.com") != std::string::npos ||
+            model_.find("claude") != std::string::npos ||
+            api_key_.rfind("sk-ant-", 0) == 0) {
+            return scan_anthropic(file_path, content);
+        }
         return scan_cloud(file_path, content);
     }
     return scan_heuristic(file_path, content, deep, true);
+}
+
+std::pair<bool, std::string> AiScanner::test_connection() const {
+    if (provider_ == ProviderType::LOCAL_HEURISTIC) {
+        return {true, "Bộ lọc nội bộ (Local Heuristic / Regex) hoạt động bình thường mà không cần kết nối mạng."};
+    }
+
+    if (provider_ == ProviderType::LOCAL_OLLAMA) {
+        std::string url = endpoint_ + "/api/tags";
+        auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+        platform::PathUtils::write_text_file_atomic(tmp_payload, "{}");
+        std::string resp = execute_http_post(url, tmp_payload, "", "", 4);
+        std::error_code ec;
+        std::filesystem::remove(tmp_payload, ec);
+        if (resp.empty()) {
+            return {false, "Không thể kết nối tới máy chủ Ollama tại '" + endpoint_ + "'. Hãy đảm bảo Ollama đã được khởi động."};
+        }
+        try {
+            auto j = json::parse(resp);
+            if (j.contains("models")) {
+                return {true, "Kết nối Ollama thành công! Máy chủ đang hoạt động tại " + endpoint_ + "."};
+            }
+        } catch (...) {}
+        return {true, "Kết nối Ollama thành công!"};
+    }
+
+    if (provider_ == ProviderType::CLOUD_API) {
+        // 1. Google Gemini API
+        if (endpoint_.find("generativelanguage.googleapis.com") != std::string::npos ||
+            api_key_.rfind("AIzaSy", 0) == 0 ||
+            model_.find("gemini") != std::string::npos) {
+            
+            std::string api_key = api_key_;
+            if (api_key.empty()) {
+                const char* k = std::getenv("GEMINI_API_KEY");
+                if (k) api_key = k;
+            }
+            if (api_key.empty()) {
+                return {false, "Thiếu API Key cho Google Gemini. Vui lòng nhập khóa bắt đầu bằng 'AIzaSy...'."};
+            }
+
+            std::string model = model_.empty() ? "gemini-flash-latest" : model_;
+            std::string endpoint = endpoint_.empty() ? "https://generativelanguage.googleapis.com/v1beta" : endpoint_;
+            while (!endpoint.empty() && endpoint.back() == '/') endpoint.pop_back();
+
+            std::string url;
+            if (endpoint.find(":generateContent") != std::string::npos) {
+                url = endpoint;
+            } else if (endpoint.find("/models/") != std::string::npos) {
+                url = endpoint + ":generateContent";
+            } else {
+                url = endpoint + "/models/" + model + ":generateContent";
+            }
+
+            json req_body;
+            req_body["contents"] = json::array({
+                json{{"parts", json::array({json{{"text", "ping"}}})}}
+            });
+
+            auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_gemini_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+            platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+            std::string resp = execute_http_post(url, tmp_payload, "x-goog-api-key", api_key, 6);
+            std::error_code ec;
+            std::filesystem::remove(tmp_payload, ec);
+
+            if (resp.empty()) {
+                return {false, "Không nhận được phản hồi từ Google Gemini API. Vui lòng kiểm tra kết nối mạng và URL endpoint."};
+            }
+            try {
+                auto j = json::parse(resp);
+                if (j.contains("error")) {
+                    std::string msg = j["error"].value("message", "Lỗi không xác định từ Gemini API");
+                    return {false, "Google Gemini API trả về lỗi: " + msg};
+                }
+                if (j.contains("candidates")) {
+                    return {true, "Kết nối Google Gemini API thành công! Mô hình [" + model + "] phản hồi bình thường."};
+                }
+            } catch (...) {}
+            return {true, "Kết nối Google Gemini API thành công!"};
+        }
+
+        // 2. Anthropic Claude API
+        if (endpoint_.find("api.anthropic.com") != std::string::npos ||
+            model_.find("claude") != std::string::npos ||
+            api_key_.rfind("sk-ant-", 0) == 0) {
+            
+            std::string api_key = api_key_;
+            if (api_key.empty()) return {false, "Thiếu API Key cho Anthropic Claude. Vui lòng nhập khóa 'sk-ant-...'."};
+            
+            std::string model = model_.empty() ? "claude-3-5-haiku-20241022" : model_;
+            std::string endpoint = endpoint_.empty() ? "https://api.anthropic.com/v1/messages" : endpoint_;
+
+            json req_body;
+            req_body["model"] = model;
+            req_body["max_tokens"] = 10;
+            req_body["messages"] = json::array({json{{"role", "user"}, {"content", "hi"}}});
+
+            auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_claude_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+            platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+            std::vector<std::pair<std::string, std::string>> hdrs = {
+                {"x-api-key", api_key},
+                {"anthropic-version", "2023-06-01"}
+            };
+            std::string resp = execute_http_post(endpoint, tmp_payload, hdrs, 6);
+            std::error_code ec;
+            std::filesystem::remove(tmp_payload, ec);
+
+            if (resp.empty()) return {false, "Không nhận được phản hồi từ Anthropic Claude API."};
+            try {
+                auto j = json::parse(resp);
+                if (j.contains("error")) {
+                    std::string msg = j["error"].value("message", "Lỗi Claude API");
+                    return {false, "Claude API trả về lỗi: " + msg};
+                }
+                if (j.contains("content")) return {true, "Kết nối Claude API thành công! Mô hình [" + model + "] hoạt động bình thường."};
+            } catch (...) {}
+            return {true, "Kết nối Anthropic Claude API thành công!"};
+        }
+
+        // 3. OpenAI / Custom Cloud API
+        std::string ep = endpoint_.empty() ? "https://api.openai.com/v1/chat/completions" : endpoint_;
+        json req_body;
+        req_body["model"] = model_.empty() ? "gpt-4o-mini" : model_;
+        req_body["messages"] = json::array({json{{"role", "user"}, {"content", "hi"}}});
+        req_body["max_tokens"] = 10;
+
+        auto tmp_payload = std::filesystem::temp_directory_path() / ("slug_ping_cloud_" + std::to_string(core::Utils::current_timestamp()) + ".json");
+        platform::PathUtils::write_text_file_atomic(tmp_payload, req_body.dump());
+        std::string auth_hdr = "Bearer " + api_key_;
+        std::string resp = execute_http_post(ep, tmp_payload, "Authorization", auth_hdr, 6);
+        std::error_code ec;
+        std::filesystem::remove(tmp_payload, ec);
+
+        if (resp.empty()) {
+            return {false, "Không nhận được phản hồi từ dịch vụ AI tại '" + ep + "'."};
+        }
+        try {
+            auto j = json::parse(resp);
+            if (j.contains("error")) {
+                std::string msg = j["error"].value("message", "Lỗi API");
+                return {false, "Dịch vụ AI trả về lỗi: " + msg};
+            }
+            if (j.contains("choices")) {
+                return {true, "Kết nối dịch vụ AI thành công! Mô hình [" + model_ + "] phản hồi bình thường."};
+            }
+        } catch (...) {}
+        return {true, "Dịch vụ AI đã phản hồi kết nối!"};
+    }
+
+    return {true, "Dịch vụ sẵn sàng."};
 }
 
 } // namespace slug::ai

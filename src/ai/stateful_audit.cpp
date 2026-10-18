@@ -537,11 +537,11 @@ StatefulAuditIndex::QueryResult StatefulAuditIndex::query_entries(
 
     // Detector filter: all | ai | regex | entropy | rule | manual
     if (detector_filter == "ai") {
-        conditions.push_back("(status = 2 OR reason LIKE '%AI%' OR reason LIKE '%Model%')");
+        conditions.push_back("(status = 2 OR reason LIKE '%AI%' OR reason LIKE '%Model%' OR reason LIKE '%Claude%' OR reason LIKE '%Gemini%' OR reason LIKE '%Ollama%')");
     } else if (detector_filter == "regex") {
-        conditions.push_back("(status = 6 OR (status = 2 AND (reason LIKE '%Regex%' OR reason LIKE '%Secret%' OR reason LIKE '%Pattern%')))");
+        conditions.push_back("((status = 6 OR status = 2) AND reason NOT LIKE '%Entropy%' AND reason NOT LIKE '%entropy%' AND (reason LIKE '%Regex%' OR reason LIKE '%Secret%' OR reason LIKE '%Pattern%' OR reason LIKE '%Key%' OR reason LIKE '%Token%' OR reason LIKE '%Password%' OR reason LIKE '%Environment%'))");
     } else if (detector_filter == "entropy") {
-        conditions.push_back("(status = 6 OR (status = 2 AND reason LIKE '%Entropy%'))");
+        conditions.push_back("(reason LIKE '%Entropy%' OR reason LIKE '%entropy%')");
     } else if (detector_filter == "rule" || detector_filter == "manual") {
         conditions.push_back("(status = 5 OR reason LIKE '%Rule%' OR reason LIKE '%Manual%')");
     }

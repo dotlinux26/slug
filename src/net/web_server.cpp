@@ -1187,14 +1187,35 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
             return;
         }
+        std::string det_filter = "all";
+        try {
+            if (!req.body.empty()) {
+                auto j = json::parse(req.body);
+                if (j.contains("detector") && j["detector"].is_string()) {
+                    det_filter = j["detector"].get<std::string>();
+                }
+            }
+        } catch (...) {}
+
         fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
         ai::StatefulAuditIndex audit_idx(idx_file);
-        auto flagged = audit_idx.list_flagged_or_all(true);
+        std::vector<ai::AuditIndexEntry> flagged;
+        if (det_filter == "all" || det_filter.empty()) {
+            flagged = audit_idx.list_flagged_or_all(true);
+        } else {
+            auto q = audit_idx.query_entries("blocked", det_filter, "all", "", 100000, 0);
+            flagged = q.entries;
+        }
+
         fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
         policy::RulesManager mgr(rules_file);
         int count = 0;
+        std::string action_reason = (det_filter == "all" || det_filter.empty())
+            ? "Admin batch whitelist"
+            : ("Admin batch whitelist (" + det_filter + ")");
+
         for (const auto& item : flagged) {
-            if (audit_idx.allow_file(item.file_path, "Admin batch whitelist", current_session->identity)) {
+            if (audit_idx.allow_file(item.file_path, action_reason, current_session->identity)) {
                 count++;
                 for (const auto& r : mgr.rules()) {
                     if (r.value == item.file_path || r.value == (item.file_path + "/")) {
@@ -1205,9 +1226,13 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             }
         }
         audit_idx.save();
-        control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW_ALL", "all", "Whitelisted " + std::to_string(count) + " files");
+        control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW_ALL", det_filter, "Whitelisted " + std::to_string(count) + " files");
         control_server_.invalidate_manifest_cache();
-        send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"count\":" + std::to_string(count) + "}");
+        json res;
+        res["status"] = "ok";
+        res["count"] = count;
+        res["detector"] = det_filter;
+        send_resp(200, "OK", "application/json", res.dump());
         return;
     }
 
@@ -1319,7 +1344,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         return;
     }
 
-    if (path == "/api/admin/ai/config") {
+    if (path == "/api/admin/ai/config" && method == "GET") {
         if (current_session->identity != "host_admin" && !is_localhost) {
             send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
             return;
@@ -1340,6 +1365,8 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                     cfg["ai_provider"] = j.value("ai_provider", cfg["ai_provider"].get<std::string>());
                     cfg["ai_endpoint"] = j.value("ai_endpoint", cfg["ai_endpoint"].get<std::string>());
                     cfg["ai_model"] = j.value("ai_model", cfg["ai_model"].get<std::string>());
+                    if (j.contains("body_template")) cfg["body_template"] = j["body_template"];
+                    if (j.contains("headers")) cfg["headers"] = j["headers"];
                     std::string key = j.value("ai_api_key", "");
                     if (!key.empty()) {
                         cfg["ai_api_key"] = "••••••••";
@@ -1364,6 +1391,10 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             std::string model = j.value("ai_model", "deepseek-r1");
             std::string api_key = j.value("ai_api_key", "");
 
+            json save_j;
+            if (j.contains("body_template")) save_j["body_template"] = j["body_template"];
+            if (j.contains("headers")) save_j["headers"] = j["headers"];
+
             if (j.contains("raw_json") && j["raw_json"].is_string()) {
                 try {
                     auto raw_j = json::parse(j["raw_json"].get<std::string>());
@@ -1371,6 +1402,8 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                     endpoint = raw_j.value("ai_endpoint", endpoint);
                     model = raw_j.value("ai_model", model);
                     api_key = raw_j.value("ai_api_key", api_key);
+                    if (raw_j.contains("body_template")) save_j["body_template"] = raw_j["body_template"];
+                    if (raw_j.contains("headers")) save_j["headers"] = raw_j["headers"];
                 } catch (...) {}
             }
 
@@ -1389,7 +1422,6 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                 api_key = existing_key;
             }
 
-            json save_j;
             save_j["ai_provider"] = prov_str;
             save_j["ai_endpoint"] = endpoint;
             save_j["ai_model"] = model;
@@ -1419,15 +1451,72 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         }
         std::string prov = "ollama";
         std::string endpoint = "http://localhost:11434";
+        std::string model = "";
+        std::string api_key = "";
+        std::string body_template = "";
+        std::vector<std::pair<std::string, std::string>> headers;
+
         try {
             auto j = json::parse(req.body);
             prov = j.value("ai_provider", "ollama");
             endpoint = j.value("ai_endpoint", "http://localhost:11434");
-        } catch (...) {}
-        json res;
-        res["status"] = "ok";
-        res["message"] = "Kết nối tới dịch vụ AI (" + prov + ") tại " + endpoint + " phản hồi bình thường.";
-        send_resp(200, "OK", "application/json", res.dump());
+            model = j.value("ai_model", "");
+            api_key = j.value("ai_api_key", "");
+
+            if (j.contains("body_template")) {
+                body_template = j["body_template"].is_string() ? j["body_template"].get<std::string>() : j["body_template"].dump(2);
+            }
+            if (j.contains("headers") && j["headers"].is_object()) {
+                for (auto& [hk, hv] : j["headers"].items()) {
+                    if (hv.is_string()) headers.push_back({hk, hv.get<std::string>()});
+                }
+            }
+
+            if (j.contains("raw_json") && j["raw_json"].is_string()) {
+                try {
+                    auto raw_j = json::parse(j["raw_json"].get<std::string>());
+                    prov = raw_j.value("ai_provider", prov);
+                    endpoint = raw_j.value("ai_endpoint", endpoint);
+                    model = raw_j.value("ai_model", model);
+                    api_key = raw_j.value("ai_api_key", api_key);
+                    if (raw_j.contains("body_template")) {
+                        body_template = raw_j["body_template"].is_string() ? raw_j["body_template"].get<std::string>() : raw_j["body_template"].dump(2);
+                    }
+                    if (raw_j.contains("headers") && raw_j["headers"].is_object()) {
+                        for (auto& [hk, hv] : raw_j["headers"].items()) {
+                            if (hv.is_string()) headers.push_back({hk, hv.get<std::string>()});
+                        }
+                    }
+                } catch (...) {}
+            }
+
+            if (api_key.empty() || api_key == "••••••••") {
+                fs::path ai_file = control_server_.workspace_root() / ".slug" / "ai.json";
+                if (fs::exists(ai_file)) {
+                    auto old_content = platform::PathUtils::read_text_file(ai_file);
+                    if (old_content && !old_content->empty()) {
+                        try {
+                            auto old_j = json::parse(*old_content);
+                            api_key = old_j.value("ai_api_key", "");
+                        } catch (...) {}
+                    }
+                }
+            }
+
+            ai::AiScanner::ProviderType ptype = (prov == "ollama") ? ai::AiScanner::ProviderType::LOCAL_OLLAMA : ai::AiScanner::ProviderType::CLOUD_API;
+            ai::AiScanner test_scanner(ptype, endpoint, model, api_key, body_template, headers);
+            auto [test_ok, test_msg] = test_scanner.test_connection();
+
+            json res;
+            res["status"] = test_ok ? "ok" : "error";
+            res["message"] = test_msg;
+            send_resp(200, "OK", "application/json", res.dump());
+        } catch (const std::exception& e) {
+            json res;
+            res["status"] = "error";
+            res["message"] = "Lỗi khi kiểm tra kết nối AI: " + std::string(e.what());
+            send_resp(200, "OK", "application/json", res.dump());
+        }
         return;
     }
 

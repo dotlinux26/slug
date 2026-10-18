@@ -52,6 +52,9 @@ Slug được **hiện thực hóa hoàn chỉnh bằng mã nguồn C++20**, có
 - **Không cần cài đặt môi trường:** Không đòi hỏi cài Node.js runtime, Python, Java, hay cơ sở dữ liệu bên ngoài. Tải về là chạy ngay.
 - **Tích hợp Web Explorer:** Ngoài giao diện dòng lệnh (CLI), Slug tích hợp sẵn một Engine Viewing nội bộ hiển thị trên trình duyệt (`127.0.0.1:8080/drop`) với phong cách Techno B2B trực quan, hỗ trợ xem cây thư mục và tải file một chạm.
 
+![Giao diện chia sẻ workspace an toàn qua Web Viewing Engine của Slug](chiase.png)  
+*Hình 1: Giao diện Web Viewing Engine & Dashboard chia sẻ Workspace trực quan của Slug.*
+
 ### 2.2. Quy trình sử dụng 3 bước tinh gọn (The 3-Step Workflow)
 Sản phẩm được thiết kế sao cho người dùng có thể làm quen nhanh chóng:
 - **Bước 1 — Quét & Bảo vệ bí mật:**
@@ -68,6 +71,9 @@ Sản phẩm được thiết kế sao cho người dùng có thể làm quen nh
   slug pull -i <IP> -p 9443 -o <OTP> --to ./du_an
   # Hoặc mở giao diện Web trên trình duyệt: gõ lệnh 'slug' -> http://127.0.0.1:8080/
   ```
+
+![Quy trình kết nối và xác thực an toàn giữa các máy trạm](ketnoi.png)  
+*Hình 2: Trạng thái kết nối và bắt tay trao đổi khóa an toàn giữa Client và Host.*
 
 ---
 
@@ -93,6 +99,9 @@ Trong các công cụ truyền file thông thường, nếu người dùng quên
 - Sinh viên chỉ có quyền tải bài lên qua Web Dropbox hoặc lệnh `slug push`.
 - Tầng `SlugVFS Jail` chặn quyền đọc (`read_file`) và liệt kê (`list_dir`) đối với role này. Sinh viên không thể xem hoặc tải bài của nhau.
 
+![Giao diện hòm thư nộp bài một chiều Write-Only Blind Drop](dropbox.png)  
+*Hình 3: Giao diện hòm thư nộp bài một chiều (Blind Drop) hỗ trợ thu bài phòng máy, chống xem bài của nhau.*
+
 ### 3.5. Ba chế độ chia sẻ linh hoạt (Configurable Filter Modes)
 - `protected` (Mặc định): Bật lá chắn lọc `.gitignore`, chặn secret và cách ly dữ liệu nhạy cảm.
 - `include-ignored` (`--include-ignored`): Chia sẻ cả file build/artifact bị gitignore, nhưng vẫn giữ rào chắn chặn secret.
@@ -112,6 +121,9 @@ Cơ chế bảo vệ dữ liệu của Slug trong việc ngăn chặn lộ lọt
    - Bất kỳ chuỗi ký tự nào có độ dài $\ge 20$ ký tự và entropy $H(X) \ge 4.0$ bits/byte sẽ được gắn cờ nghi vấn là token bí mật/khóa mật mã, kể cả khi chuỗi đó không theo định dạng regex định trước.
 3. **Phân loại tệp & Miễn trừ tệp mẫu:** Tự động chặn các tệp cấu hình bí mật (`.env`, `.env.local`, `.pem`, `.key`), đồng thời hỗ trợ miễn trừ các tệp mẫu tài liệu (`.env.example`, `.env.sample`, `.env.template`) để hạn chế báo động giả (False Positive).
 4. **VFS Jail & Manual Guard:** Nếu file bị đánh dấu `QUARANTINED` hoặc `RULE_BLOCKED`, hệ thống tệp ảo khóa hàm đọc `vfs_.read_file()`, ngăn dữ liệu bị gửi qua mạng. Chủ workspace có quyền chủ động Whitelist (tiền tố `!`) hoặc chặn thủ công từng file.
+
+![Bắt gói tin mạng Wireshark chứng minh luồng dữ liệu mã hóa không thể nghe lén](nghelen_vogiatri.png)  
+*Hình 4: Kiểm thử thực nghiệm với Wireshark trên mạng LAN: Dữ liệu truyền tải được mã hóa nhị phân PQC, ngăn chặn hoàn toàn việc nghe lén.*
 
 ### 4.2. Slug AI: Tầng cố vấn ngữ nghĩa tùy chọn (Optional Contextual Advisory)
 Slug AI là một module tiện ích mở rộng tùy chọn, kích hoạt khi người dùng truyền cờ `--ai` và có cấu hình kết nối mô hình (Local Ollama hoặc Cloud API):
@@ -191,6 +203,9 @@ Quy trình trình diễn thực nghiệm:
 3. Thử kết nối lại bằng mã OTP cũ:
    -> Máy chủ thông báo OTP đã hết hạn hoặc đã được sử dụng.
 ```
+
+![Chi tiết phân tích gói tin truyền dẫn thực tế từ máy A sang máy B trong Wireshark](nghelen_vogiatri_2_a_to_b.png)  
+*Hình 5: Phân tích chi tiết luồng gói tin thực tế truyền giữa máy phát (Host) và máy nhận (Client).*
 
 ---
 

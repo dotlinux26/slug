@@ -91,8 +91,10 @@ Dự án **Slug** giới thiệu các điểm mới và sáng tạo sau trong l�
 - **Phút 00:45 - 02:00:** Trình bày giải pháp Slug: Nguyên lý nạp cấu hình trên RAM (EnvShield) và giao thức nhị phân an toàn lượng tử.
 - **Phút 02:00 - 03:45:** Trình diễn demo thực tế:
   - Thao tác 1: `slug env init` và `slug env run` (chứng minh không lưu plaintext trên ổ đĩa).
-  - Thao tác 2: Mở phiên chia sẻ `slug share` với quyền Write-Only `[w]` nộp bài phòng lab.
-  - Thao tác 3: Bắt gói tin bằng Wireshark chứng minh luồng dữ liệu nhị phân mã hóa, không có HTTP bản rõ.
+  - Thao tác 2: Mở phiên chia sẻ `slug share` với quyền Write-Only `[w]` nộp bài phòng lab.  
+    ![Hòm thư nộp bài phòng lab Write-Only](dropbox.png)
+  - Thao tác 3: Bắt gói tin bằng Wireshark chứng minh luồng dữ liệu nhị phân mã hóa PQC, hoàn toàn không thể nghe lén.  
+    ![Bắt gói tin mạng Wireshark chứng minh mã hóa PQC](nghelen_vogiatri.png)
 - **Phút 03:45 - 04:30:** Nêu bật giá trị mang lại cho sinh viên, trường đại học và cộng đồng công nghệ.
 - **Phút 04:30 - 05:00:** Kết luận, mục tiêu phát triển và thông điệp dự thi.
 
