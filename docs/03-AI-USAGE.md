@@ -38,12 +38,13 @@ Slug tiếp cận AI theo một triết lý kỹ thuật thực dụng và có k
 
 ## 2. Mô Hình 3 Tầng Phân Loại Bảo Vệ Dữ Liệu (3-Tier Protection Model)
 
-Slug phân định rạch ròi thành **Hệ thống 4 Cấp Độ Lọc Tích Lũy (Cumulative Filter Levels)**:
+Slug phân định rạch ròi thành **Hệ thống 5 Cấp Độ Lọc (Filter Levels)**:
 
 | Cấp | Cơ chế tích lũy | Nguồn cấu hình | Hành vi bắt buộc |
 | :---: | :--- | :--- | :--- |
+| **Level 0** | **Raw / Không Lọc** | Không áp dụng rule hay AI | Chia sẻ thô toàn bộ dữ liệu workspace, tắt rules/gitignore/quét nội dung, đánh dấu tất cả tệp là `AVAILABLE` (chỉ bảo vệ nội bộ `.slug/` và `.git/`). |
 | **Level 1** | **Rules** | `.gitignore` + `.slug/rules.conf` | Lọc theo đường dẫn và quy tắc Host chỉ định, hỗ trợ Whitelist (`!.env.example`). Không quét Regex hay Entropy. |
-| **Level 2** | **Regex** | Level 1 + Mẫu nhận diện Secret | Tự động phát hiện AWS/GitHub/Stripe keys, Private Keys, JWT, URLs chứa password. |
+| **Level 2** | **Regex** | Level 1 + Mẫu nhận diện Secret | Tự động phát hiện AWS/GitHub/Stripe keys, Private Keys, JWT, URLs chứa password. [Mặc Định] |
 | **Level 3** | **Entropy** | Level 2 + Shannon Entropy | Tính toán $H(X) \ge 4.0$ **chỉ trên tệp văn bản/code (`is_scannable_file`)**. Miễn nhiễm hoàn toàn false positive cho `.pyd`, binary, video, ảnh, archive. |
 | **Level 4** | **AI** | Level 3 + AI Contextual Advisor | Kết nối LLM (Ollama / OpenAI / Gemini) phân tích ngữ cảnh, trả về schema JSON (`has_secret`, `reason`, `line`). |
 

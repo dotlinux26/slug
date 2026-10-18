@@ -197,10 +197,11 @@ Slug không truyền lại toàn bộ dữ liệu nếu file chỉ sửa đổi 
 
 ---
 
-## 8. Hệ Thống 4 Cấp Độ Lọc & Bất Biến Cây Thư Mục
+## 8. Hệ Thống 5 Cấp Độ Lọc & Bất Biến Cây Thư Mục
 
-### 8.1. 4 Cấp Độ Lọc Tích Lũy (4 Filter Levels)
-Slug phân tách rõ ràng cơ chế lọc thành 4 cấp độ lựa chọn linh hoạt:
+### 8.1. 5 Cấp Độ Lọc Bảo Mật & Chia Sẻ (5 Filter Levels)
+Slug phân tách rõ ràng cơ chế lọc thành 5 cấp độ lựa chọn linh hoạt:
+- **Level 0 — Raw / Không Lọc (`--filter-level 0` hoặc `--raw` / `--no-filter`):** Chia sẻ trực tiếp toàn bộ dữ liệu workspace mà không áp dụng bất kỳ bộ lọc nào (tắt Rules, `.gitignore`, Regex Secret, Shannon Entropy và AI Semantic). Không quét nội dung, đánh dấu tất cả tệp là `AVAILABLE` (chỉ duy trì cách ly bất biến an toàn tuyệt đối với thư mục nội bộ `.slug/` và `.git/`).
 - **Level 1 — Rules (`--filter-level 1`):** Áp dụng `.gitignore` và quy tắc Host cấu hình trong `.slug/rules.conf`. Không quét regex và entropy.
 - **Level 2 — Regex (`--filter-level 2`):** Level 1 + quét mẫu phát hiện secrets, API keys (AWS, GitHub, Stripe), private keys, JWT tokens.
 - **Level 3 — Entropy (`--filter-level 3` - Khuyến nghị):** Level 2 + phân tích Shannon Entropy $H(X) \ge 4.0$ trên các tệp văn bản/code (`is_scannable_file`). Tự động bỏ qua file nhị phân, `.pyd`, `.dll`, media, zip để loại bỏ triệt để false positive.
@@ -289,7 +290,7 @@ Kết quả đo đạc thực tế trên CPU phổ thông:
 | :--- | :--- |
 | `slug` | Mở ngay Web Viewing Engine trên `http://127.0.0.1:8080/` (Aliases: `slug portal`, `slug web`) |
 | `slug shortcut` | Tạo lối tắt Desktop Windows (`Slug Workspace.lnk`) mở 1-chạm ẩn cửa sổ console |
-| `slug host <path>` | Khởi tạo trạm host (hỗ trợ `--filter-level <1-4>`, `--ai-model <provider>`, `--otp-step`, `--workspace-ttl`, `-d`) |
+| `slug host <path>` | Khởi tạo trạm host (hỗ trợ `--filter-level <0-4>`, `--ai-model <provider>`, `--otp-step`, `--workspace-ttl`, `-d`) |
 | `slug status` | Xem danh sách các workspace đang host, cổng, PID và trạng thái OTP |
 | `slug totp [-p <port>]` | Xem bảng 3 mã OTP phân quyền (`[rw]`, `[r]`, `[w]`) hoặc lấy mã nhanh |
 | `slug stop [-p <port>\|-a]` | Dừng server trên cổng chỉ định hoặc dừng toàn bộ server |

@@ -42,7 +42,7 @@ public:
 
     // Authenticate via username / password / requested role
     ClientAuthResult authenticate_user(const std::string& username, const std::string& password, const std::string& role = "");
-    bool authenticate_user(const std::string& username, const std::string& password, uint64_t ttl = 86400, bool save = false);
+    bool authenticate_user(const std::string& username, const std::string& password, uint64_t ttl, bool save = false);
 
     // Authenticate via session ticket / certificate
     ClientAuthResult authenticate_ticket(const std::string& ticket);

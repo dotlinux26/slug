@@ -32,7 +32,7 @@ Slug được xây dựng theo nguyên tắc phân lớp đơn hướng nghiêm 
                                           |
                                           v
 +-----------------------------------------------------------------------------------+
-| TẦNG 4: CHÍNH SÁCH BẢO MẬT & KIỂM DUYỆT (POLICY, RBAC & 4-LEVEL FILTER)          |
+| TẦNG 4: CHÍNH SÁCH BẢO MẬT & KIỂM DUYỆT (POLICY, RBAC & 5-LEVEL FILTER)          |
 |  ├── ACL & TotpManager (src/core/acl*)  : RBAC (rw/r/w), Configurable TTL Step    |
 |  ├── PolicyEngine (src/policy/*)        : .gitignore phân tầng + .slug/rules.conf |
 |  └── Stateful Guard (src/ai/*)          : 4 Cấp độ lọc + SQLite index.db (WAL)    |
@@ -269,16 +269,17 @@ Kiến trúc mật mã của Slug không dừng lại ở việc gọi API thư 
 
 Mọi thao tác cấm tải được cưỡng chế trực tiếp tại backend (`vfs_.read_file`, `get_chunk`). Frontend không bao giờ quyết định quyền truy cập dữ liệu.
 
-### 7.2. Định Nghĩa 4 Cấp Độ Lọc Tích Lũy (4 Filter Levels)
+### 7.2. Định Nghĩa 5 Cấp Độ Lọc Bảo Mật & Chia Sẻ (5 Filter Levels)
 
 ```text
-Level 1: Rules (.gitignore + .slug/rules.conf)
-    └── Level 2: Regex (Bổ sung bộ mẫu phát hiện Secret / Token / Private Key / JWT)
-            └── Level 3: Entropy (Bổ sung Shannon Entropy H(X) >= 4.0 trên scannable text/code)
-                    └── Level 4: AI (Bổ sung Contextual LLM Advisor: Ollama / OpenAI / Gemini)
+Level 0: Raw / Không Lọc (Chia sẻ thô toàn bộ dữ liệu, tắt Rules, Gitignore, AI - Chỉ cách ly .slug/ & .git/)
+    ├── Level 1: Rules (.gitignore + .slug/rules.conf)
+    │       └── Level 2: Regex (Bổ sung bộ mẫu phát hiện Secret / Token / Private Key / JWT) [Mặc Định]
+    │               └── Level 3: Entropy (Bổ sung Shannon Entropy H(X) >= 4.0 trên scannable text/code)
+    │                       └── Level 4: AI (Bổ sung Contextual LLM Advisor: Ollama / OpenAI / Gemini)
 ```
 
-- **Tách biệt với Scope Override:** Các cờ `--include-ignored` và `--no-filter` chỉ là tùy chọn phạm vi chia sẻ (scope), tuyệt đối không bao giờ làm vô hiệu hóa xác thực, mã hóa AEAD, RBAC, chống path traversal hoặc bảo vệ thư mục metadata `.slug/`.
+- **Tách biệt với Scope Override:** Các cờ `--include-ignored` và `--no-filter` (tương đương `--filter-level 0`) chỉ là tùy chọn phạm vi chia sẻ (scope), tuyệt đối không bao giờ làm vô hiệu hóa xác thực, mã hóa AEAD, RBAC, chống path traversal hoặc bảo vệ thư mục metadata `.slug/`.
 
 ---
 

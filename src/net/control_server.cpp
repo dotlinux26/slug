@@ -587,7 +587,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 json err_resp;
                 err_resp["status"] = "error";
                 err_resp["message"] = "Session revoked or expired";
-                std::string err_html = "<html><head><title>401 Session Revoked</title></head><body style='font-family:sans-serif; text-align:center; padding:40px; background:#0d1117; color:#f85149;'><h1>401 Unauthorized</h1><p>Phi\xc3\xaan l\xc3\xa0m vi\xe1\xbb\x87c \xc4\x91\xc3\xa3 b\xe1\xbb\x8b Qu\xe1\xba\xa3n Tr\xe1\xbb\x8b Vi\xc3\xaan (Host Admin) thu h\xe1\xbb\x93i (Session Revoked).</p></body></html>";
+                std::string err_html = "<html><head><title>401 Session Revoked</title></head><body style='font-family:sans-serif; text-align:center; padding:40px; background:#0d1117; color:#f85149;'><h1>401 Unauthorized</h1><p>Phiên làm việc đã bị Quản Trị Viên (Host Admin) thu hồi (Session Revoked).</p></body></html>";
                 std::string http_err = "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " +
                                        std::to_string(err_html.size()) + "\r\nConnection: close\r\nSet-Cookie: slug_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT\r\n\r\n" + err_html;
                 err_resp["raw_resp_b64"] = core::Utils::to_base64(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(http_err.data()), http_err.size()));

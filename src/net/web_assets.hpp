@@ -458,7 +458,7 @@ public:
           << "<button type='button' class='btn-sec' onclick='returnToPortal()' style='display:inline-flex; align-items:center; gap:6px;' title='Quay lại Trạm Điều Khiển Workspace để kết nối phiên mới'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='4 17 10 11 4 5'></polyline><line x1='12' y1='19' x2='20' y2='19'></line></svg> <span>Trở Về Trạm Điều Khiển</span></button>"
           << (identity == "host_admin" ? "<a class='btn-sec' href='/admin'>Admin Dashboard</a>" : "")
           << "<a class='btn-sec' href='/logout' style='color:var(--danger);'>Logout</a>"
-          << "</div></div>"
+          << "</div></div>";
 
         size_t blocked_in_dir = 0;
         for (const auto& itm : items) {
@@ -5521,12 +5521,12 @@ window.onload = function() {
                        + "<td><span class='role-tag'>" + core::role_to_string(c.role) + "</span></td>"
                        + "<td>" + exp_str + "</td>"
                        + "<td onclick='event.stopPropagation()'><button class='btn btn-xs' onclick='openSaved(\"" + esc_id_js + "\")'>"
-                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duy\xe1\xbb\x87t Th\xc6\xb0 M\xe1\xbb\xa5c</button> "
+                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duyệt Thư Mục</button> "
                        + "<button class='btn-danger btn-xs' onclick='removeSaved(\"" + esc_id_js + "\")'>"
-                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='3 6 5 6 21 6'></polyline><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'></path></svg> X\xc3\xb3a</button></td></tr>";
+                       + "<svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle;'><polyline points='3 6 5 6 21 6'></polyline><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'></path></svg> Xóa</button></td></tr>";
         }
         if (conns_rows.empty()) {
-            conns_rows = "<tr><td colspan='7' style='text-align:center; color:var(--text-muted); padding:18px;'>Ch\xc6\xb0\x61 c\xc3\xb3 tr\xe1\xba\xa1m l\xc6\xb0u n\xc3\xa0o. \xc4\x90i\xe1\xbb\x81n IP v\xc3\xa0 m\xc3\xa3 OTP v\xc3\xa0o bi\xe1\xbb\x83u m\xe1\xba\xabu ph\xc3\xada tr\xc3\xaan \xc4\x91\xe1\xbb\x83 k\xe1\xba\xbft n\xe1\xbb\x91i ng\x61y.</td></tr>";
+            conns_rows = "<tr><td colspan='7' style='text-align:center; color:var(--text-muted); padding:18px;'>Chưa có trạm lưu nào. Điền IP và mã OTP vào biểu mẫu phía trên để kết nối ngay.</td></tr>";
         }
 
         p = html.find("{{SAVED_CONNS_ROWS}}");
