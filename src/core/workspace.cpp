@@ -279,7 +279,7 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     ctrl->set_web_server(web.get());
     web->start();
 
-    if (filter_level != FilterLevel::LEVEL_1_RULES && filter_mode != FilterMode::NONE) {
+    if (filter_level != FilterLevel::LEVEL_0_RAW && filter_level != FilterLevel::LEVEL_1_RULES && filter_mode != FilterMode::NONE) {
         // Run initial scan asynchronously in background thread so add_workspace returns in 0.01s
         std::thread([canonical_path, suite, filter_mode, filter_level, ai_provider]() {
             sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode, filter_level, ai_provider);

@@ -117,16 +117,18 @@ inline FilterMode filter_mode_from_string(std::string_view s) {
     return FilterMode::PROTECTED;
 }
 
-// 4 Cấp độ lọc bảo mật dữ liệu (Cumulative Security Filter Levels)
+// 5 Cấp độ lọc bảo mật dữ liệu (Cumulative Security Filter Levels)
 enum class FilterLevel : uint8_t {
+    LEVEL_0_RAW     = 0, // Mức 0: Không lọc / Chia sẻ tất cả (Tắt Rules, .gitignore, AI - Chỉ bảo vệ nội bộ .slug/)
     LEVEL_1_RULES   = 1, // Mức 1: Rules & Gitignore (Chỉ lọc .gitignore & rules.conf, không quét nội dung)
-    LEVEL_2_REGEX   = 2, // Mức 2: Regex Secret Guard (Mức 1 + Quét mẫu định danh Private Key, AWS, GitHub, JWT, DB URL, .env)
+    LEVEL_2_REGEX   = 2, // Mức 2: Regex Secret Guard (Mức 1 + Quét mẫu định danh Private Key, AWS, GitHub, JWT, DB URL, .env) [Mặc định]
     LEVEL_3_ENTROPY = 3, // Mức 3: Shannon Entropy (Mức 2 + Đo entropy trên file mã nguồn, bỏ qua 100% binary/ảnh) [Khuyên Dùng]
     LEVEL_4_AI      = 4  // Mức 4: AI Model Scan (Mức 3 + Phân tích ngữ cảnh sâu bằng mô hình AI)
 };
 
 inline std::string filter_level_to_string(FilterLevel lvl) {
     switch (lvl) {
+        case FilterLevel::LEVEL_0_RAW:     return "level0";
         case FilterLevel::LEVEL_1_RULES:   return "level1";
         case FilterLevel::LEVEL_2_REGEX:   return "level2";
         case FilterLevel::LEVEL_3_ENTROPY: return "level3";
@@ -136,6 +138,7 @@ inline std::string filter_level_to_string(FilterLevel lvl) {
 }
 
 inline FilterLevel filter_level_from_string(std::string_view s) {
+    if (s == "0" || s == "level0" || s == "raw" || s == "none" || s == "all") return FilterLevel::LEVEL_0_RAW;
     if (s == "1" || s == "level1" || s == "rules") return FilterLevel::LEVEL_1_RULES;
     if (s == "2" || s == "level2" || s == "regex") return FilterLevel::LEVEL_2_REGEX;
     if (s == "3" || s == "level3" || s == "entropy") return FilterLevel::LEVEL_3_ENTROPY;

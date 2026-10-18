@@ -1282,6 +1282,12 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         } catch (...) {}
         core::FilterLevel flevel = core::filter_level_from_string(lvl_str);
         control_server_.set_filter_level(flevel);
+        if (flevel == core::FilterLevel::LEVEL_0_RAW) {
+            // Level 0: Clear audit flags so table is clean
+            fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+            ai::StatefulAuditIndex audit_idx(idx_file);
+            audit_idx.clear_all();
+        }
         auto manifest = control_server_.get_or_build_manifest();
         control_server_.audit_logger().log(current_session->identity, "SCAN_RUN", lvl_str, "Đã chạy quét kiểm toán bảo mật cấp " + lvl_str + " (Skipped/Quarantined: " + std::to_string(manifest.skipped.size()) + ")");
         json res;
@@ -1289,7 +1295,11 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         res["level"] = core::filter_level_to_string(flevel);
         res["files_count"] = manifest.files.size();
         res["flagged_count"] = manifest.skipped.size();
-        res["message"] = "Đã hoàn thành quét bảo mật cấp [" + lvl_str + "]. Tổng file khả dụng: " + std::to_string(manifest.files.size()) + ", Bị chặn: " + std::to_string(manifest.skipped.size());
+        if (flevel == core::FilterLevel::LEVEL_0_RAW) {
+            res["message"] = "Đã chuyển sang cấp [level0 - Không Lọc]. Toàn bộ " + std::to_string(manifest.files.size()) + " tệp trong workspace được chia sẻ trực tiếp (chỉ bảo vệ nội bộ .slug/).";
+        } else {
+            res["message"] = "Đã hoàn thành quét bảo mật cấp [" + lvl_str + "]. Tổng file khả dụng: " + std::to_string(manifest.files.size()) + ", Bị chặn: " + std::to_string(manifest.skipped.size());
+        }
         send_resp(200, "OK", "application/json", res.dump());
         return;
     }

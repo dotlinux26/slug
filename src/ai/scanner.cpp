@@ -438,8 +438,8 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
 }
 
 ScanFinding AiScanner::scan_content(const std::string& file_path, std::string_view content, bool deep, core::FilterLevel level) const {
-    if (level == core::FilterLevel::LEVEL_1_RULES) {
-        // Mức 1: Rules & Gitignore only. Hoàn toàn không quét nội dung!
+    if (level == core::FilterLevel::LEVEL_0_RAW || level == core::FilterLevel::LEVEL_1_RULES) {
+        // Mức 0 & Mức 1: Hoàn toàn không quét nội dung!
         ScanFinding safe;
         safe.has_secret = false;
         return safe;

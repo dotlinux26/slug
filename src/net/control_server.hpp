@@ -76,6 +76,13 @@ public:
     void set_filter_level(core::FilterLevel lvl) {
         filter_level_ = lvl;
         enable_ai_ = (lvl == core::FilterLevel::LEVEL_4_AI);
+        if (lvl == core::FilterLevel::LEVEL_0_RAW) {
+            filter_mode_ = core::FilterMode::NONE;
+            vfs_.set_filter_mode(core::FilterMode::NONE);
+        } else if (filter_mode_ == core::FilterMode::NONE) {
+            filter_mode_ = core::FilterMode::PROTECTED;
+            vfs_.set_filter_mode(core::FilterMode::PROTECTED);
+        }
         invalidate_manifest_cache();
     }
     void set_ai_provider(core::AiModelProvider p) {

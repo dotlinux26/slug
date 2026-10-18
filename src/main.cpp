@@ -1139,6 +1139,7 @@ int cmd_add(int argc, char* argv[]) {
             filter_mode = core::filter_mode_from_string(argv[++i]);
         } else if (arg == "--no-filter" || arg == "--raw") {
             filter_mode = core::FilterMode::NONE;
+            filter_level = core::FilterLevel::LEVEL_0_RAW;
         } else if (arg == "--include-ignored" || arg == "--all") {
             filter_mode = core::FilterMode::INCLUDE_IGNORED;
         } else if (arg == "--daemon" || arg == "-d") {
@@ -1146,6 +1147,9 @@ int cmd_add(int argc, char* argv[]) {
         } else if (arg == "--internal-worker") {
             is_internal_worker = true;
         }
+    }
+    if (filter_level == core::FilterLevel::LEVEL_0_RAW) {
+        filter_mode = core::FilterMode::NONE;
     }
     (void)is_internal_worker;
 
@@ -3968,7 +3972,7 @@ int cmd_portal(int argc, char* argv[]) {
                     core::FilterLevel flevel = core::filter_level_from_string(filter_str);
                     core::AiModelProvider ai_provider = core::ai_model_from_string(ai_model_str);
                     core::FilterMode fmode = core::FilterMode::PROTECTED;
-                    if (filter_str == "none" || filter_str == "raw") fmode = core::FilterMode::NONE;
+                    if (flevel == core::FilterLevel::LEVEL_0_RAW || filter_str == "none" || filter_str == "raw") fmode = core::FilterMode::NONE;
                     else if (filter_str == "include_ignored" || filter_str == "all") fmode = core::FilterMode::INCLUDE_IGNORED;
                     bool enable_ai = (flevel == core::FilterLevel::LEVEL_4_AI || j.value("enable_ai", false));
 

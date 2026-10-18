@@ -181,7 +181,7 @@ WorkspaceManifest ManifestBuilder::build(
 
         // Step 1: Policy evaluation (Rules + Gitignore)
         bool is_explicitly_allowed_by_rule = false;
-        if (filter_mode != core::FilterMode::NONE) {
+        if (filter_level != core::FilterLevel::LEVEL_0_RAW && filter_mode != core::FilterMode::NONE) {
             bool ignore_gi = (filter_mode == core::FilterMode::INCLUDE_IGNORED);
             auto decision = policy_engine.evaluate(rel, false, {}, ignore_gi);
             if (!decision.is_allowed) {
@@ -228,7 +228,7 @@ WorkspaceManifest ManifestBuilder::build(
             if (audit_index.is_flagged(proto_path)) {
                 audit_index.allow_file(proto_path, "Explicitly allowed by rule", "rule");
             }
-        } else if (filter_level != core::FilterLevel::LEVEL_1_RULES && filter_mode != core::FilterMode::NONE) {
+        } else if (filter_level != core::FilterLevel::LEVEL_0_RAW && filter_level != core::FilterLevel::LEVEL_1_RULES && filter_mode != core::FilterMode::NONE) {
             core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
 
             // Automatically heal false positives on non-scannable files (binaries, .pyd, images, etc.)

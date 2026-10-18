@@ -21,7 +21,9 @@ SlugRule RulesManager::parse_rule_line(const std::string& line) {
 
     // Check for XML-like tag: # <rule id="..." action="..." type="...">value</rule>
     // or without leading #
+    bool has_hash = false;
     if (s.front() == '#') {
+        has_hash = true;
         s = core::Utils::trim(s.substr(1));
     }
 
@@ -64,6 +66,10 @@ SlugRule RulesManager::parse_rule_line(const std::string& line) {
             } catch (...) {}
         }
     } else {
+        if (has_hash) {
+            // It is a comment line, e.g. "# Slug Rules Configuration" - do not convert to rule!
+            return rule;
+        }
         // Plain gitignore-style rule in rules.conf / .slugignore
         static std::atomic<uint64_t> rule_counter{1};
         rule.id = "rule_" + std::to_string(rule_counter++);
@@ -92,6 +98,12 @@ bool RulesManager::load() {
     for (const auto& line : lines) {
         SlugRule rule = parse_rule_line(line);
         if (!rule.value.empty()) {
+            // Filter out any ghost rules created from comment lines in legacy files
+            if (rule.value.find("rules.conf") != std::string::npos ||
+                rule.value.find("Automatically managed") != std::string::npos ||
+                rule.value.find("Default Slug Rules") != std::string::npos) {
+                continue;
+            }
             rules_.push_back(std::move(rule));
         }
     }

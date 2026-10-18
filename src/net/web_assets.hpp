@@ -460,9 +460,16 @@ public:
           << "<a class='btn-sec' href='/logout' style='color:var(--danger);'>Logout</a>"
           << "</div></div>"
 
-          << "<div class='ws-summary-box'>"
+        size_t blocked_in_dir = 0;
+        for (const auto& itm : items) {
+            if (!itm.is_dir && itm.status == "BLOCKED") {
+                blocked_in_dir++;
+            }
+        }
+
+        h << "<div class='ws-summary-box'>"
           << "<div><strong>REMOTE WORKSPACE:</strong> " << html_escape(workspace_root.filename().string()) << " (Port " << port << ")</div>"
-          << "<div>Available: <strong>" << core::Utils::format_size(total_workspace_size) << "</strong> (" << manifest.files.size() << " files) &bull; Filtered: <strong>" << manifest.skipped.size() << "</strong> items</div>"
+          << "<div>Available: <strong>" << core::Utils::format_size(total_workspace_size) << "</strong> (" << manifest.files.size() << " files) &bull; Filtered: <strong>" << manifest.skipped.size() << "</strong> items (" << blocked_in_dir << " tệp bị chặn trong thư mục này)</div>"
           << "</div>"
 
           << "<div class='dropzone' id='drop-container' style='margin-bottom:14px; margin-top:0; border:2px dashed var(--border-primary); border-radius:var(--radius-sharp); padding:16px; text-align:center; color:var(--text-muted); font-size:12px; font-family:\"JetBrains Mono\", monospace; background:#fdfefe;'>"
@@ -1325,7 +1332,7 @@ public:
           << "}"
           << "function onAdminFilterChanged(lvl) {"
           << "  const panel = document.getElementById('admin-ai-panel');"
-          << "  if (panel && lvl === 'level4') panel.style.display = 'block';"
+          << "  if (panel) panel.style.display = (lvl === 'level4') ? 'block' : 'none';"
           << "}"
           << "let aiJsonModeActive = false;"
           << "function toggleAiConfigMode() {"
@@ -1579,6 +1586,7 @@ public:
           << "<div style='display:flex; align-items:center; gap:8px;'>"
           << "<label style='font-weight:600; font-size:12px;'>Mức Lọc:</label>"
           << "<select id='admin-filter-level' onchange='onAdminFilterChanged(this.value)' class='input-select' style='width:auto; min-width:280px; font-weight:600;'>"
+          << "<option value='level0'" << (filter_level == core::FilterLevel::LEVEL_0_RAW ? " selected" : "") << ">Level 0: Không Lọc / Chia Sẻ Tất Cả (Tắt Rules, .gitignore &amp; AI - Chỉ giữ .slug/)</option>"
           << "<option value='level1'" << (filter_level == core::FilterLevel::LEVEL_1_RULES ? " selected" : "") << ">Level 1: Rules &amp; .gitignore (Không quét nội dung)</option>"
           << "<option value='level2'" << (filter_level == core::FilterLevel::LEVEL_2_REGEX ? " selected" : "") << ">Level 2: Policy &amp; Smart Regex Guard [Mặc định]</option>"
           << "<option value='level3'" << (filter_level == core::FilterLevel::LEVEL_3_ENTROPY ? " selected" : "") << ">Level 3: Deep Shannon Entropy Guard</option>"
@@ -5023,8 +5031,9 @@ window.onload = function() {
         </div>
 
         <div class="form-group" style="margin-bottom:8px;">
-          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">4 Cấp Độ Lọc Dữ Liệu Bảo Mật (Filter Levels)</label>
+          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">5 Cấp Độ Lọc Dữ Liệu Bảo Mật (Filter Levels)</label>
           <select id="host-filter" class="input-select" onchange="onFilterLevelChanged(this.value)" style="height:38px; box-sizing:border-box; font-size:12px;">
+            <option value="level0">Mức 0: Không Lọc / Chia Sẻ Tất Cả (Tắt Rules, .gitignore &amp; AI - Chỉ giữ bảo vệ .slug/)</option>
             <option value="level1">Mức 1: Rules &amp; Gitignore (Chỉ lọc .gitignore &amp; rules.conf, không quét nội dung)</option>
             <option value="level2" selected>Mức 2: Regex Secret Guard (Mức 1 + Quét mẫu định danh Private Key, AWS, GitHub, JWT, .env) [Mặc Định / Khuyên Dùng]</option>
             <option value="level3">Mức 3: Shannon Entropy (Mức 2 + Đo entropy trên file mã nguồn, bỏ qua 100% binary/ảnh)</option>

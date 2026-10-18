@@ -575,4 +575,22 @@ Khi hoàn tất, báo cáo theo cấu trúc:
   - **Khắc phục**:
     - Lưu đầy đủ thông tin định danh (`identity`), loại xác thực (`auth_type`), tên workspace và timestamp hết hạn (`expires_at`) vào `.slug/connections.json`.
     - Hiển thị rõ ràng huy hiệu xác thực: `TOTP [rw]`, `Acc: <username>`, và đồng hồ đếm ngược `Còn HH:MM:SS` với thuộc tính `data-exp`, tự động trừ lùi thời gian sống theo từng giây trong thời gian thực.
-    - Khi người dùng bấm "Duyệt Thư Mục" vào một kết nối đã bị thu hồi hoặc hết hạn, `/api/portal/open` tự động xóa kết nối đã chết khỏi danh sách và trả về thông báo lỗi rõ ràng.
+    - Khi người dùng bấm "Duyệt Thư Mục" vào một kết nối đã bị thu hồi hoặc hết hạn, `/api/portal/open` tự động xóa kết nối đã chết khỏi danh sách và trả về thông báo lỗi rõ ràng.
+
+### Hạng mục Bổ Sung Mức 0 (LEVEL_0_RAW - Không Lọc / Chia Sẻ Tất Cả) & Sửa Lỗi Ghost Rule / Thống Kê Bị Chặn
+- [x] **Thiết kế và triển khai Cấp độ lọc Mức 0 (`LEVEL_0_RAW = 0`)**:
+  - **Mục đích**: Chế độ chia sẻ nguyên bản (Raw Workspace Sharing), không lọc, không chặn, chia sẻ toàn bộ tất cả các tệp trong workspace (chỉ loại trừ duy nhất thư mục nội bộ `.slug/` và `.git/`).
+  - **Backend**:
+    - Thêm `LEVEL_0_RAW = 0` vào enum `core::FilterLevel` và các hàm chuyển đổi chuỗi `filter_level_to_string` (`"level0"`), `filter_level_from_string` (`"0"`, `"level0"`, `"raw"`, `"none"`, `"all"`).
+    - Cập nhật `sync::ManifestBuilder::build`: khi `filter_level == LEVEL_0_RAW`, bỏ qua hoàn toàn Bước 1 (Policy Rules & Gitignore) và Bước 2 (Smart Regex Guard, Shannon Entropy, AI Model Scan). Mọi tệp ngoài `.slug/` và `.git/` đều được đánh dấu khả dụng (`AVAILABLE`), `manifest.skipped` rỗng (0 items).
+    - Cập nhật `ControlServer::set_filter_level`: khi chuyển sang `LEVEL_0_RAW`, tự động gán `filter_mode_ = FilterMode::NONE` và cấu hình VFS sang `FilterMode::NONE`.
+    - Cập nhật `POST /api/admin/scan/run`: khi quét với `level0`, máy chủ tự động làm sạch các cờ cách ly trong `index.db` (`audit_idx.clear_all()`), làm mới manifest cache và trả về thông báo xác nhận: toàn bộ workspace được chia sẻ trực tiếp.
+    - Cập nhật CLI `slug host` và `slug scan`: hỗ trợ đầy đủ cờ `--no-filter`, `--raw`, `-fl level0`.
+  - **Frontend / UI**:
+    - Cập nhật Form khởi tạo trạm tại Portal (Tab 1 `#host-filter`): bổ sung `Mức 0: Không Lọc / Chia Sẻ Tất Cả (Tắt Rules, .gitignore & AI - Chỉ giữ bảo vệ .slug/)`.
+    - Cập nhật Thẻ Dynamic Re-Scan tại Admin Dashboard (`#admin-filter-level`): bổ sung `Level 0: Không Lọc / Chia Sẻ Tất Cả (Tắt Rules, .gitignore & AI)`.
+- [x] **Sửa tận gốc lỗi Comment trong `rules.conf` bị nhận diện nhầm thành Ghost BLOCK Rule**:
+  - **Nguyên nhân**: Trong `RulesManager::parse_rule_line`, khi gặp dòng comment bắt đầu bằng `#` nhưng không chứa thẻ `<rule`, hàm trước đây loại bỏ `#` và rơi vào nhánh fallback tạo rule chặn đường dẫn (`RuleAction::BLOCK`, `rule_counter++`). Do đó, các dòng chú thích header như `# Slug Rules Configuration (.slug/rules.conf)` và `# Automatically managed by slug rule commands` bị biến thành các rule chặn thật (`rule_11`, `rule_12`), khiến số lượng tệp bị filter tăng ảo mỗi khi thao tác lưu rule hoặc gỡ chặn (`manual-unblock`).
+  - **Khắc phục**: Nhận diện chính xác tiền tố `#`. Nếu dòng bắt đầu bằng `#` và không chứa thẻ `<rule`, coi là dòng comment hợp lệ và bỏ qua; đồng thời trong `load()` tự động lọc bỏ các ghost rule cũ xuất phát từ chú thích file cấu hình.
+- [x] **Làm rõ sự khác biệt giữa thống kê toàn bộ workspace và số tệp bị chặn trong thư mục hiện tại**:
+  - Tiêu đề Explorer hiển thị rõ: `Filtered: X items (Y tệp bị chặn trong thư mục này)` để người dùng phân biệt ngay giữa tổng số tệp bị chặn trong toàn bộ workspace và số tệp bị chặn đang nhìn thấy trong thư mục hiện tại.
