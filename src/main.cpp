@@ -4788,8 +4788,29 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
-            // Tunnel the HTTP request over pure Post-Quantum frames
-            auto tunnel_resp = g_portal.client->tunnel_http(raw);
+            // Tunnel the HTTP request over pure Post-Quantum frames with mutex & auto-reconnect
+            std::vector<uint8_t> tunnel_resp;
+            static std::mutex s_portal_tunnel_mutex;
+            {
+                std::lock_guard<std::mutex> lk(s_portal_tunnel_mutex);
+                if (g_portal.client && g_portal.client->is_connected()) {
+                    tunnel_resp = g_portal.client->tunnel_http(raw);
+                }
+                if (tunnel_resp.empty() && !g_portal.active_id.empty()) {
+                    auto conn_opt = core::ConnectionManager::instance().get_connection(g_portal.active_id);
+                    if (conn_opt && (conn_opt->expires_at == 0 || conn_opt->expires_at > core::Utils::current_timestamp())) {
+                        auto new_client = std::make_unique<net::SlugClient>();
+                        if (new_client->connect(conn_opt->host, conn_opt->port)) {
+                            auto auth = new_client->authenticate_ticket(conn_opt->ticket);
+                            if (auth.success) {
+                                g_portal.client = std::move(new_client);
+                                tunnel_resp = g_portal.client->tunnel_http(raw);
+                            }
+                        }
+                    }
+                }
+            }
+
             if (!tunnel_resp.empty()) {
                 std::string resp_str(tunnel_resp.begin(), tunnel_resp.end());
                 if (resp_str.rfind("HTTP/1.1 401", 0) == 0 || resp_str.find("Session Revoked") != std::string::npos) {

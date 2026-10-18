@@ -262,7 +262,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
     while (running_ && client.is_valid()) {
         json req;
         if (is_encrypted) {
-            auto dec = AeadFrameChannel::recv_frame(client, session_keys.session_key, session_keys.client_to_server_salt, c2s_window, 10000);
+            auto dec = AeadFrameChannel::recv_frame(client, session_keys.session_key, session_keys.client_to_server_salt, c2s_window, 60000);
             if (!dec) break;
             try {
                 std::string s(dec->begin(), dec->end());
@@ -272,7 +272,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             }
         } else {
             uint8_t hdr[4];
-            if (!client.receive_exact(std::span<uint8_t>(hdr, 4), 10000)) {
+            if (!client.receive_exact(std::span<uint8_t>(hdr, 4), 60000)) {
                 break;
             }
 
@@ -502,18 +502,52 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             std::string rel_path = req.value("path", "");
             uint32_t chunk_idx = req.value("chunk_index", 0U);
 
-            auto [vfs_st, file_data] = vfs_.read_file(rel_path, sess->role);
-            if (vfs_st != core::VfsStatus::OK) {
-                json err;
-                err["status"] = "error";
-                err["message"] = core::vfs_status_to_string(vfs_st);
-                audit_logger_.log(sess->identity, "VFS_ACCESS_BLOCKED", rel_path, err["message"], false);
-                send_packet(err);
-                continue;
+            // High-speed chunk server: check cache to avoid disk re-read and re-chunking
+            std::vector<uint8_t> local_loaded_buf;
+            std::span<const uint8_t> file_span;
+            bool found_in_cache = false;
+            {
+                std::lock_guard<std::mutex> lk(chunk_cache_mutex_);
+                auto it = chunk_file_cache_.find(rel_path);
+                if (it != chunk_file_cache_.end()) {
+                    found_in_cache = true;
+                    file_span = it->second.data;
+                    it->second.last_accessed = core::Utils::current_timestamp();
+                }
             }
 
-            auto chunks = sync::Chunker::chunk_buffer(file_data);
-            if (chunk_idx >= chunks.size()) {
+            if (!found_in_cache) {
+                auto [vfs_st, file_data] = vfs_.read_file(rel_path, sess->role);
+                if (vfs_st != core::VfsStatus::OK) {
+                    json err;
+                    err["status"] = "error";
+                    err["message"] = core::vfs_status_to_string(vfs_st);
+                    audit_logger_.log(sess->identity, "VFS_ACCESS_BLOCKED", rel_path, err["message"], false);
+                    send_packet(err);
+                    continue;
+                }
+                local_loaded_buf = std::move(file_data);
+                file_span = local_loaded_buf;
+
+                // Cache active file to serve all subsequent chunks without disk I/O
+                if (local_loaded_buf.size() <= 100 * 1024 * 1024) {
+                    std::lock_guard<std::mutex> lk(chunk_cache_mutex_);
+                    if (chunk_file_cache_.size() >= 8) {
+                        auto oldest = chunk_file_cache_.begin();
+                        for (auto it = chunk_file_cache_.begin(); it != chunk_file_cache_.end(); ++it) {
+                            if (it->second.last_accessed < oldest->second.last_accessed) {
+                                oldest = it;
+                            }
+                        }
+                        chunk_file_cache_.erase(oldest);
+                    }
+                    chunk_file_cache_[rel_path] = CachedChunkFile{rel_path, std::move(local_loaded_buf), core::Utils::current_timestamp()};
+                    file_span = chunk_file_cache_[rel_path].data;
+                }
+            }
+
+            uint64_t offset = static_cast<uint64_t>(chunk_idx) * sync::Chunker::kDefaultChunkSize;
+            if (offset >= file_span.size() && !(offset == 0 && file_span.empty())) {
                 json err;
                 err["status"] = "error";
                 err["message"] = "Invalid chunk index";
@@ -521,15 +555,15 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 continue;
             }
 
-            const auto& ci = chunks[chunk_idx];
-            std::span<const uint8_t> chunk_bytes(file_data.data() + ci.offset, ci.size);
+            size_t chunk_len = (file_span.empty() || offset >= file_span.size()) ? 0 : std::min(static_cast<uint64_t>(sync::Chunker::kDefaultChunkSize), file_span.size() - offset);
+            std::span<const uint8_t> chunk_bytes = file_span.empty() ? std::span<const uint8_t>{} : std::span<const uint8_t>(file_span.data() + offset, chunk_len);
 
             json resp;
             resp["status"] = "ok";
             resp["path"] = rel_path;
             resp["chunk_index"] = chunk_idx;
             resp["data_b64"] = core::Utils::to_base64(chunk_bytes);
-            resp["blake3_hash"] = ci.blake3_hash;
+            resp["blake3_hash"] = crypto::Blake3::hash_hex(chunk_bytes);
             if (!send_packet(resp)) break;
 
         } else if (type == "push_file") {

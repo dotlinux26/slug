@@ -225,7 +225,11 @@ std::pair<VfsStatus, std::vector<uint8_t>> SlugVFS::read_file(std::string_view v
                 return {VfsStatus::FILTERED, {}};
             }
         }
-        std::string_view text_view(reinterpret_cast<const char*>(data->data()), data->size());
+        // Only evaluate content text rules on scannable text/code files (never on binary DLL, EXE, etc.)
+        std::string_view text_view;
+        if (ai::AiScanner::is_scannable_file(resolved.real_path)) {
+            text_view = std::string_view(reinterpret_cast<const char*>(data->data()), data->size());
+        }
         bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
         auto dec = policy_engine_.evaluate(proto, false, text_view, ignore_gi);
         if (!dec.is_allowed) {
@@ -249,7 +253,10 @@ VfsStatus SlugVFS::write_file(std::string_view virtual_path, std::span<const uin
 
     // Evaluate content-level rules and AI Secret Guard on incoming file data
     if (filter_mode_ != FilterMode::NONE) {
-        std::string_view text_view(reinterpret_cast<const char*>(data.data()), data.size());
+        std::string_view text_view;
+        if (ai::AiScanner::is_scannable_file(resolved.real_path)) {
+            text_view = std::string_view(reinterpret_cast<const char*>(data.data()), data.size());
+        }
         bool ignore_gi = (filter_mode_ == FilterMode::INCLUDE_IGNORED);
         std::string proto = (resolved.virtual_path == "/") ? "" : resolved.virtual_path.substr(1);
         auto dec = policy_engine_.evaluate(proto, false, text_view, ignore_gi);

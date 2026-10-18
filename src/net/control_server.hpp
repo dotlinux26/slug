@@ -15,6 +15,7 @@
 #include <atomic>
 #include <filesystem>
 #include <map>
+#include <unordered_map>
 #include <mutex>
 
 namespace slug::net {
@@ -159,6 +160,14 @@ private:
     std::optional<sync::WorkspaceManifest> cached_manifest_;
     uint64_t manifest_cached_at_{0};
     bool manifest_dirty_{true};
+
+    struct CachedChunkFile {
+        std::string rel_path;
+        std::vector<uint8_t> data;
+        uint64_t last_accessed{0};
+    };
+    mutable std::mutex chunk_cache_mutex_;
+    std::unordered_map<std::string, CachedChunkFile> chunk_file_cache_;
 
     void run_accept_loop();
     void handle_client(platform::TcpSocket client);

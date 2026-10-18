@@ -1465,24 +1465,35 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         while (!norm_dir.empty() && norm_dir.back() == '/') norm_dir.pop_back();
 
         std::string prefix = norm_dir.empty() ? "" : (norm_dir + "/");
-        size_t total_raw_bytes = 0;
+        uint64_t total_raw_bytes = 0;
         for (const auto& f : m_opt->files) {
             if (prefix.empty() || f.relative_path.rfind(prefix, 0) == 0 || f.relative_path == norm_dir) {
                 total_raw_bytes += f.size;
             }
         }
-        if (total_raw_bytes > 12 * 1024 * 1024) {
+        if (total_raw_bytes > 4ULL * 1024 * 1024 * 1024) {
             std::string err_html = "<html><head><meta charset='utf-8'><title>Thư mục quá lớn</title></head><body style='font-family:sans-serif; text-align:center; padding:40px; background:#0d1117; color:#f85149;'>"
                 "<h2>413 Payload Too Large - Thư mục quá lớn</h2>"
                 "<p style='color:#c9d1d9;'>Thư mục này có dung lượng (" + core::Utils::format_size(total_raw_bytes) + 
-                ") vượt quá giới hạn nén ZIP trực tiếp (12 MB) qua kênh mã hóa Post-Quantum.</p>"
-                "<p style='color:#58a6ff;'>Vui lòng quay lại và sử dụng chức năng <b>'ĐỒNG BỘ THƯ MỤC VỀ MÁY BẠN (PULL)'</b> để đồng bộ toàn bộ workspace về máy an toàn với phân luồng và kiểm tra mã hóa.</p>"
+                ") vượt quá giới hạn nén ZIP chuẩn 32-bit (4 GB) qua kênh mã hóa Post-Quantum.</p>"
+                "<p style='color:#58a6ff;'>Vui lòng quay lại và sử dụng lệnh CLI <b>'slug pull'</b> để đồng bộ toàn bộ workspace về máy trạm an toàn với phân luồng vi sai FastCDC.</p>"
                 "<br><a href='javascript:history.back()' style='color:#58a6ff;'>&larr; Quay lại</a></body></html>";
             send_resp(413, "Payload Too Large", "text/html; charset=utf-8", err_html);
             return;
         }
 
-        std::vector<std::pair<std::string, std::vector<uint8_t>>> files_to_zip;
+        std::vector<uint8_t> zip_bytes;
+        if (total_raw_bytes <= 500 * 1024 * 1024) {
+            zip_bytes.reserve(static_cast<size_t>(total_raw_bytes + m_opt->files.size() * 128));
+        }
+
+        struct ZipMeta {
+            std::string filename;
+            uint32_t crc{0};
+            uint32_t size{0};
+            uint32_t local_hdr_offset{0};
+        };
+        std::vector<ZipMeta> meta_list;
 
         for (const auto& f : m_opt->files) {
             if (prefix.empty() || f.relative_path.rfind(prefix, 0) == 0 || f.relative_path == norm_dir) {
@@ -1492,12 +1503,92 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                     if (!prefix.empty() && in_zip_path.rfind(prefix, 0) == 0) {
                         in_zip_path = in_zip_path.substr(prefix.size());
                     }
-                    files_to_zip.push_back({in_zip_path, std::move(file_data)});
+                    std::replace(in_zip_path.begin(), in_zip_path.end(), '\\', '/');
+                    while (!in_zip_path.empty() && in_zip_path.front() == '/') in_zip_path.erase(0, 1);
+
+                    ZipMeta m;
+                    m.filename = in_zip_path.empty() ? "file" : in_zip_path;
+                    m.crc = calculate_crc32(file_data);
+                    m.size = static_cast<uint32_t>(file_data.size());
+                    m.local_hdr_offset = static_cast<uint32_t>(zip_bytes.size());
+
+                    uint8_t lh[30] = {0};
+                    lh[0] = 0x50; lh[1] = 0x4b; lh[2] = 0x03; lh[3] = 0x04; // PK\x03\x04
+                    lh[4] = 20; lh[5] = 0; // version 2.0
+                    lh[14] = static_cast<uint8_t>(m.crc & 0xFF);
+                    lh[15] = static_cast<uint8_t>((m.crc >> 8) & 0xFF);
+                    lh[16] = static_cast<uint8_t>((m.crc >> 16) & 0xFF);
+                    lh[17] = static_cast<uint8_t>((m.crc >> 24) & 0xFF);
+
+                    lh[18] = static_cast<uint8_t>(m.size & 0xFF);
+                    lh[19] = static_cast<uint8_t>((m.size >> 8) & 0xFF);
+                    lh[20] = static_cast<uint8_t>((m.size >> 16) & 0xFF);
+                    lh[21] = static_cast<uint8_t>((m.size >> 24) & 0xFF);
+
+                    lh[22] = lh[18]; lh[23] = lh[19]; lh[24] = lh[20]; lh[25] = lh[21]; // uncompressed = compressed (store mode)
+
+                    uint16_t fn_len = static_cast<uint16_t>(m.filename.size());
+                    lh[26] = static_cast<uint8_t>(fn_len & 0xFF);
+                    lh[27] = static_cast<uint8_t>((fn_len >> 8) & 0xFF);
+
+                    zip_bytes.insert(zip_bytes.end(), lh, lh + 30);
+                    zip_bytes.insert(zip_bytes.end(), m.filename.begin(), m.filename.end());
+                    zip_bytes.insert(zip_bytes.end(), file_data.begin(), file_data.end());
+
+                    meta_list.push_back(m);
                 }
             }
         }
 
-        auto zip_bytes = build_zip_archive(files_to_zip);
+        uint32_t cd_offset = static_cast<uint32_t>(zip_bytes.size());
+        for (const auto& m : meta_list) {
+            uint8_t cdh[46] = {0};
+            cdh[0] = 0x50; cdh[1] = 0x4b; cdh[2] = 0x01; cdh[3] = 0x02; // PK\x01\x02
+            cdh[4] = 20; cdh[5] = 0;
+            cdh[6] = 20; cdh[7] = 0;
+            cdh[16] = static_cast<uint8_t>(m.crc & 0xFF);
+            cdh[17] = static_cast<uint8_t>((m.crc >> 8) & 0xFF);
+            cdh[18] = static_cast<uint8_t>((m.crc >> 16) & 0xFF);
+            cdh[19] = static_cast<uint8_t>((m.crc >> 24) & 0xFF);
+
+            cdh[20] = static_cast<uint8_t>(m.size & 0xFF);
+            cdh[21] = static_cast<uint8_t>((m.size >> 8) & 0xFF);
+            cdh[22] = static_cast<uint8_t>((m.size >> 16) & 0xFF);
+            cdh[23] = static_cast<uint8_t>((m.size >> 24) & 0xFF);
+
+            cdh[24] = cdh[20]; cdh[25] = cdh[21]; cdh[26] = cdh[22]; cdh[27] = cdh[23];
+
+            uint16_t fn_len = static_cast<uint16_t>(m.filename.size());
+            cdh[28] = static_cast<uint8_t>(fn_len & 0xFF);
+            cdh[29] = static_cast<uint8_t>((fn_len >> 8) & 0xFF);
+
+            cdh[42] = static_cast<uint8_t>(m.local_hdr_offset & 0xFF);
+            cdh[43] = static_cast<uint8_t>((m.local_hdr_offset >> 8) & 0xFF);
+            cdh[44] = static_cast<uint8_t>((m.local_hdr_offset >> 16) & 0xFF);
+            cdh[45] = static_cast<uint8_t>((m.local_hdr_offset >> 24) & 0xFF);
+
+            zip_bytes.insert(zip_bytes.end(), cdh, cdh + 46);
+            zip_bytes.insert(zip_bytes.end(), m.filename.begin(), m.filename.end());
+        }
+
+        uint32_t cd_size = static_cast<uint32_t>(zip_bytes.size() - cd_offset);
+        uint8_t eocd[22] = {0};
+        eocd[0] = 0x50; eocd[1] = 0x4b; eocd[2] = 0x05; eocd[3] = 0x06; // PK\x05\x06
+        uint16_t total_entries = static_cast<uint16_t>(meta_list.size());
+        eocd[8] = static_cast<uint8_t>(total_entries & 0xFF);
+        eocd[9] = static_cast<uint8_t>((total_entries >> 8) & 0xFF);
+        eocd[10] = eocd[8]; eocd[11] = eocd[9];
+        eocd[12] = static_cast<uint8_t>(cd_size & 0xFF);
+        eocd[13] = static_cast<uint8_t>((cd_size >> 8) & 0xFF);
+        eocd[14] = static_cast<uint8_t>((cd_size >> 16) & 0xFF);
+        eocd[15] = static_cast<uint8_t>((cd_size >> 24) & 0xFF);
+        eocd[16] = static_cast<uint8_t>(cd_offset & 0xFF);
+        eocd[17] = static_cast<uint8_t>((cd_offset >> 8) & 0xFF);
+        eocd[18] = static_cast<uint8_t>((cd_offset >> 16) & 0xFF);
+        eocd[19] = static_cast<uint8_t>((cd_offset >> 24) & 0xFF);
+
+        zip_bytes.insert(zip_bytes.end(), eocd, eocd + 22);
+
         std::string zip_name = norm_dir.empty() ? control_server_.workspace_root().filename().string() : fs::path(norm_dir).filename().string();
         if (zip_name.empty()) zip_name = "workspace";
         for (char& c : zip_name) {
