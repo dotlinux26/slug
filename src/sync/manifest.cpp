@@ -101,7 +101,7 @@ std::optional<WorkspaceManifest> WorkspaceManifest::from_json(const std::string&
                 fe.size = f.value("size", 0ULL);
                 fe.mtime = f.value("mtime", 0ULL);
                 fe.file_blake3_hash = f.value("file_blake3_hash", "");
-                fe.scan_status = f.value("scan_status", "NOT_SCANNED");
+                fe.scan_status = f.value("scan_status", "");
                 if (f.contains("chunks") && f["chunks"].is_array()) {
                     for (const auto& c : f["chunks"]) {
                         ChunkInfo ci;
@@ -231,80 +231,104 @@ WorkspaceManifest ManifestBuilder::build(
         }
 
         // Step 2: Stateful AI & Smart Filter Audit evaluation
-        std::string scan_status = "NOT_SCANNED";
-        if (is_explicitly_allowed_by_rule) {
-            // Explicit rule in .slug/rules.conf has highest authority - heal any previous flags
-            if (audit_index.is_flagged(proto_path)) {
-                audit_index.allow_file(proto_path, "Explicitly allowed by rule", "rule");
-            }
-            scan_status = "SCANNED";
-        } else if (filter_level != core::FilterLevel::LEVEL_0_RAW && filter_level != core::FilterLevel::LEVEL_1_RULES && filter_mode != core::FilterMode::NONE) {
+        bool is_scannable = ai::AiScanner::is_scannable_file(entry.path());
+        std::string scan_status = "";
+
+        if (!is_scannable) {
+            // Non-scannable file (binary, zip, media, image, etc.)
             core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
-
-            // Automatically heal false positives on non-scannable files (binaries, .pyd, images, etc.)
-            if ((cached_status == core::AuditStatus::AI_FLAGGED || cached_status == core::AuditStatus::SMART_FILTER_FLAGGED) &&
-                !ai::AiScanner::is_scannable_file(entry.path())) {
-                audit_index.remove_entry(proto_path);
-                cached_status = core::AuditStatus::UNKNOWN;
-            }
-
-            if (cached_status == core::AuditStatus::AI_FLAGGED) {
-                auto e = audit_index.get_entry(proto_path);
-                std::string r = e ? e->reason : "AI Guard Flagged";
-                manifest.skipped.push_back({proto_path, r, "AI_FLAGGED"});
-                continue;
-            }
-
-            if (cached_status == core::AuditStatus::SMART_FILTER_FLAGGED) {
-                auto e = audit_index.get_entry(proto_path);
-                std::string r = e ? e->reason : "Smart Regex Flagged";
-                manifest.skipped.push_back({proto_path, r, "SMART_FILTER_FLAGGED"});
-                continue;
-            }
-
-            if (cached_status == core::AuditStatus::RULE_BLOCKED) {
+            if (cached_status == core::AuditStatus::RULE_BLOCKED && !is_explicitly_allowed_by_rule) {
                 auto e = audit_index.get_entry(proto_path);
                 std::string r = e ? e->reason : "Chặn thủ công (Manual Guard)";
                 manifest.skipped.push_back({proto_path, r, "MANUAL_BLOCKED"});
                 continue;
             }
-
-            if (cached_status == core::AuditStatus::USER_ALLOWED) {
-                // Whitelisted by user override - Always permitted!
-                scan_status = "SCANNED";
-            } else if (cached_status == core::AuditStatus::CLEAN) {
-                scan_status = "SCANNED";
-            } else if (cached_status == core::AuditStatus::UNKNOWN || cached_status == core::AuditStatus::STALE) {
-                if (ai::AiScanner::is_scannable_file(entry.path()) && cur_sz <= 10ULL * 1024 * 1024) {
+            // Purge any stale false-positive entries in audit index
+            if (cached_status != core::AuditStatus::UNKNOWN && cached_status != core::AuditStatus::RULE_BLOCKED) {
+                audit_index.remove_entry(proto_path);
+            }
+            // Non-scannable files never have scan badges
+            scan_status = "";
+        } else {
+            // Scannable files (.py, .js, .ts, .cpp, .txt, .json, .env, etc.)
+            scan_status = "NOT_SCANNED";
+            if (is_explicitly_allowed_by_rule) {
+                if (audit_index.is_flagged(proto_path)) {
+                    audit_index.allow_file(proto_path, "Explicitly allowed by rule", "rule");
+                }
+                core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
+                if (cached_status == core::AuditStatus::CLEAN) {
+                    scan_status = "SCANNED";
+                } else if (cur_sz <= 10ULL * 1024 * 1024) {
                     file_data = platform::PathUtils::read_binary_file(entry.path(), 10 * 1024 * 1024);
                     if (file_data) {
                         std::string text(file_data->begin(), file_data->end());
                         auto finding = scanner.scan_content(proto_path, text, false, filter_level);
-
-                        ai::AuditIndexEntry idx_entry;
-                        idx_entry.file_path = proto_path;
-                        idx_entry.blake3_hash = current_hash;
-                        idx_entry.scanned_at = core::Utils::current_timestamp();
-
-                        if (finding.has_secret) {
-                            bool is_ai = (finding.detector == "AI Guard");
-                            idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
-                            idx_entry.line_number = finding.line_number;
-                            idx_entry.reason = finding.reason;
-                            audit_index.update_entry(idx_entry);
-
-                            std::string tag = is_ai ? "AI_FLAGGED" : "SMART_FILTER_FLAGGED";
-                            manifest.skipped.push_back({proto_path, finding.reason + " (Line " + std::to_string(finding.line_number) + ")", tag});
-                            continue;
-                        } else {
-                            idx_entry.status = core::AuditStatus::CLEAN;
-                            idx_entry.reason = "Clean";
-                            audit_index.update_entry(idx_entry);
+                        if (!finding.has_secret) {
                             scan_status = "SCANNED";
                         }
                     }
-                } else {
-                    scan_status = "NOT_SCANNED";
+                }
+            } else if (filter_level != core::FilterLevel::LEVEL_0_RAW && filter_level != core::FilterLevel::LEVEL_1_RULES && filter_mode != core::FilterMode::NONE) {
+                core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
+
+                if (cached_status == core::AuditStatus::AI_FLAGGED) {
+                    auto e = audit_index.get_entry(proto_path);
+                    std::string r = e ? e->reason : "AI Guard Flagged";
+                    manifest.skipped.push_back({proto_path, r, "AI_FLAGGED"});
+                    continue;
+                }
+
+                if (cached_status == core::AuditStatus::SMART_FILTER_FLAGGED) {
+                    auto e = audit_index.get_entry(proto_path);
+                    std::string r = e ? e->reason : "Smart Regex Flagged";
+                    manifest.skipped.push_back({proto_path, r, "SMART_FILTER_FLAGGED"});
+                    continue;
+                }
+
+                if (cached_status == core::AuditStatus::RULE_BLOCKED) {
+                    auto e = audit_index.get_entry(proto_path);
+                    std::string r = e ? e->reason : "Chặn thủ công (Manual Guard)";
+                    manifest.skipped.push_back({proto_path, r, "MANUAL_BLOCKED"});
+                    continue;
+                }
+
+                if (cached_status == core::AuditStatus::USER_ALLOWED) {
+                    scan_status = (cur_sz <= 10ULL * 1024 * 1024) ? "SCANNED" : "NOT_SCANNED";
+                } else if (cached_status == core::AuditStatus::CLEAN) {
+                    scan_status = "SCANNED";
+                } else if (cached_status == core::AuditStatus::UNKNOWN || cached_status == core::AuditStatus::STALE) {
+                    if (cur_sz <= 10ULL * 1024 * 1024) {
+                        file_data = platform::PathUtils::read_binary_file(entry.path(), 10 * 1024 * 1024);
+                        if (file_data) {
+                            std::string text(file_data->begin(), file_data->end());
+                            auto finding = scanner.scan_content(proto_path, text, false, filter_level);
+
+                            ai::AuditIndexEntry idx_entry;
+                            idx_entry.file_path = proto_path;
+                            idx_entry.blake3_hash = current_hash;
+                            idx_entry.scanned_at = core::Utils::current_timestamp();
+
+                            if (finding.has_secret) {
+                                bool is_ai = (finding.detector == "AI Guard");
+                                idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
+                                idx_entry.line_number = finding.line_number;
+                                idx_entry.reason = finding.reason;
+                                audit_index.update_entry(idx_entry);
+
+                                std::string tag = is_ai ? "AI_FLAGGED" : "SMART_FILTER_FLAGGED";
+                                manifest.skipped.push_back({proto_path, finding.reason + " (Line " + std::to_string(finding.line_number) + ")", tag});
+                                continue;
+                            } else {
+                                idx_entry.status = core::AuditStatus::CLEAN;
+                                idx_entry.reason = "Clean";
+                                audit_index.update_entry(idx_entry);
+                                scan_status = "SCANNED";
+                            }
+                        }
+                    } else {
+                        scan_status = "NOT_SCANNED";
+                    }
                 }
             }
         }

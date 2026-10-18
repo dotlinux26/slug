@@ -8,6 +8,7 @@
 #include "src/bench/benchmark.hpp"
 #include "src/policy/rules.hpp"
 #include "src/ai/stateful_audit.hpp"
+#include "src/ai/scanner.hpp"
 #include "src/core/connection_manager.hpp"
 #include "src/net/control_server.hpp"
 #include <string>
@@ -768,10 +769,12 @@ public:
                     }
 
                     std::string scan_lbl = "";
-                    if (item.scan_status == "NOT_SCANNED") {
-                        scan_lbl = "<span class='badge' style='background:#f6f8fa; color:#57606a; border:1px solid #d0d7de; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='File chưa qua kiểm tra nội dung (do vượt kích thước 10MB hoặc định dạng nhị phân)'>NOT SCANNED</span>";
-                    } else if (item.scan_status == "SCANNED") {
-                        scan_lbl = "<span class='badge' style='background:#dafbe1; color:#1a7f37; border:1px solid #aceebb; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='Nội dung đã được quét an toàn'>Đã quét</span>";
+                    if (ai::AiScanner::is_scannable_file(item.name)) {
+                        if (item.scan_status == "NOT_SCANNED") {
+                            scan_lbl = "<span class='badge' style='background:#f6f8fa; color:#57606a; border:1px solid #d0d7de; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='File mã nguồn/văn bản chưa qua kiểm tra nội dung (do vượt kích thước 10MB)'>NOT SCANNED</span>";
+                        } else if (item.scan_status == "SCANNED") {
+                            scan_lbl = "<span class='badge' style='background:#dafbe1; color:#1a7f37; border:1px solid #aceebb; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='Nội dung đã được bộ lọc kiểm tra an toàn'>SCANNED</span>";
+                        }
                     }
 
                     std::string status_cell;

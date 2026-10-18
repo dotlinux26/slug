@@ -1292,11 +1292,16 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         } catch (...) {}
         core::FilterLevel flevel = core::filter_level_from_string(lvl_str);
         control_server_.set_filter_level(flevel);
+        fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
         if (flevel == core::FilterLevel::LEVEL_0_RAW) {
             // Level 0: Clear audit flags so table is clean
-            fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
-            ai::StatefulAuditIndex audit_idx(idx_file);
             audit_idx.clear_all();
+        } else {
+            // Re-scan: clear automated scan cache (CLEAN, AI_FLAGGED, SMART_FILTER_FLAGGED)
+            // so files are actually re-evaluated by the newly selected filter level
+            // while preserving manual overrides (USER_ALLOWED, RULE_BLOCKED)
+            audit_idx.clear_auto_scanned();
         }
         auto manifest = control_server_.get_or_build_manifest();
         control_server_.audit_logger().log(current_session->identity, "SCAN_RUN", lvl_str, "Đã chạy quét kiểm toán bảo mật cấp " + lvl_str + " (Skipped/Quarantined: " + std::to_string(manifest.skipped.size()) + ")");

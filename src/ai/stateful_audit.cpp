@@ -480,6 +480,26 @@ size_t StatefulAuditIndex::clear_all() {
     return static_cast<size_t>(total_before);
 }
 
+bool StatefulAuditIndex::clear_auto_scanned() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        init_sqlite();
+    }
+    if (!db_) return false;
+
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db_, "BEGIN TRANSACTION; DELETE FROM audit_entries WHERE status IN (1, 2, 6); COMMIT;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        if (err_msg) {
+            sqlite3_free(err_msg);
+        }
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return false;
+    }
+    sqlite3_wal_checkpoint_v2(db_, nullptr, SQLITE_CHECKPOINT_PASSIVE, nullptr, nullptr);
+    return true;
+}
+
 StatefulAuditIndex::QueryResult StatefulAuditIndex::query_entries(
     const std::string& status_filter,
     const std::string& detector_filter,

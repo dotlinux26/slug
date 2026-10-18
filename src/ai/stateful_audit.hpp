@@ -58,6 +58,7 @@ public:
     };
 
     size_t clear_all();
+    bool clear_auto_scanned();
     QueryResult query_entries(
         const std::string& status_filter = "all",
         const std::string& detector_filter = "all",
