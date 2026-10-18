@@ -7,8 +7,10 @@
 #include "src/core/utils.hpp"
 #include "third_party/json/json.hpp"
 #include <iostream>
+#include <fstream>
 
 namespace slug::net {
+
 
 using json = nlohmann::json;
 
@@ -614,6 +616,292 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             resp["path"] = dest_path;
             resp["bytes"] = data.size();
             if (!send_packet(resp)) break;
+
+        } else if (type == "start_stream_pull") {
+            touch_session(cur_session_id);
+            auto sess = get_session(cur_session_id);
+            if (!sess || !sess->has_permission(core::Role::READ_ONLY)) {
+                json err;
+                err["status"] = "error";
+                err["message"] = "Unauthorized / expired session (read permission required)";
+                audit_logger_.log(sess ? sess->identity : client.peer_endpoint().ip,
+                                  "STREAM_PULL_DENIED", req.value("path", ""), "Permission denied", false);
+                send_packet(err);
+                continue;
+            }
+
+            std::string rel_path = req.value("path", "");
+            uint32_t transfer_id = req.value("transfer_id", 1U);
+
+            auto vres = vfs_.resolve_and_jail(rel_path, sess->role, false);
+            if (!vres.is_ok()) {
+                json err;
+                err["status"] = "error";
+                err["message"] = vres.error_message.empty() ? core::vfs_status_to_string(vres.status) : vres.error_message;
+                audit_logger_.log(sess->identity, "VFS_ACCESS_BLOCKED", rel_path, err["message"], false);
+                send_packet(err);
+                continue;
+            }
+
+            std::error_code ec_sz;
+            if (!std::filesystem::exists(vres.real_path, ec_sz) || std::filesystem::is_directory(vres.real_path, ec_sz)) {
+                json err;
+                err["status"] = "error";
+                err["message"] = "Target file not found or is a directory";
+                send_packet(err);
+                continue;
+            }
+
+            uint64_t file_size = std::filesystem::file_size(vres.real_path, ec_sz);
+
+            // Fetch or compute BLAKE3 hash
+            std::string file_hash;
+            {
+                std::lock_guard<std::mutex> lk(manifest_mutex_);
+                if (cached_manifest_) {
+                    for (const auto& f : cached_manifest_->files) {
+                        if (f.relative_path == rel_path) {
+                            file_hash = f.file_blake3_hash;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (file_hash.empty()) {
+                auto h_opt = crypto::Blake3::hash_file(vres.real_path);
+                if (h_opt) file_hash = *h_opt;
+            }
+
+            json resp;
+            resp["status"] = "ok";
+            resp["transfer_id"] = transfer_id;
+            resp["file_size"] = file_size;
+            resp["blake3_hash"] = file_hash;
+            if (!send_packet(resp)) break;
+
+            // Parse optional range requests (for delta sync)
+            struct Range { uint64_t offset; uint64_t length; };
+            std::vector<Range> ranges;
+            if (req.contains("ranges") && req["ranges"].is_array() && !req["ranges"].empty()) {
+                for (const auto& rj : req["ranges"]) {
+                    uint64_t ro = rj.value("offset", 0ULL);
+                    uint64_t rl = rj.value("length", 0ULL);
+                    if (rl > 0 && ro < file_size) {
+                        if (ro + rl > file_size) rl = file_size - ro;
+                        ranges.push_back({ro, rl});
+                    }
+                }
+            }
+            if (ranges.empty()) {
+                ranges.push_back({0ULL, file_size});
+            }
+
+            // Stream binary data frames directly from disk over AEAD
+            std::ifstream src(vres.real_path, std::ios::binary);
+            if (!src.is_open()) {
+                StreamDataFrameHeader abort_hdr{};
+                abort_hdr.magic = 0x53;
+                abort_hdr.frame_type = static_cast<uint8_t>(StreamFrameType::ABORT);
+                abort_hdr.transfer_id = transfer_id;
+                std::span<const uint8_t> pt(reinterpret_cast<const uint8_t*>(&abort_hdr), sizeof(abort_hdr));
+                AeadFrameChannel::send_frame(client, session_keys.session_key, session_keys.server_to_client_salt, server_tx_seq++, pt);
+                continue;
+            }
+
+            bool stream_ok = true;
+            uint64_t total_payload_sent = 0;
+            std::vector<uint8_t> frame_buf(sizeof(StreamDataFrameHeader) + kStreamPayloadChunkSize);
+
+            for (const auto& rng : ranges) {
+                if (!stream_ok) break;
+                src.seekg(static_cast<std::streamoff>(rng.offset), std::ios::beg);
+                uint64_t range_bytes_sent = 0;
+
+                while (range_bytes_sent < rng.length && stream_ok) {
+                    size_t to_read = static_cast<size_t>(std::min<uint64_t>(kStreamPayloadChunkSize, rng.length - range_bytes_sent));
+                    src.read(reinterpret_cast<char*>(frame_buf.data() + sizeof(StreamDataFrameHeader)), to_read);
+                    std::streamsize actual = src.gcount();
+                    if (actual <= 0) break;
+
+                    StreamDataFrameHeader* phdr = reinterpret_cast<StreamDataFrameHeader*>(frame_buf.data());
+                    phdr->magic = 0x53;
+                    phdr->frame_type = static_cast<uint8_t>(StreamFrameType::DATA);
+                    phdr->reserved = 0;
+                    phdr->transfer_id = transfer_id;
+                    phdr->offset = rng.offset + range_bytes_sent;
+                    phdr->payload_len = static_cast<uint32_t>(actual);
+
+                    std::span<const uint8_t> frame_span(frame_buf.data(), sizeof(StreamDataFrameHeader) + actual);
+                    if (!AeadFrameChannel::send_frame(client, session_keys.session_key, session_keys.server_to_client_salt, server_tx_seq++, frame_span)) {
+                        stream_ok = false;
+                        break;
+                    }
+                    range_bytes_sent += actual;
+                    total_payload_sent += actual;
+                }
+            }
+
+            if (stream_ok) {
+                // Send END_OF_STREAM frame carrying the full-file BLAKE3 hash
+                std::vector<uint8_t> eos_buf(sizeof(StreamDataFrameHeader) + file_hash.size());
+                StreamDataFrameHeader* peos = reinterpret_cast<StreamDataFrameHeader*>(eos_buf.data());
+                peos->magic = 0x53;
+                peos->frame_type = static_cast<uint8_t>(StreamFrameType::END_OF_STREAM);
+                peos->reserved = 0;
+                peos->transfer_id = transfer_id;
+                peos->offset = file_size;
+                peos->payload_len = static_cast<uint32_t>(file_hash.size());
+                std::memcpy(eos_buf.data() + sizeof(StreamDataFrameHeader), file_hash.data(), file_hash.size());
+
+                AeadFrameChannel::send_frame(client, session_keys.session_key, session_keys.server_to_client_salt, server_tx_seq++, eos_buf);
+                audit_logger_.log(sess->identity, "STREAM_PULL", rel_path, "Streamed " + core::Utils::format_size(total_payload_sent));
+            } else {
+                break;
+            }
+
+        } else if (type == "start_stream_push") {
+            touch_session(cur_session_id);
+            auto sess = get_session(cur_session_id);
+            if (!sess || !sess->has_permission(core::Role::WRITE_ONLY)) {
+                json err;
+                err["status"] = "error";
+                err["message"] = "Write permission denied (requires w or rw role)";
+                audit_logger_.log(sess ? sess->identity : client.peer_endpoint().ip,
+                                  "PUSH_DENIED", req.value("path", ""), "Insufficient role permission", false);
+                send_packet(err);
+                continue;
+            }
+
+            std::string dest_path = req.value("path", "");
+            uint32_t transfer_id = req.value("transfer_id", 1U);
+            std::string expected_blake3_hash = req.value("blake3_hash", "");
+
+            auto vres = vfs_.resolve_and_jail(dest_path, sess->role, true);
+            if (!vres.is_ok()) {
+                json err;
+                err["status"] = "error";
+                err["message"] = vres.error_message.empty() ? core::vfs_status_to_string(vres.status) : vres.error_message;
+                audit_logger_.log(sess->identity, "PUSH_REJECTED", dest_path, err["message"], false);
+                send_packet(err);
+                continue;
+            }
+
+            // Create temp upload file in parent directory
+            std::error_code ec_dir;
+            std::filesystem::create_directories(vres.real_path.parent_path(), ec_dir);
+            std::filesystem::path temp_upload_path = vres.real_path.parent_path() / (vres.real_path.filename().string() + ".slug_upload_tmp." + std::to_string(transfer_id));
+
+            std::ofstream dst(temp_upload_path, std::ios::binary | std::ios::trunc);
+            if (!dst.is_open()) {
+                json err;
+                err["status"] = "error";
+                err["message"] = "Failed to open temporary destination file for writing";
+                send_packet(err);
+                continue;
+            }
+
+            json resp;
+            resp["status"] = "ok";
+            resp["transfer_id"] = transfer_id;
+            if (!send_packet(resp)) {
+                dst.close();
+                std::filesystem::remove(temp_upload_path, ec_dir);
+                break;
+            }
+
+            // Streaming receive loop
+            crypto::Blake3Hasher hasher;
+            uint64_t total_written = 0;
+            bool upload_success = false;
+            std::string error_msg;
+
+            while (true) {
+                auto dec = AeadFrameChannel::recv_frame(client, session_keys.session_key, session_keys.client_to_server_salt, c2s_window, 60000);
+                if (!dec) {
+                    error_msg = "Connection timeout or decryption error during streaming upload";
+                    break;
+                }
+                if (dec->size() < sizeof(StreamDataFrameHeader)) {
+                    error_msg = "Malformed stream frame header";
+                    break;
+                }
+
+                StreamDataFrameHeader hdr;
+                std::memcpy(&hdr, dec->data(), sizeof(StreamDataFrameHeader));
+                if (hdr.magic != 0x53 || hdr.transfer_id != transfer_id) {
+                    error_msg = "Stream frame header magic or transfer_id mismatch";
+                    break;
+                }
+
+                if (hdr.frame_type == static_cast<uint8_t>(StreamFrameType::ABORT)) {
+                    error_msg = "Upload aborted by client";
+                    break;
+                }
+
+                if (hdr.frame_type == static_cast<uint8_t>(StreamFrameType::DATA)) {
+                    if (dec->size() < sizeof(StreamDataFrameHeader) + hdr.payload_len) {
+                        error_msg = "Truncated payload in stream data frame";
+                        break;
+                    }
+                    const uint8_t* payload = dec->data() + sizeof(StreamDataFrameHeader);
+                    dst.seekp(static_cast<std::streamoff>(hdr.offset), std::ios::beg);
+                    dst.write(reinterpret_cast<const char*>(payload), hdr.payload_len);
+                    hasher.update(payload, hdr.payload_len);
+                    total_written += hdr.payload_len;
+                } else if (hdr.frame_type == static_cast<uint8_t>(StreamFrameType::END_OF_STREAM)) {
+                    dst.flush();
+                    dst.close();
+
+                    std::string computed_hash = crypto::Blake3::hash_file(temp_upload_path).value_or("");
+                    if (!expected_blake3_hash.empty() && computed_hash != expected_blake3_hash) {
+                        error_msg = "Integrity verification failed (BLAKE3 mismatch)";
+                        break;
+                    }
+
+                    // AI Secret Guard inspection for text files if enabled
+                    if (enable_ai_ && total_written < 10ULL * 1024 * 1024) {
+                        ai::AiScanner scanner;
+                        std::ifstream check_ifs(temp_upload_path, std::ios::binary);
+                        std::string text_sample((std::istreambuf_iterator<char>(check_ifs)), std::istreambuf_iterator<char>());
+                        auto finding = scanner.scan_content(dest_path, text_sample);
+                        if (finding.has_secret) {
+                            error_msg = "AI Guard: Sensitive secret detected (" + finding.reason + "). Upload rejected.";
+                            audit_logger_.log(sess->identity, "AI_REJECT", dest_path, finding.reason, false);
+                            break;
+                        }
+                    }
+
+                    // Commit atomically: rename temp file to real destination
+                    std::error_code ec_rename;
+                    std::filesystem::rename(temp_upload_path, vres.real_path, ec_rename);
+                    if (ec_rename) {
+                        std::filesystem::copy_file(temp_upload_path, vres.real_path, std::filesystem::copy_options::overwrite_existing, ec_rename);
+                        std::filesystem::remove(temp_upload_path, ec_rename);
+                    }
+                    upload_success = true;
+                    break;
+                }
+            }
+
+            if (dst.is_open()) {
+                dst.close();
+            }
+
+            if (!upload_success) {
+                std::filesystem::remove(temp_upload_path, ec_dir);
+                json err;
+                err["status"] = "error";
+                err["message"] = error_msg.empty() ? "Streaming upload failed" : error_msg;
+                send_packet(err);
+            } else {
+                invalidate_manifest_cache();
+                json ok_resp;
+                ok_resp["status"] = "ok";
+                ok_resp["path"] = dest_path;
+                ok_resp["bytes"] = total_written;
+                audit_logger_.log(sess->identity, "FILE_UPLOAD", dest_path, "Stream uploaded " + core::Utils::format_size(total_written));
+                if (!send_packet(ok_resp)) break;
+            }
 
         } else if (type == "http_tunnel") {
             auto sess = get_session(cur_session_id);

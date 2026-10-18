@@ -2492,8 +2492,15 @@ int cmd_pull(int argc, char* argv[]) {
         }
     }
 
-    std::cout << "[*] Starting Delta Sync into " << target_dir << "..." << std::endl;
-    bool ok = client.pull(target_dir, opts, nullptr, manifest_opt);
+    std::cout << "[*] Starting TCP Binary Streaming Delta Sync into " << target_dir << "..." << std::endl;
+    auto progress_cb = [](uint64_t done, uint64_t total, double mbps) {
+        double pct = (total > 0) ? (static_cast<double>(done) * 100.0 / static_cast<double>(total)) : 0.0;
+        std::cout << "\r[*] Streaming: " << core::Utils::format_size(done) << " / " << core::Utils::format_size(total)
+                  << " (" << std::fixed << std::setprecision(1) << pct << "%) @ "
+                  << std::fixed << std::setprecision(1) << mbps << " MB/s    " << std::flush;
+    };
+    bool ok = client.pull(target_dir, opts, nullptr, manifest_opt, progress_cb, nullptr);
+    std::cout << std::endl;
     return ok ? 0 : 1;
 }
 
@@ -2939,6 +2946,133 @@ int cmd_push(int argc, char* argv[]) {
     return ok ? 0 : 1;
 }
 
+enum class JobStatus {
+    PENDING,
+    RUNNING,
+    COMPLETED,
+    FAILED,
+    CANCELLED
+};
+
+inline const char* job_status_to_string(JobStatus s) {
+    switch (s) {
+        case JobStatus::PENDING: return "pending";
+        case JobStatus::RUNNING: return "running";
+        case JobStatus::COMPLETED: return "completed";
+        case JobStatus::FAILED: return "failed";
+        case JobStatus::CANCELLED: return "cancelled";
+    }
+    return "unknown";
+}
+
+struct TransferJob {
+    std::string job_id;
+    std::string type; // "pull" or "push"
+    std::string target_dir;
+    std::string current_file;
+    size_t file_index{0};
+    size_t total_files{0};
+
+    std::atomic<JobStatus> status{JobStatus::PENDING};
+    std::atomic<uint64_t> bytes_transferred{0};
+    std::atomic<uint64_t> total_bytes{0};
+    std::atomic<uint64_t> bytes_saved{0};
+    std::atomic<double> instant_mbps{0.0};
+    std::atomic<double> avg_mbps{0.0};
+
+    uint64_t start_time_ms{0};
+    uint64_t finish_time_ms{0};
+
+    std::string error_message;
+    std::atomic<bool> cancel_flag{false};
+
+    std::unique_ptr<std::thread> worker_thread;
+};
+
+class TransferJobManager {
+public:
+    static TransferJobManager& instance() {
+        static TransferJobManager s_mgr;
+        return s_mgr;
+    }
+
+    std::shared_ptr<TransferJob> create_job(const std::string& type, const std::string& target_dir, uint64_t total_expected = 0) {
+        cleanup_finished_threads();
+        std::lock_guard<std::mutex> lk(mtx_);
+        static std::atomic<uint64_t> s_id_seq{1};
+        std::string jid = "job_" + std::to_string(core::Utils::current_timestamp()) + "_" + std::to_string(s_id_seq++);
+
+        auto job = std::make_shared<TransferJob>();
+        job->job_id = jid;
+        job->type = type;
+        job->target_dir = target_dir;
+        job->total_bytes.store(total_expected);
+        job->start_time_ms = core::Utils::current_timestamp();
+        job->status.store(JobStatus::PENDING);
+
+        jobs_[jid] = job;
+        active_job_id_ = jid;
+        return job;
+    }
+
+    std::shared_ptr<TransferJob> get_job(const std::string& job_id) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        if (job_id.empty() || job_id == "latest") {
+            if (!active_job_id_.empty()) {
+                auto it = jobs_.find(active_job_id_);
+                if (it != jobs_.end()) return it->second;
+            }
+            return nullptr;
+        }
+        auto it = jobs_.find(job_id);
+        if (it != jobs_.end()) return it->second;
+        return nullptr;
+    }
+
+    void cancel_job(const std::string& job_id) {
+        auto job = get_job(job_id);
+        if (job) {
+            job->cancel_flag.store(true);
+        }
+    }
+
+    void shutdown() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        for (auto& [_, job] : jobs_) {
+            if (job) {
+                job->cancel_flag.store(true);
+                if (job->worker_thread && job->worker_thread->joinable()) {
+                    job->worker_thread->join();
+                }
+            }
+        }
+        jobs_.clear();
+    }
+
+    ~TransferJobManager() {
+        shutdown();
+    }
+
+private:
+    TransferJobManager() = default;
+    std::mutex mtx_;
+    std::string active_job_id_;
+    std::map<std::string, std::shared_ptr<TransferJob>> jobs_;
+
+    void cleanup_finished_threads() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        for (auto& [_, job] : jobs_) {
+            if (job && job->worker_thread && job->worker_thread->joinable()) {
+                auto st = job->status.load();
+                if (st == JobStatus::COMPLETED || st == JobStatus::FAILED || st == JobStatus::CANCELLED) {
+                    job->worker_thread->join();
+                    job->worker_thread.reset();
+                }
+            }
+        }
+    }
+};
+
 struct PortalSession {
     std::mutex mtx;
     std::unique_ptr<net::SlugClient> client;
@@ -2948,6 +3082,7 @@ struct PortalSession {
     core::SuiteID active_suite{core::SuiteID::SUITE_2_MODERN};
 };
 static PortalSession g_portal;
+
 
 static bool read_http_request_raw(platform::TcpSocket& sock, std::string& raw_out, std::string& method, std::string& path, std::string& query, std::string& body) {
     std::vector<uint8_t> buffer;
@@ -4642,11 +4777,26 @@ int cmd_portal(int argc, char* argv[]) {
             }
 
             if (path == "/api/pull/execute" && method == "POST") {
-                std::lock_guard<std::mutex> lk(g_portal.mtx);
-                if (!g_portal.client || !g_portal.client->is_connected()) {
-                    send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
-                    return;
+                std::string host;
+                uint16_t port = 0;
+                core::SuiteID suite = core::SuiteID::SUITE_1_CLASSICAL;
+                std::string ticket;
+                {
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (!g_portal.client || !g_portal.client->is_connected()) {
+                        send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
+                        return;
+                    }
+                    host = g_portal.active_host;
+                    port = g_portal.active_port;
+                    suite = g_portal.active_suite;
+                    ticket = g_portal.client->session_ticket();
+                    if (ticket.empty() && !g_portal.active_id.empty()) {
+                        auto conn_opt = core::ConnectionManager::instance().get_connection(g_portal.active_id);
+                        if (conn_opt) ticket = conn_opt->ticket;
+                    }
                 }
+
                 nlohmann::json res;
                 try {
                     auto j = nlohmann::json::parse(body);
@@ -4658,20 +4808,13 @@ int cmd_portal(int argc, char* argv[]) {
                         send_portal_http(sock, 400, "Bad Request", "application/json", res.dump());
                         return;
                     }
+
                     std::filesystem::path target_dir(dest);
                     std::error_code ec;
                     std::filesystem::create_directories(target_dir, ec);
                     if (ec) {
                         res["status"] = "error";
                         res["message"] = "Không thể tạo thư mục đích trên máy: " + ec.message();
-                        send_portal_http(sock, 500, "Internal Server Error", "application/json", res.dump());
-                        return;
-                    }
-
-                    auto manifest_opt = g_portal.client->fetch_manifest();
-                    if (!manifest_opt) {
-                        res["status"] = "error";
-                        res["message"] = "Không thể lấy danh sách tệp (manifest) từ trạm từ xa.";
                         send_portal_http(sock, 500, "Internal Server Error", "application/json", res.dump());
                         return;
                     }
@@ -4687,24 +4830,61 @@ int cmd_portal(int argc, char* argv[]) {
                         }
                     }
 
-                    bool ok = g_portal.client->pull(target_dir, opts, nullptr, manifest_opt);
-                    if (ok) {
-                        size_t file_count = 0;
-                        uint64_t total_bytes = 0;
-                        for (const auto& f : manifest_opt->files) {
-                            if (opts.only_pattern.empty() || f.relative_path.rfind(rel_dir, 0) == 0) {
-                                file_count++;
-                                total_bytes += f.size;
+                    auto job = TransferJobManager::instance().create_job("pull", target_dir.string());
+                    std::string jid = job->job_id;
+
+                    // Launch dedicated worker thread with dedicated SlugClient connection
+                    job->worker_thread = std::make_unique<std::thread>([job, host, port, suite, ticket, target_dir, opts]() {
+                        job->status.store(JobStatus::RUNNING);
+                        auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
+                        if (!dedicated_client->connect(host, port)) {
+                            job->status.store(JobStatus::FAILED);
+                            job->error_message = "Không thể kết nối kênh truyền dữ liệu chuyên dụng tới " + host + ":" + std::to_string(port);
+                            return;
+                        }
+                        auto auth = dedicated_client->authenticate_ticket(ticket);
+                        if (!auth.success) {
+                            job->status.store(JobStatus::FAILED);
+                            job->error_message = "Xác thực phiên truyền dữ liệu thất bại: " + auth.message;
+                            return;
+                        }
+
+                        auto manifest_opt = dedicated_client->fetch_manifest();
+                        if (!manifest_opt) {
+                            job->status.store(JobStatus::FAILED);
+                            job->error_message = "Không thể tải danh sách tệp (manifest) từ máy chủ.";
+                            return;
+                        }
+
+                        auto progress_cb = [job](uint64_t bytes_done, uint64_t bytes_total, double inst_mbps) {
+                            job->bytes_transferred.store(bytes_done);
+                            job->total_bytes.store(bytes_total);
+                            job->instant_mbps.store(inst_mbps);
+
+                            uint64_t now_ms = core::Utils::current_timestamp();
+                            double total_sec = (now_ms > job->start_time_ms) ? static_cast<double>(now_ms - job->start_time_ms) : 0.001;
+                            double avg = (static_cast<double>(bytes_done) / (1024.0 * 1024.0)) / total_sec;
+                            job->avg_mbps.store(avg);
+                        };
+
+                        bool ok = dedicated_client->pull(target_dir, opts, nullptr, manifest_opt, progress_cb, &job->cancel_flag);
+                        if (ok) {
+                            job->status.store(JobStatus::COMPLETED);
+                            job->finish_time_ms = core::Utils::current_timestamp();
+                        } else {
+                            if (job->cancel_flag.load()) {
+                                job->status.store(JobStatus::CANCELLED);
+                                job->error_message = "Người dùng đã hủy quá trình đồng bộ.";
+                            } else {
+                                job->status.store(JobStatus::FAILED);
+                                job->error_message = dedicated_client->get_last_error().empty() ? "Quá trình đồng bộ tệp thất bại" : dedicated_client->get_last_error();
                             }
                         }
-                        res["status"] = "ok";
-                        res["copied"] = file_count;
-                        res["bytes"] = total_bytes;
-                        res["dest"] = target_dir.string();
-                    } else {
-                        res["status"] = "error";
-                        res["message"] = g_portal.client->get_last_error().empty() ? "Quá trình đồng bộ tệp thất bại" : g_portal.client->get_last_error();
-                    }
+                    });
+
+                    res["status"] = "ok";
+                    res["job_id"] = jid;
+                    res["dest"] = target_dir.string();
                     send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 } catch (const std::exception& e) {
                     res["status"] = "error";
@@ -4714,12 +4894,73 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
-            if (path == "/api/fs/upload-local-path" && method == "POST") {
-                std::lock_guard<std::mutex> lk(g_portal.mtx);
-                if (!g_portal.client || !g_portal.client->is_connected()) {
-                    send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
+            if (path == "/api/transfer/progress") {
+                std::string jid = get_query_param(query, "job_id");
+                auto job = TransferJobManager::instance().get_job(jid);
+                nlohmann::json res;
+                if (!job) {
+                    res["status"] = "idle";
+                    res["message"] = "Không có tiến trình truyền tải nào đang chạy.";
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
                     return;
                 }
+
+                auto st = job->status.load();
+                uint64_t transferred = job->bytes_transferred.load();
+                uint64_t total = job->total_bytes.load();
+                double pct = (total > 0) ? (static_cast<double>(transferred) * 100.0 / static_cast<double>(total)) : 0.0;
+                if (pct > 100.0) pct = 100.0;
+
+                uint64_t now_ms = core::Utils::current_timestamp();
+                uint64_t elapsed_sec = (now_ms > job->start_time_ms) ? (now_ms - job->start_time_ms) : 0;
+
+                res["job_id"] = job->job_id;
+                res["type"] = job->type;
+                res["status"] = job_status_to_string(st);
+                res["bytes_transferred"] = transferred;
+                res["total_bytes"] = total;
+                res["percent"] = pct;
+                res["instant_mbps"] = job->instant_mbps.load();
+                res["avg_mbps"] = job->avg_mbps.load();
+                res["elapsed_sec"] = elapsed_sec;
+                res["error_message"] = job->error_message;
+                res["dest"] = job->target_dir;
+
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/transfer/cancel" && method == "POST") {
+                std::string jid = get_query_param(query, "job_id");
+                TransferJobManager::instance().cancel_job(jid);
+                nlohmann::json res;
+                res["status"] = "ok";
+                res["message"] = "Đã gửi tín hiệu hủy tiến trình.";
+                send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                return;
+            }
+
+            if (path == "/api/fs/upload-local-path" && method == "POST") {
+                std::string host;
+                uint16_t port = 0;
+                core::SuiteID suite = core::SuiteID::SUITE_1_CLASSICAL;
+                std::string ticket;
+                {
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (!g_portal.client || !g_portal.client->is_connected()) {
+                        send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
+                        return;
+                    }
+                    host = g_portal.active_host;
+                    port = g_portal.active_port;
+                    suite = g_portal.active_suite;
+                    ticket = g_portal.client->session_ticket();
+                    if (ticket.empty() && !g_portal.active_id.empty()) {
+                        auto conn_opt = core::ConnectionManager::instance().get_connection(g_portal.active_id);
+                        if (conn_opt) ticket = conn_opt->ticket;
+                    }
+                }
+
                 nlohmann::json res;
                 try {
                     auto j = nlohmann::json::parse(body);
@@ -4736,17 +4977,28 @@ int cmd_portal(int argc, char* argv[]) {
                         return;
                     }
 
+                    auto upload_client = std::make_unique<net::SlugClient>(host, port, suite);
+                    if (!upload_client->connect(host, port)) {
+                        send_portal_http(sock, 500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Không thể kết nối kênh truyền tải dữ liệu\"}");
+                        return;
+                    }
+                    auto auth = upload_client->authenticate_ticket(ticket);
+                    if (!auth.success) {
+                        send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Xác thực phiên tải lên thất bại\"}");
+                        return;
+                    }
+
                     if (!std::filesystem::is_directory(src_path) && !is_dir) {
                         std::string filename = src_path.filename().string();
                         std::string target_rel = rel_dir.empty() ? filename : (rel_dir + "/" + filename);
-                        bool ok = g_portal.client->push(src_path, target_rel);
+                        bool ok = upload_client->push(src_path, target_rel);
                         if (ok) {
                             res["status"] = "ok";
                             res["filename"] = filename;
                             res["count"] = 1;
                         } else {
                             res["status"] = "error";
-                            res["message"] = g_portal.client->get_last_error().empty() ? "Không thể tải tệp lên máy chủ." : g_portal.client->get_last_error();
+                            res["message"] = upload_client->get_last_error().empty() ? "Không thể tải tệp lên máy chủ." : upload_client->get_last_error();
                         }
                         send_portal_http(sock, 200, "OK", "application/json", res.dump());
                         return;
@@ -4758,7 +5010,7 @@ int cmd_portal(int argc, char* argv[]) {
                                 auto sub_rel = std::filesystem::relative(entry.path(), src_path).generic_string();
                                 std::string base_dir = src_path.filename().generic_string();
                                 std::string target_rel = rel_dir.empty() ? (base_dir + "/" + sub_rel) : (rel_dir + "/" + base_dir + "/" + sub_rel);
-                                if (g_portal.client->push(entry.path(), target_rel)) {
+                                if (upload_client->push(entry.path(), target_rel)) {
                                     uploaded_count++;
                                 }
                             }
@@ -4775,6 +5027,7 @@ int cmd_portal(int argc, char* argv[]) {
                 }
                 return;
             }
+
 
             // Tunnel file browsing, downloads, ZIP archives, uploads, and APIs through the encrypted PQC channel!
             std::lock_guard<std::mutex> lk(g_portal.mtx);

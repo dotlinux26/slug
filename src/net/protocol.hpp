@@ -40,8 +40,30 @@ struct UdpPacketHeader {
         return aad;
     }
 };
+
+// Option A: TCP Binary Streaming Protocol
+// Binary frames are encapsulated directly inside Post-Quantum AEAD frames without Base64/JSON overhead.
+enum class StreamFrameType : uint8_t {
+    DATA          = 0x01, // Binary payload frame carrying offset + raw bytes
+    END_OF_STREAM = 0x02, // End of file/range transmission, carrying expected 32B BLAKE3 hash
+    ABORT         = 0x03  // Abort/error signal from peer
+};
+
+struct StreamDataFrameHeader {
+    uint8_t  magic{0x53};         // 'S' (Slug Stream)
+    uint8_t  frame_type{static_cast<uint8_t>(StreamFrameType::DATA)};
+    uint16_t reserved{0};
+    uint32_t transfer_id{0};
+    uint64_t offset{0};
+    uint32_t payload_len{0};
+};
 #pragma pack(pop)
 
 static_assert(sizeof(UdpPacketHeader) == 24, "UdpPacketHeader must be exactly 24 bytes");
+static_assert(sizeof(StreamDataFrameHeader) == 20, "StreamDataFrameHeader must be exactly 20 bytes");
+
+// High throughput bounded chunk size for bulk AEAD binary streaming (512 KiB)
+constexpr size_t kStreamPayloadChunkSize = 512 * 1024;
 
 } // namespace slug::net
+

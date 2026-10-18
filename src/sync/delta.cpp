@@ -4,8 +4,10 @@
 #include "src/platform/fs.hpp"
 #include <set>
 #include <unordered_set>
+#include <fstream>
 
 namespace slug::sync {
+
 
 namespace fs = std::filesystem;
 
@@ -78,9 +80,9 @@ DeltaPlan DeltaCalculator::compute_plan(
             continue;
         }
 
-        // File exists locally: read and compare hash
-        auto local_data = platform::PathUtils::read_binary_file(local_file);
-        if (!local_data) {
+        // File exists locally: compute BLAKE3 hash via bounded streaming (256KB buffer, no full-file RAM allocation)
+        auto local_hash_opt = crypto::Blake3::hash_file(local_file);
+        if (!local_hash_opt) {
             // Could not read: mark as new / full transfer
             FileDelta fd;
             fd.relative_path = rem_file.relative_path;
@@ -95,7 +97,7 @@ DeltaPlan DeltaCalculator::compute_plan(
             continue;
         }
 
-        std::string local_hash = crypto::Blake3::hash_hex(*local_data);
+        std::string local_hash = *local_hash_opt;
 
         if (local_hash == rem_file.file_blake3_hash) {
             // Identical: 100% skipped! Zero bytes over wire!
@@ -109,15 +111,25 @@ DeltaPlan DeltaCalculator::compute_plan(
             continue;
         }
 
-        // Modified file: compare chunks by content address (Blake3 hash) for robust deduplication
-        auto local_chunks = Chunker::chunk_buffer(*local_data);
+        // Modified file: stream 64KB chunks to compute chunk hashes without buffering full file into RAM
         std::unordered_set<std::string> local_hashes;
-        local_hashes.reserve(local_chunks.size());
-        for (const auto& lc : local_chunks) {
-            local_hashes.insert(lc.blake3_hash);
+        {
+            std::ifstream in(local_file, std::ios::binary);
+            if (in.is_open()) {
+                std::vector<uint8_t> chunk_buf(Chunker::kDefaultChunkSize);
+                while (in) {
+                    in.read(reinterpret_cast<char*>(chunk_buf.data()), chunk_buf.size());
+                    std::streamsize bytes_read = in.gcount();
+                    if (bytes_read > 0) {
+                        std::span<const uint8_t> c_span(chunk_buf.data(), static_cast<size_t>(bytes_read));
+                        local_hashes.insert(crypto::Blake3::hash_hex(c_span));
+                    }
+                }
+            }
         }
 
         FileDelta fd;
+
         fd.relative_path = rem_file.relative_path;
         fd.is_modified = true;
         fd.total_size = rem_file.size;

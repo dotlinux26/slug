@@ -1,11 +1,16 @@
 #include "src/net/client.hpp"
+#include "src/net/protocol.hpp"
 #include "src/platform/fs.hpp"
 #include "src/core/utils.hpp"
 #include "src/crypto/blake3_wrapper.hpp"
 #include "third_party/json/json.hpp"
 #include <iostream>
+#include <fstream>
+#include <chrono>
+#include <algorithm>
 
 namespace slug::net {
+
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -372,10 +377,351 @@ std::optional<std::vector<uint8_t>> SlugClient::fetch_chunk(const std::string& r
     return core::Utils::from_base64(b64);
 }
 
+bool SlugClient::stream_pull_file(const std::string& remote_path,
+                                  const fs::path& local_dest,
+                                  uint64_t expected_size,
+                                  const std::string& expected_hash,
+                                  const std::vector<std::pair<uint64_t, uint64_t>>& ranges,
+                                  StreamProgressCallback progress_cb,
+                                  std::atomic<bool>* cancel_flag) {
+    if (!is_connected()) {
+        last_error_ = "Client not connected or not encrypted";
+        return false;
+    }
+
+    std::string norm_remote = remote_path;
+    std::replace(norm_remote.begin(), norm_remote.end(), '\\', '/');
+    while (!norm_remote.empty() && norm_remote.front() == '/') norm_remote.erase(0, 1);
+
+    static std::atomic<uint32_t> s_transfer_seq{100};
+    uint32_t transfer_id = s_transfer_seq++;
+
+    json req;
+    req["type"] = "start_stream_pull";
+    req["path"] = norm_remote;
+    req["transfer_id"] = transfer_id;
+    if (!ranges.empty()) {
+        json r_arr = json::array();
+        for (const auto& [ro, rl] : ranges) {
+            json rj;
+            rj["offset"] = ro;
+            rj["length"] = rl;
+            r_arr.push_back(rj);
+        }
+        req["ranges"] = r_arr;
+    }
+
+    if (!send_json(req)) {
+        last_error_ = "Failed to send start_stream_pull request";
+        return false;
+    }
+
+    auto resp_opt = recv_json(15000);
+    if (!resp_opt) {
+        last_error_ = "Timeout waiting for server to open stream pull";
+        return false;
+    }
+
+    const auto& resp = *resp_opt;
+    if (resp.value("status", "") != "ok") {
+        last_error_ = resp.value("message", "Server rejected stream pull request");
+        return false;
+    }
+
+    uint64_t remote_file_size = resp.value("file_size", expected_size);
+    std::string final_blake3 = resp.value("blake3_hash", expected_hash);
+
+    // Resolve destination path
+    fs::path final_dest = local_dest;
+    if (final_dest.empty()) {
+        final_dest = fs::path(norm_remote).filename();
+    } else if (fs::is_directory(final_dest)) {
+        final_dest = final_dest / fs::path(norm_remote).filename();
+    }
+
+    platform::PathUtils::ensure_directory(final_dest.parent_path());
+
+    // Temporary download file (.slug_tmp.<tid>)
+    fs::path temp_dest = final_dest.parent_path() / (final_dest.filename().string() + ".slug_tmp." + std::to_string(transfer_id));
+
+    // If partial ranges and base file exists, copy existing file as base
+    if (!ranges.empty() && fs::exists(final_dest)) {
+        std::error_code ec_cp;
+        fs::copy_file(final_dest, temp_dest, fs::copy_options::overwrite_existing, ec_cp);
+    }
+
+    std::ofstream out(temp_dest, std::ios::binary | (ranges.empty() ? std::ios::trunc : (std::ios::in | std::ios::out)));
+    if (!out.is_open()) {
+        out.open(temp_dest, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            last_error_ = "Failed to open temporary file for writing: " + temp_dest.string();
+            return false;
+        }
+    }
+
+    uint64_t bytes_received = 0;
+    auto start_time = std::chrono::steady_clock::now();
+    auto last_update_time = start_time;
+    uint64_t last_bytes = 0;
+    double smoothed_mbps = 0.0;
+    bool pull_ok = false;
+
+    while (true) {
+        if (cancel_flag && cancel_flag->load()) {
+            last_error_ = "Transfer cancelled by user";
+            StreamDataFrameHeader abort_hdr{};
+            abort_hdr.magic = 0x53;
+            abort_hdr.frame_type = static_cast<uint8_t>(StreamFrameType::ABORT);
+            abort_hdr.transfer_id = transfer_id;
+            std::span<const uint8_t> pt(reinterpret_cast<const uint8_t*>(&abort_hdr), sizeof(abort_hdr));
+            AeadFrameChannel::send_frame(socket_, session_keys_.session_key, session_keys_.client_to_server_salt, tx_seq_++, pt);
+            break;
+        }
+
+        auto frame_opt = AeadFrameChannel::recv_frame(socket_, session_keys_.session_key, session_keys_.server_to_client_salt, s2c_window_, 60000);
+        if (!frame_opt) {
+            last_error_ = "Timeout or integrity failure reading stream frame";
+            break;
+        }
+
+        const auto& frame_bytes = *frame_opt;
+        if (frame_bytes.size() < sizeof(StreamDataFrameHeader)) {
+            last_error_ = "Malformed frame header received";
+            break;
+        }
+
+        StreamDataFrameHeader hdr;
+        std::memcpy(&hdr, frame_bytes.data(), sizeof(StreamDataFrameHeader));
+        if (hdr.magic != 0x53 || hdr.transfer_id != transfer_id) {
+            last_error_ = "Frame magic or transfer_id mismatch";
+            break;
+        }
+
+        if (hdr.frame_type == static_cast<uint8_t>(StreamFrameType::ABORT)) {
+            last_error_ = "Transfer aborted by server";
+            break;
+        }
+
+        if (hdr.frame_type == static_cast<uint8_t>(StreamFrameType::DATA)) {
+            if (frame_bytes.size() < sizeof(StreamDataFrameHeader) + hdr.payload_len) {
+                last_error_ = "Truncated frame payload";
+                break;
+            }
+            const uint8_t* payload = frame_bytes.data() + sizeof(StreamDataFrameHeader);
+            out.seekp(static_cast<std::streamoff>(hdr.offset), std::ios::beg);
+            out.write(reinterpret_cast<const char*>(payload), hdr.payload_len);
+            bytes_received += hdr.payload_len;
+
+            auto now = std::chrono::steady_clock::now();
+            double elapsed_sec = std::chrono::duration<double>(now - last_update_time).count();
+            if (elapsed_sec >= 0.25) {
+                double inst_speed = (static_cast<double>(bytes_received - last_bytes) / (1024.0 * 1024.0)) / elapsed_sec;
+                smoothed_mbps = (smoothed_mbps == 0.0) ? inst_speed : (0.7 * smoothed_mbps + 0.3 * inst_speed);
+                last_bytes = bytes_received;
+                last_update_time = now;
+                if (progress_cb) {
+                    progress_cb(bytes_received, remote_file_size, smoothed_mbps);
+                }
+            }
+        } else if (hdr.frame_type == static_cast<uint8_t>(StreamFrameType::END_OF_STREAM)) {
+            out.flush();
+            out.close();
+
+            // Verify BLAKE3 hash of complete assembled file
+            std::string actual_hash = crypto::Blake3::hash_file(temp_dest).value_or("");
+            if (!final_blake3.empty() && actual_hash != final_blake3) {
+                last_error_ = "Integrity check failed: BLAKE3 hash mismatch on " + remote_path;
+                break;
+            }
+
+            // Commit atomically
+            std::error_code ec_ren;
+            fs::rename(temp_dest, final_dest, ec_ren);
+            if (ec_ren) {
+                fs::copy_file(temp_dest, final_dest, fs::copy_options::overwrite_existing, ec_ren);
+                fs::remove(temp_dest, ec_ren);
+            }
+
+            if (progress_cb) {
+                auto total_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
+                double avg_speed = (total_elapsed > 0) ? (static_cast<double>(bytes_received) / (1024.0 * 1024.0) / total_elapsed) : smoothed_mbps;
+                progress_cb(remote_file_size, remote_file_size, avg_speed);
+            }
+            pull_ok = true;
+            break;
+        }
+    }
+
+    if (out.is_open()) {
+        out.close();
+    }
+    if (!pull_ok) {
+        std::error_code ec;
+        fs::remove(temp_dest, ec);
+    }
+    return pull_ok;
+}
+
+bool SlugClient::stream_push_file(const fs::path& local_file,
+                                  const std::string& remote_dest,
+                                  StreamProgressCallback progress_cb,
+                                  std::atomic<bool>* cancel_flag) {
+    if (!is_connected()) {
+        last_error_ = "Client not connected or not encrypted";
+        return false;
+    }
+
+    std::error_code ec;
+    if (!fs::exists(local_file, ec) || fs::is_directory(local_file, ec)) {
+        last_error_ = "Local file does not exist or is a directory: " + local_file.string();
+        return false;
+    }
+
+    uint64_t file_size = fs::file_size(local_file, ec);
+    auto hash_opt = crypto::Blake3::hash_file(local_file);
+    if (!hash_opt) {
+        last_error_ = "Failed to compute BLAKE3 hash for " + local_file.string();
+        return false;
+    }
+    std::string file_hash = *hash_opt;
+
+    std::string norm_dest = remote_dest;
+    std::replace(norm_dest.begin(), norm_dest.end(), '\\', '/');
+    while (!norm_dest.empty() && norm_dest.front() == '/') norm_dest.erase(0, 1);
+
+    static std::atomic<uint32_t> s_transfer_seq{500};
+    uint32_t transfer_id = s_transfer_seq++;
+
+    json req;
+    req["type"] = "start_stream_push";
+    req["path"] = norm_dest;
+    req["transfer_id"] = transfer_id;
+    req["file_size"] = file_size;
+    req["blake3_hash"] = file_hash;
+
+    if (!send_json(req)) {
+        last_error_ = "Failed to send start_stream_push request";
+        return false;
+    }
+
+    auto resp_opt = recv_json(15000);
+    if (!resp_opt) {
+        last_error_ = "Timeout waiting for server to accept stream push";
+        return false;
+    }
+
+    const auto& resp = *resp_opt;
+    if (resp.value("status", "") != "ok") {
+        last_error_ = resp.value("message", "Server rejected stream push");
+        return false;
+    }
+
+    std::ifstream src(local_file, std::ios::binary);
+    if (!src.is_open()) {
+        last_error_ = "Cannot open local file for reading: " + local_file.string();
+        return false;
+    }
+
+    uint64_t bytes_sent = 0;
+    auto start_time = std::chrono::steady_clock::now();
+    auto last_update_time = start_time;
+    uint64_t last_bytes = 0;
+    double smoothed_mbps = 0.0;
+    bool stream_ok = true;
+
+    std::vector<uint8_t> frame_buf(sizeof(StreamDataFrameHeader) + kStreamPayloadChunkSize);
+
+    while (bytes_sent < file_size && stream_ok) {
+        if (cancel_flag && cancel_flag->load()) {
+            last_error_ = "Upload cancelled by user";
+            StreamDataFrameHeader abort_hdr{};
+            abort_hdr.magic = 0x53;
+            abort_hdr.frame_type = static_cast<uint8_t>(StreamFrameType::ABORT);
+            abort_hdr.transfer_id = transfer_id;
+            std::span<const uint8_t> pt(reinterpret_cast<const uint8_t*>(&abort_hdr), sizeof(abort_hdr));
+            AeadFrameChannel::send_frame(socket_, session_keys_.session_key, session_keys_.client_to_server_salt, tx_seq_++, pt);
+            return false;
+        }
+
+        size_t to_read = static_cast<size_t>(std::min<uint64_t>(kStreamPayloadChunkSize, file_size - bytes_sent));
+        src.read(reinterpret_cast<char*>(frame_buf.data() + sizeof(StreamDataFrameHeader)), to_read);
+        std::streamsize actual = src.gcount();
+        if (actual <= 0) break;
+
+        StreamDataFrameHeader* phdr = reinterpret_cast<StreamDataFrameHeader*>(frame_buf.data());
+        phdr->magic = 0x53;
+        phdr->frame_type = static_cast<uint8_t>(StreamFrameType::DATA);
+        phdr->reserved = 0;
+        phdr->transfer_id = transfer_id;
+        phdr->offset = bytes_sent;
+        phdr->payload_len = static_cast<uint32_t>(actual);
+
+        std::span<const uint8_t> frame_span(frame_buf.data(), sizeof(StreamDataFrameHeader) + actual);
+        if (!AeadFrameChannel::send_frame(socket_, session_keys_.session_key, session_keys_.client_to_server_salt, tx_seq_++, frame_span)) {
+            last_error_ = "Socket write failed during streaming upload";
+            stream_ok = false;
+            break;
+        }
+        bytes_sent += actual;
+
+        auto now = std::chrono::steady_clock::now();
+        double elapsed_sec = std::chrono::duration<double>(now - last_update_time).count();
+        if (elapsed_sec >= 0.25) {
+            double inst_speed = (static_cast<double>(bytes_sent - last_bytes) / (1024.0 * 1024.0)) / elapsed_sec;
+            smoothed_mbps = (smoothed_mbps == 0.0) ? inst_speed : (0.7 * smoothed_mbps + 0.3 * inst_speed);
+            last_bytes = bytes_sent;
+            last_update_time = now;
+            if (progress_cb) {
+                progress_cb(bytes_sent, file_size, smoothed_mbps);
+            }
+        }
+    }
+
+    if (!stream_ok) return false;
+
+    // Send END_OF_STREAM
+    std::vector<uint8_t> eos_buf(sizeof(StreamDataFrameHeader) + file_hash.size());
+    StreamDataFrameHeader* peos = reinterpret_cast<StreamDataFrameHeader*>(eos_buf.data());
+    peos->magic = 0x53;
+    peos->frame_type = static_cast<uint8_t>(StreamFrameType::END_OF_STREAM);
+    peos->reserved = 0;
+    peos->transfer_id = transfer_id;
+    peos->offset = file_size;
+    peos->payload_len = static_cast<uint32_t>(file_hash.size());
+    std::memcpy(eos_buf.data() + sizeof(StreamDataFrameHeader), file_hash.data(), file_hash.size());
+
+    if (!AeadFrameChannel::send_frame(socket_, session_keys_.session_key, session_keys_.client_to_server_salt, tx_seq_++, eos_buf)) {
+        last_error_ = "Failed to send END_OF_STREAM frame";
+        return false;
+    }
+
+    // Wait for server's final commit response
+    auto final_resp_opt = recv_json(30000);
+    if (!final_resp_opt) {
+        last_error_ = "Timeout waiting for server upload confirmation";
+        return false;
+    }
+
+    const auto& final_resp = *final_resp_opt;
+    if (final_resp.value("status", "") == "ok") {
+        if (progress_cb) {
+            auto total_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
+            double avg_speed = (total_elapsed > 0) ? (static_cast<double>(file_size) / (1024.0 * 1024.0) / total_elapsed) : smoothed_mbps;
+            progress_cb(file_size, file_size, avg_speed);
+        }
+        return true;
+    } else {
+        last_error_ = final_resp.value("message", "Server rejected upload commit");
+        return false;
+    }
+}
+
 bool SlugClient::pull(const fs::path& local_target_dir,
                       const sync::DeltaSyncOptions& options,
                       std::function<void(const std::string&)> log_callback,
-                      const std::optional<sync::WorkspaceManifest>& cached_manifest) {
+                      const std::optional<sync::WorkspaceManifest>& cached_manifest,
+                      StreamProgressCallback progress_cb,
+                      std::atomic<bool>* cancel_flag) {
 
     auto log = [&](const std::string& m) {
         if (log_callback) log_callback(m);
@@ -428,8 +774,14 @@ bool SlugClient::pull(const fs::path& local_target_dir,
     // Execute transfer
     platform::PathUtils::ensure_directory(local_target_dir);
 
+    uint64_t total_job_transferred = 0;
     for (const auto& delta : plan.file_deltas) {
         if (delta.is_unchanged) continue;
+
+        if (cancel_flag && cancel_flag->load()) {
+            log("[*] Transfer cancelled by user.");
+            return false;
+        }
 
         auto safe_dest = platform::PathUtils::resolve_safe_path(local_target_dir, delta.relative_path);
         if (!safe_dest) {
@@ -437,47 +789,58 @@ bool SlugClient::pull(const fs::path& local_target_dir,
             continue;
         }
         fs::path dest = *safe_dest;
-        platform::PathUtils::ensure_directory(dest.parent_path());
 
-        // Read existing file if modifying
-        std::vector<uint8_t> file_buf;
-        if (delta.is_modified && fs::exists(dest)) {
-            auto cur = platform::PathUtils::read_binary_file(dest);
-            if (cur) file_buf = std::move(*cur);
-        }
-        if (file_buf.size() < delta.total_size) {
-            file_buf.resize(delta.total_size);
-        }
-
-        // Fetch each needed chunk
-        for (uint32_t chunk_idx : delta.needed_chunk_indices) {
-            auto chunk_data = fetch_chunk(delta.relative_path, chunk_idx);
-            if (!chunk_data) {
-                std::string err_suffix = last_error_.empty() ? "" : " (" + last_error_ + ")";
-                log("Error downloading chunk " + std::to_string(chunk_idx) + " of " + delta.relative_path + err_suffix);
-                return false;
-            }
-
-            uint64_t offset = static_cast<uint64_t>(chunk_idx) * sync::Chunker::kDefaultChunkSize;
-            if (offset + chunk_data->size() > file_buf.size()) {
-                file_buf.resize(offset + chunk_data->size());
-            }
-            std::memcpy(file_buf.data() + offset, chunk_data->data(), chunk_data->size());
-        }
-
-        // Verify full file BLAKE3 hash against remote manifest
-        std::string computed_hash = crypto::Blake3::hash_hex(file_buf);
+        // Find manifest entry for expected hash
+        std::string expected_hash;
         for (const auto& rf : manifest.files) {
             if (rf.relative_path == delta.relative_path) {
-                if (computed_hash != rf.file_blake3_hash) {
-                    log("Warning: Hash mismatch on " + delta.relative_path);
-                }
+                expected_hash = rf.file_blake3_hash;
                 break;
             }
         }
 
-        // Write atomically
-        platform::PathUtils::write_binary_file_atomic(dest, file_buf);
+        auto file_progress_cb = [&](uint64_t f_done, uint64_t f_total, double inst_mbps) {
+            if (progress_cb) {
+                progress_cb(total_job_transferred + f_done, plan.bytes_to_transfer, inst_mbps);
+            }
+        };
+
+        bool ok = false;
+        if (delta.is_new) {
+            ok = stream_pull_file(delta.relative_path, dest, delta.total_size, expected_hash, {}, file_progress_cb, cancel_flag);
+        } else if (delta.is_modified) {
+            // Coalesce needed chunks into contiguous ranges
+            std::vector<std::pair<uint64_t, uint64_t>> ranges;
+            if (!delta.needed_chunk_indices.empty()) {
+                auto sorted_indices = delta.needed_chunk_indices;
+                std::sort(sorted_indices.begin(), sorted_indices.end());
+                uint64_t cur_start = static_cast<uint64_t>(sorted_indices[0]) * sync::Chunker::kDefaultChunkSize;
+                uint64_t cur_len = std::min<uint64_t>(sync::Chunker::kDefaultChunkSize, delta.total_size - cur_start);
+
+                for (size_t i = 1; i < sorted_indices.size(); ++i) {
+                    uint64_t next_offset = static_cast<uint64_t>(sorted_indices[i]) * sync::Chunker::kDefaultChunkSize;
+                    if (next_offset == cur_start + cur_len) {
+                        uint64_t add_len = std::min<uint64_t>(sync::Chunker::kDefaultChunkSize, delta.total_size - next_offset);
+                        cur_len += add_len;
+                    } else {
+                        ranges.push_back({cur_start, cur_len});
+                        cur_start = next_offset;
+                        cur_len = std::min<uint64_t>(sync::Chunker::kDefaultChunkSize, delta.total_size - cur_start);
+                    }
+                }
+                ranges.push_back({cur_start, cur_len});
+            }
+            ok = stream_pull_file(delta.relative_path, dest, delta.total_size, expected_hash, ranges, file_progress_cb, cancel_flag);
+        }
+
+        if (!ok) {
+            std::string err_suffix = last_error_.empty() ? "" : " (" + last_error_ + ")";
+            log("Error transferring " + delta.relative_path + err_suffix);
+            return false;
+        }
+
+        uint64_t delta_bytes = delta.is_new ? delta.total_size : (delta.needed_chunk_indices.size() * sync::Chunker::kDefaultChunkSize);
+        total_job_transferred += delta_bytes;
         log("Synced: " + delta.relative_path + " (" + core::Utils::format_size(delta.total_size) + ")");
     }
 
@@ -505,77 +868,13 @@ bool SlugClient::get_file(const std::string& remote_path,
         else std::cout << m << std::endl;
     };
 
-    auto manifest_opt = fetch_manifest();
-    if (!manifest_opt) {
-        log("Error: Failed to fetch workspace manifest");
-        return false;
+    bool ok = stream_pull_file(remote_path, local_dest, 0, "", {}, nullptr, nullptr);
+    if (ok) {
+        log("Downloaded: " + remote_path + " -> " + local_dest.string());
+    } else {
+        log("Error downloading " + remote_path + ": " + last_error_);
     }
-
-    std::string norm_remote = remote_path;
-    std::replace(norm_remote.begin(), norm_remote.end(), '\\', '/');
-    while (!norm_remote.empty() && norm_remote.front() == '/') norm_remote.erase(0, 1);
-
-    const auto& manifest = *manifest_opt;
-    const sync::ManifestFileEntry* target_entry = nullptr;
-    for (const auto& f : manifest.files) {
-        if (f.relative_path == norm_remote) {
-            target_entry = &f;
-            break;
-        }
-    }
-
-    if (!target_entry) {
-        for (const auto& s : manifest.skipped) {
-            if (s.relative_path == norm_remote) {
-                log("Error: File '" + norm_remote + "' is unavailable (" + s.reason + " - " + s.status + ")");
-                return false;
-            }
-        }
-        log("Error: Remote file '" + norm_remote + "' not found in workspace");
-        return false;
-    }
-
-    std::vector<uint8_t> file_buf(target_entry->size);
-    for (const auto& chunk : target_entry->chunks) {
-        auto chunk_data = fetch_chunk(target_entry->relative_path, chunk.index);
-        if (!chunk_data) {
-            std::string err_suffix = last_error_.empty() ? "" : " (" + last_error_ + ")";
-            log("Error: Failed to download chunk " + std::to_string(chunk.index) + " for " + remote_path + err_suffix);
-            return false;
-        }
-        uint64_t offset = chunk.offset;
-        if (offset + chunk_data->size() > file_buf.size()) {
-            file_buf.resize(offset + chunk_data->size());
-        }
-        std::memcpy(file_buf.data() + offset, chunk_data->data(), chunk_data->size());
-    }
-
-    std::string computed_hash = crypto::Blake3::hash_hex(file_buf);
-    if (computed_hash != target_entry->file_blake3_hash) {
-        log("Error: Hash verification failed for " + remote_path);
-        return false;
-    }
-
-    fs::path final_dest = local_dest;
-    if (final_dest.empty()) {
-        final_dest = fs::path(norm_remote).filename();
-    } else if (fs::is_directory(final_dest)) {
-        final_dest = final_dest / fs::path(norm_remote).filename();
-    }
-
-    if (!platform::PathUtils::is_valid_portable_path(final_dest.filename().string())) {
-        log("Error: Invalid or reserved filename in destination: " + final_dest.filename().string());
-        return false;
-    }
-    platform::PathUtils::ensure_directory(final_dest.parent_path());
-
-    if (!platform::PathUtils::write_binary_file_atomic(final_dest, file_buf)) {
-        log("Error: Failed to write downloaded file to " + final_dest.string());
-        return false;
-    }
-
-    log("Downloaded: " + remote_path + " -> " + final_dest.string() + " (" + core::Utils::format_size(target_entry->size) + ") [BLAKE3: " + computed_hash.substr(0, 12) + "...]");
-    return true;
+    return ok;
 }
 
 bool SlugClient::push(const fs::path& local_file,
@@ -587,41 +886,15 @@ bool SlugClient::push(const fs::path& local_file,
         else std::cout << m << std::endl;
     };
 
-    auto data = platform::PathUtils::read_binary_file(local_file);
-    if (!data) {
-        log("Error: Cannot read local file " + local_file.string());
-        return false;
-    }
-
-    std::string norm_dest = remote_dest;
-    std::replace(norm_dest.begin(), norm_dest.end(), '\\', '/');
-    while (!norm_dest.empty() && norm_dest.front() == '/') norm_dest.erase(0, 1);
-
-    json req;
-    req["type"] = "push_file";
-    req["path"] = norm_dest;
-    req["data_b64"] = core::Utils::to_base64(*data);
-
-    if (!send_json(req)) {
-        log("Error: Failed to send push request");
-        return false;
-    }
-
-    auto resp_opt = recv_json(15000);
-    if (!resp_opt) {
-        log("Error: No response from server");
-        return false;
-    }
-
-    const auto& resp = *resp_opt;
-    if (resp.value("status", "") == "ok") {
-        log("Push successful: " + remote_dest + " (" + core::Utils::format_size(data->size()) + ")");
-        return true;
+    bool ok = stream_push_file(local_file, remote_dest, nullptr, nullptr);
+    if (ok) {
+        log("Push successful: " + remote_dest);
     } else {
-        log("Push rejected: " + resp.value("message", "Permission denied"));
-        return false;
+        log("Push rejected: " + last_error_);
     }
+    return ok;
 }
+
 
 std::vector<uint8_t> SlugClient::tunnel_http(const std::string& raw_http_request) {
     if (!is_encrypted_) return {};

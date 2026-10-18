@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <atomic>
 
 namespace slug::net {
 
@@ -51,24 +52,44 @@ public:
     // Fetches remote workspace manifest
     std::optional<sync::WorkspaceManifest> fetch_manifest();
 
+    using StreamProgressCallback = std::function<void(uint64_t bytes_done, uint64_t bytes_total, double instant_mbps)>;
+
     // Downloads a single specified file into local_dest
     bool get_file(const std::string& remote_path,
                   const std::filesystem::path& local_dest,
                   std::function<void(const std::string& msg)> log_callback = nullptr);
 
+    // High performance bounded-memory TCP binary streaming download
+    bool stream_pull_file(const std::string& remote_path,
+                          const std::filesystem::path& local_dest,
+                          uint64_t expected_size = 0,
+                          const std::string& expected_hash = "",
+                          const std::vector<std::pair<uint64_t, uint64_t>>& ranges = {},
+                          StreamProgressCallback progress_cb = nullptr,
+                          std::atomic<bool>* cancel_flag = nullptr);
+
     // Performs incremental delta pull into local_dir
     bool pull(const std::filesystem::path& local_target_dir,
               const sync::DeltaSyncOptions& options,
               std::function<void(const std::string& msg)> log_callback = nullptr,
-              const std::optional<sync::WorkspaceManifest>& cached_manifest = std::nullopt);
+              const std::optional<sync::WorkspaceManifest>& cached_manifest = std::nullopt,
+              StreamProgressCallback progress_cb = nullptr,
+              std::atomic<bool>* cancel_flag = nullptr);
 
     // Pushes local file to remote workspace
     bool push(const std::filesystem::path& local_file,
               const std::string& remote_dest,
               std::function<void(const std::string& msg)> log_callback = nullptr);
 
+    // High performance bounded-memory TCP binary streaming upload
+    bool stream_push_file(const std::filesystem::path& local_file,
+                          const std::string& remote_dest,
+                          StreamProgressCallback progress_cb = nullptr,
+                          std::atomic<bool>* cancel_flag = nullptr);
+
     // Tunnels raw HTTP request over Post-Quantum AEAD frame channel
     std::vector<uint8_t> tunnel_http(const std::string& raw_http_request);
+
 
     core::SuiteID negotiated_suite() const { return suite_id_; }
     const std::string& negotiated_suite_name() const { return suite_name_; }
