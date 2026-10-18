@@ -815,7 +815,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         return;
     }
 
-    if (path == "/api/admin/users/update" && method == "POST") {
+    if ((path == "/api/admin/users/update" || path == "/api/admin/users/edit") && method == "POST") {
         if (current_session->identity != "host_admin") {
             send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
             return;
@@ -831,6 +831,11 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             std::optional<uint64_t> ttl = std::nullopt;
             if (j.contains("ttl_sec")) {
                 int64_t raw_ttl = j["ttl_sec"].get<int64_t>();
+                if (raw_ttl >= 0) {
+                    ttl = static_cast<uint64_t>(raw_ttl);
+                }
+            } else if (j.contains("ttl_extend_sec")) {
+                int64_t raw_ttl = j["ttl_extend_sec"].get<int64_t>();
                 if (raw_ttl >= 0) {
                     ttl = static_cast<uint64_t>(raw_ttl);
                 }
@@ -2119,6 +2124,10 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         return;
     }
 
+    if (path.rfind("/api/", 0) == 0) {
+        send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"API endpoint not found: " + path + "\"}");
+        return;
+    }
     send_resp(404, "Not Found", "text/plain", "404 Not Found");
 }
 
