@@ -133,7 +133,52 @@ bool RulesManager::load() {
             rules_.push_back(std::move(rule));
         }
     }
+    prune_redundant_rules();
     return true;
+}
+
+void RulesManager::prune_redundant_rules() {
+    std::vector<std::string> allow_prefixes;
+    for (const auto& r : rules_) {
+        if (r.action == RuleAction::ALLOW && r.type == RuleType::PATH) {
+            std::string pat = r.value;
+            if (pat.rfind("./", 0) == 0) pat = pat.substr(2);
+            size_t star_pos = pat.find('*');
+            if (star_pos != std::string::npos) {
+                allow_prefixes.push_back(pat.substr(0, star_pos));
+            } else if (!pat.empty() && pat.back() == '/') {
+                allow_prefixes.push_back(pat);
+            } else if (!pat.empty() && pat.find('.') == std::string::npos) {
+                allow_prefixes.push_back(pat + "/");
+            }
+        }
+    }
+    if (allow_prefixes.empty()) return;
+
+    std::vector<SlugRule> kept;
+    bool changed = false;
+    for (const auto& r : rules_) {
+        bool redundant = false;
+        if (r.action == RuleAction::ALLOW && r.type == RuleType::PATH) {
+            std::string pat = r.value;
+            if (pat.rfind("./", 0) == 0) pat = pat.substr(2);
+            // Don't prune the wildcard/directory rule itself
+            if (pat.find('*') == std::string::npos && (pat.empty() || pat.back() != '/')) {
+                for (const auto& pfx : allow_prefixes) {
+                    if (!pfx.empty() && pat.rfind(pfx, 0) == 0 && pat != pfx) {
+                        redundant = true;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!redundant) kept.push_back(r);
+    }
+    if (changed) {
+        rules_ = std::move(kept);
+        save();
+    }
 }
 
 bool RulesManager::save() const {
@@ -159,6 +204,15 @@ bool RulesManager::save() const {
 }
 
 bool RulesManager::add_rule(const std::string& id, RuleAction action, RuleType type, const std::string& value) {
+    // If adding an ALLOW path rule, check if already covered by an existing ALLOW rule
+    if (action == RuleAction::ALLOW && type == RuleType::PATH) {
+        const auto* existing = match(value);
+        if (existing && existing->action == RuleAction::ALLOW) {
+            // Already allowed by a parent rule or wildcard; avoid creating redundant child rules
+            return true;
+        }
+    }
+
     SlugRule rule;
     rule.id = id.empty() ? ("r_" + std::to_string(rules_.size() + 1)) : id;
     rule.action = action;
@@ -176,11 +230,13 @@ bool RulesManager::add_rule(const std::string& id, RuleAction action, RuleType t
     for (auto& r : rules_) {
         if (r.id == rule.id) {
             r = std::move(rule);
+            prune_redundant_rules();
             return save();
         }
     }
 
     rules_.push_back(std::move(rule));
+    prune_redundant_rules();
     return save();
 }
 

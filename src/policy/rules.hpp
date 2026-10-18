@@ -37,6 +37,7 @@ public:
     bool add_rule(const std::string& id, RuleAction action, RuleType type, const std::string& value);
     bool remove_rule(const std::string& id);
     const std::vector<SlugRule>& rules() const { return rules_; }
+    void prune_redundant_rules();
 
     // Evaluates against a file path and optionally its content
     // Returns matching rule pointer or nullptr

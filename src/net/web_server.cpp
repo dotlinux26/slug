@@ -1163,12 +1163,15 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                 audit_idx.save();
                 fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
                 policy::RulesManager mgr(rules_file);
-                for (const auto& r : mgr.rules()) {
-                    if (r.value == p || r.value == (p + "/")) {
-                        mgr.remove_rule(r.id);
+                const auto* existing = mgr.match(p);
+                if (!existing || existing->action != policy::RuleAction::ALLOW) {
+                    for (const auto& r : mgr.rules()) {
+                        if (r.value == p || r.value == (p + "/")) {
+                            mgr.remove_rule(r.id);
+                        }
                     }
+                    mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, p);
                 }
-                mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, p);
 
                 control_server_.audit_logger().log(current_session->identity, "AUDIT_ALLOW", p, "Whitelisted false positive: " + reason);
                 control_server_.invalidate_manifest_cache();
@@ -1207,8 +1210,6 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             flagged = q.entries;
         }
 
-        fs::path rules_file = control_server_.workspace_root() / ".slug" / "rules.conf";
-        policy::RulesManager mgr(rules_file);
         int count = 0;
         std::string action_reason = (det_filter == "all" || det_filter.empty())
             ? "Admin batch whitelist"
@@ -1217,12 +1218,6 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         for (const auto& item : flagged) {
             if (audit_idx.allow_file(item.file_path, action_reason, current_session->identity)) {
                 count++;
-                for (const auto& r : mgr.rules()) {
-                    if (r.value == item.file_path || r.value == (item.file_path + "/")) {
-                        mgr.remove_rule(r.id);
-                    }
-                }
-                mgr.add_rule("", policy::RuleAction::ALLOW, policy::RuleType::PATH, item.file_path);
             }
         }
         audit_idx.save();
@@ -1291,6 +1286,9 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             item["scanned_at"] = e.scanned_at;
             item["decision_actor"] = e.decision_actor;
             item["decision_reason"] = e.decision_reason;
+            item["detector"] = e.detector;
+            item["ai_input"] = e.ai_input;
+            item["ai_output"] = e.ai_output;
             arr.push_back(item);
         }
 
@@ -1301,6 +1299,159 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         res["limit"] = limit;
         res["offset"] = offset;
         res["entries"] = arr;
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/audit/detail" && method == "GET") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        std::string p = get_query_param(req.query, "path");
+        if (p.empty()) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Missing path\"}");
+            return;
+        }
+        fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+        auto opt_e = audit_idx.get_entry(p);
+        if (!opt_e) {
+            send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Entry not found\"}");
+            return;
+        }
+        json res;
+        res["status"] = "ok";
+        res["file_path"] = opt_e->file_path;
+        res["status_str"] = core::audit_status_to_string(opt_e->status);
+        res["line_number"] = opt_e->line_number;
+        res["reason"] = opt_e->reason;
+        res["detector"] = opt_e->detector;
+        res["ai_input"] = opt_e->ai_input;
+        res["ai_output"] = opt_e->ai_output;
+        res["scanned_at"] = opt_e->scanned_at;
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/scan/scannable-files" && method == "GET") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        fs::path ws_root = control_server_.workspace_root();
+        fs::path rules_file = ws_root / ".slug" / "rules.conf";
+        policy::RulesManager rules_mgr(rules_file);
+        fs::path idx_file = ws_root / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+
+        json files_arr = json::array();
+        std::error_code ec;
+        for (const auto& entry : fs::recursive_directory_iterator(ws_root, fs::directory_options::skip_permission_denied, ec)) {
+            if (!entry.is_regular_file()) continue;
+            std::string rel = fs::relative(entry.path(), ws_root, ec).generic_string();
+            if (rel.rfind(".slug", 0) == 0 || rel.find("/.slug") != std::string::npos) continue;
+            if (rel.rfind(".git", 0) == 0 || rel.find("/.git") != std::string::npos) continue;
+
+            if (!ai::AiScanner::is_scannable_file(entry.path())) continue;
+
+            const auto* match_rule = rules_mgr.match(rel);
+            if (match_rule && match_rule->action == policy::RuleAction::BLOCK) continue;
+
+            json f;
+            f["path"] = rel;
+            f["size"] = entry.file_size(ec);
+            auto audit_e = audit_idx.get_entry(rel);
+            f["status"] = audit_e ? core::audit_status_to_string(audit_e->status) : "UNKNOWN";
+            f["detector"] = audit_e ? audit_e->detector : "";
+            f["reason"] = audit_e ? audit_e->reason : "";
+            files_arr.push_back(f);
+        }
+
+        json res;
+        res["status"] = "ok";
+        res["total"] = files_arr.size();
+        res["files"] = files_arr;
+        send_resp(200, "OK", "application/json", res.dump());
+        return;
+    }
+
+    if (path == "/api/admin/scan/file" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        std::string rel_path;
+        std::string lvl_str = "level4";
+        try {
+            auto j = json::parse(req.body);
+            rel_path = j.value("path", "");
+            lvl_str = j.value("level", "level4");
+        } catch (...) {}
+
+        if (rel_path.empty()) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Missing path\"}");
+            return;
+        }
+
+        fs::path abs_path = control_server_.workspace_root() / rel_path;
+        if (!fs::exists(abs_path) || fs::is_directory(abs_path)) {
+            send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"File not found\"}");
+            return;
+        }
+
+        core::FilterLevel flevel = core::filter_level_from_string(lvl_str);
+        auto scanner = ai::AiScanner::create_for_level(flevel, control_server_.ai_provider(), control_server_.workspace_root());
+
+        auto file_data = platform::PathUtils::read_binary_file(abs_path, 10 * 1024 * 1024);
+        if (!file_data) {
+            send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Failed to read file\"}");
+            return;
+        }
+
+        std::string text(file_data->begin(), file_data->end());
+        std::string current_hash = crypto::Blake3::hash_hex(std::span<const uint8_t>(file_data->data(), file_data->size()));
+
+        auto start_t = std::chrono::steady_clock::now();
+        auto finding = scanner.scan_content(rel_path, text, false, flevel);
+        auto end_t = std::chrono::steady_clock::now();
+        auto dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_t - start_t).count();
+
+        fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+
+        ai::AuditIndexEntry idx_entry;
+        idx_entry.file_path = rel_path;
+        idx_entry.blake3_hash = current_hash;
+        idx_entry.scanned_at = core::Utils::current_timestamp();
+        idx_entry.detector = finding.detector;
+        idx_entry.ai_input = finding.ai_input;
+        idx_entry.ai_output = finding.ai_output;
+
+        bool is_ai = (finding.detector.find("AI Guard") != std::string::npos);
+        if (finding.has_secret) {
+            idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
+            idx_entry.line_number = finding.line_number;
+            idx_entry.reason = finding.reason;
+        } else {
+            idx_entry.status = core::AuditStatus::CLEAN;
+            idx_entry.reason = finding.reason.empty() ? "Clean" : finding.reason;
+        }
+        audit_idx.update_entry(idx_entry);
+
+        json res;
+        res["status"] = "ok";
+        res["file_path"] = rel_path;
+        res["has_secret"] = finding.has_secret;
+        res["audit_status"] = core::audit_status_to_string(idx_entry.status);
+        res["line_number"] = idx_entry.line_number;
+        res["reason"] = idx_entry.reason;
+        res["detector"] = idx_entry.detector;
+        res["ai_input"] = idx_entry.ai_input;
+        res["ai_output"] = idx_entry.ai_output;
+        res["model"] = finding.model;
+        res["duration_ms"] = dur_ms;
+
         send_resp(200, "OK", "application/json", res.dump());
         return;
     }
@@ -1368,10 +1519,8 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
                     if (j.contains("body_template")) cfg["body_template"] = j["body_template"];
                     if (j.contains("headers")) cfg["headers"] = j["headers"];
                     std::string key = j.value("ai_api_key", "");
-                    if (!key.empty()) {
-                        cfg["ai_api_key"] = "••••••••";
-                        cfg["configured"] = true;
-                    }
+                    cfg["ai_api_key"] = key;
+                    cfg["configured"] = !key.empty();
                 } catch (...) {}
             }
         }

@@ -20,6 +20,9 @@ struct AuditIndexEntry {
     uint64_t scanned_at{0};
     std::string decision_actor;
     std::string decision_reason;
+    std::string detector{"Smart Regex Guard"};
+    std::string ai_input;
+    std::string ai_output;
 };
 
 class StatefulAuditIndex {

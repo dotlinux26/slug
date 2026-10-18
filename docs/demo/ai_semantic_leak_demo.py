@@ -2,19 +2,19 @@
 Slug Security - Level 4 AI Deep Semantic Guard Test File.
 Tệp tin mẫu kiểm thử tính năng AI Model Deep Semantic Guard (Mức lọc Level 4).
 
-MỤC ĐÍCH KIỂM THỬ:
+MỤC ĐÍCH KIỂM THỬ -
   Chứng minh khả năng vượt trội của mô hình AI (Level 4 LLM) so với bộ lọc Regex truyền thống (Level 2).
   
-KẾT QUẢ KHI QUÉT:
+KẾT QUẢ KHI QUÉT -
   - Khi quét ở Level 2 (Policy & Smart Regex Guard):
     ✅ KHÔNG BỊ PHÁT HIỆN (0 Cảnh báo / Pass).
-    Lý do: Tên biến sử dụng ngữ cảnh vô hại ('security_stamp', 'node_prefix'), 
+    Lý do - Tên biến sử dụng ngữ cảnh vô hại ('security_stamp', 'node_prefix'), 
     không chứa từ khóa nhạy cảm (không có 'api_key', 'token', 'secret', 'password').
     Độ hỗn loạn chuỗi (Shannon Entropy) ở mức thấp (< 3.8).
     
   - Khi quét ở Level 4 (AI Model Deep Semantic Guard):
     ❌ BỊ PHÁT HIỆN NGAY LẬP TỨC (Flagged & Quarantined).
-    Lý do: LLM hiểu ngữ nghĩa đoạn mã đang ghép nối thông tin để tạo chứng chỉ
+    Lý do - LLM hiểu ngữ nghĩa đoạn mã đang ghép nối thông tin để tạo chứng chỉ
     đặc quyền quản trị hệ thống (Master Admin Credential) mà không được bảo vệ.
 """
 

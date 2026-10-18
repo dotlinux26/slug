@@ -245,6 +245,22 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
             "<rule id=\"r_env_sample\" action=\"allow\" type=\"path\">./.env.example</rule>\n";
         platform::PathUtils::write_text_file_atomic(rules_file, def_rules);
     }
+
+    // Auto-restore persisted AI provider from .slug/ai.json
+    fs::path ai_file = slug_dir / "ai.json";
+    if (fs::exists(ai_file)) {
+        auto ai_content = platform::PathUtils::read_text_file(ai_file);
+        if (ai_content && !ai_content->empty()) {
+            try {
+                auto j = json::parse(*ai_content);
+                std::string p_str = j.value("ai_provider", "");
+                if (!p_str.empty()) {
+                    ai_provider = core::ai_model_from_string(p_str);
+                }
+            } catch (...) {}
+        }
+    }
+
     // Auto-search next available port if port is occupied
     uint16_t target_port = (port >= 1024) ? port : 9443;
     std::shared_ptr<net::ControlServer> ctrl;

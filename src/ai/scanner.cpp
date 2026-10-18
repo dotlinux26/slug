@@ -195,14 +195,37 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
         // Check value in KEY=VALUE or KEY: VALUE for unquoted high-entropy secrets (Mức 3 & 4)
         if (enable_entropy) {
             size_t eq_pos = line.find('=');
-            if (eq_pos == std::string::npos) eq_pos = line.find(':');
+            if (eq_pos == std::string::npos) {
+                size_t c_pos = line.find(':');
+                if (c_pos != std::string::npos && c_pos > 0) {
+                    std::string key_part = core::Utils::trim(line.substr(0, c_pos));
+                    bool is_valid_key = !key_part.empty() && 
+                                        key_part.find(' ') == std::string::npos && 
+                                        key_part.find('\t') == std::string::npos &&
+                                        key_part != "http" && key_part != "https" &&
+                                        key_part.front() != '#' && key_part.rfind("//", 0) == std::string::npos;
+                    if (is_valid_key) {
+                        eq_pos = c_pos;
+                    }
+                }
+            }
             if (eq_pos != std::string::npos && eq_pos + 1 < line.size()) {
                 std::string val = core::Utils::trim(line.substr(eq_pos + 1));
                 while (!val.empty() && (val.front() == '"' || val.front() == '\'')) val = val.substr(1);
                 while (!val.empty() && (val.back() == '"' || val.back() == '\'' || val.back() == ';')) val.pop_back();
-                if (val.size() >= 20 && calculate_entropy(val) >= 4.0) {
+
+                // Only evaluate ASCII token candidates (skip natural language / multi-byte UTF-8)
+                bool is_token_candidate = true;
+                for (char c : val) {
+                    if (static_cast<unsigned char>(c) < 32 || static_cast<unsigned char>(c) > 126) {
+                        is_token_candidate = false;
+                        break;
+                    }
+                }
+                if (is_token_candidate && val.size() >= 20 && calculate_entropy(val) >= 4.0) {
                     finding.has_secret = true;
                     finding.line_number = static_cast<int>(i + 1);
+                    finding.detector = "Shannon Entropy";
                     finding.reason = "High-entropy Secret Token";
                     finding.matched_snippet = val.substr(0, std::min(val.size(), (size_t)8)) + "..." + (val.size() > 4 ? val.substr(val.size() - 4) : "");
                     return finding;
@@ -220,10 +243,20 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
                     clean.pop_back();
                 }
 
-                if (clean.size() >= 32 && calculate_entropy(clean) >= 4.5) {
+                // Check that word is ASCII (skip non-ASCII words)
+                bool is_ascii_word = true;
+                for (char c : clean) {
+                    if (static_cast<unsigned char>(c) < 32 || static_cast<unsigned char>(c) > 126) {
+                        is_ascii_word = false;
+                        break;
+                    }
+                }
+
+                if (is_ascii_word && clean.size() >= 32 && calculate_entropy(clean) >= 4.5) {
                     // High entropy secret detected!
                     finding.has_secret = true;
                     finding.line_number = static_cast<int>(i + 1);
+                    finding.detector = "Shannon Entropy";
                     finding.reason = "High-entropy Secret Token";
                     finding.matched_snippet = clean.substr(0, 8) + "..." + clean.substr(clean.size() - 4);
                     return finding;
@@ -362,7 +395,7 @@ static std::optional<ScanFinding> try_extract_finding(const json& j) {
 }
 
 ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_view content) const {
-    auto h_finding = scan_heuristic(file_path, content, false);
+    auto h_finding = scan_heuristic(file_path, content, false, false);
     if (h_finding.has_secret) return h_finding;
     if (!ollama_alive_) return h_finding;
 
@@ -373,9 +406,12 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
         snippet += lines[i] + "\n";
     }
 
+    std::string model = model_.empty() ? "qwen2.5-coder:7b" : model_;
+    std::string prompt = "Inspect this code from '" + file_path + "'. Does it contain leaked secrets or credentials? Respond ONLY with JSON: {\"has_secret\": true/false, \"reason\": \"...\", \"line\": 0}.\n\n" + snippet;
+
     json req_body;
-    req_body["model"] = model_.empty() ? "qwen2.5-coder:7b" : model_;
-    req_body["prompt"] = "Inspect this code from '" + file_path + "'. Does it contain leaked secrets or credentials? Respond ONLY with JSON: {\"has_secret\": true/false, \"reason\": \"...\", \"line\": 0}.\n\n" + snippet;
+    req_body["model"] = model;
+    req_body["prompt"] = prompt;
     req_body["stream"] = false;
 
     std::string url = endpoint_ + "/api/generate";
@@ -391,6 +427,10 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
 
     if (response.empty()) {
         ollama_alive_ = false; // Fast-fail remaining files if Ollama server is not running
+        h_finding.detector = "AI Guard (Ollama)";
+        h_finding.model = model;
+        h_finding.ai_input = prompt;
+        h_finding.ai_output = "(Không kết nối được tới máy chủ Ollama)";
         return h_finding;
     }
 
@@ -398,12 +438,23 @@ ScanFinding AiScanner::scan_ollama(const std::string& file_path, std::string_vie
         auto j = json::parse(response);
         auto f_opt = try_extract_finding(j);
         if (f_opt.has_value()) {
-            f_opt->detector = "AI Guard";
-            f_opt->reason = "Ollama Local Audit: " + f_opt->reason;
+            f_opt->detector = "AI Guard (" + model + ")";
+            f_opt->model = model;
+            f_opt->ai_input = prompt;
+            f_opt->ai_output = response;
+            if (f_opt->has_secret) {
+                f_opt->reason = "Ollama Local Audit: " + f_opt->reason;
+            } else {
+                f_opt->reason = "Clean (Ollama: Không phát hiện rò rỉ mã bí mật)";
+            }
             return *f_opt;
         }
     } catch (...) {}
 
+    h_finding.detector = "AI Guard (" + model + ")";
+    h_finding.model = model;
+    h_finding.ai_input = prompt;
+    h_finding.ai_output = response;
     return h_finding;
 }
 
@@ -415,10 +466,10 @@ ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_vie
         if (k) api_key = k;
     }
     if (api_key.empty()) {
-        return scan_heuristic(file_path, content, false);
+        return scan_heuristic(file_path, content, false, false);
     }
 
-    auto h_finding = scan_heuristic(file_path, content, false);
+    auto h_finding = scan_heuristic(file_path, content, false, false);
     if (h_finding.has_secret) return h_finding;
 
     auto lines = core::Utils::split(content, '\n');
@@ -470,13 +521,24 @@ ScanFinding AiScanner::scan_gemini(const std::string& file_path, std::string_vie
             auto resp_j = json::parse(response);
             auto f_opt = try_extract_finding(resp_j);
             if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard";
-                f_opt->reason = "Gemini AI Audit: " + f_opt->reason;
+                f_opt->detector = "AI Guard (" + model + ")";
+                f_opt->model = model;
+                f_opt->ai_input = prompt;
+                f_opt->ai_output = response;
+                if (f_opt->has_secret) {
+                    f_opt->reason = "Gemini AI Audit: " + f_opt->reason;
+                } else {
+                    f_opt->reason = "Clean (Gemini: Không phát hiện rò rỉ mã bí mật)";
+                }
                 return *f_opt;
             }
         } catch (...) {}
     }
 
+    h_finding.detector = "AI Guard (" + model + ")";
+    h_finding.model = model;
+    h_finding.ai_input = prompt;
+    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Gemini API)" : response;
     return h_finding;
 }
 
@@ -487,9 +549,9 @@ ScanFinding AiScanner::scan_anthropic(const std::string& file_path, std::string_
         if (!k) k = std::getenv("SLUG_AI_API_KEY");
         if (k) api_key = k;
     }
-    if (api_key.empty()) return scan_heuristic(file_path, content, false);
+    if (api_key.empty()) return scan_heuristic(file_path, content, false, false);
 
-    auto h_finding = scan_heuristic(file_path, content, false);
+    auto h_finding = scan_heuristic(file_path, content, false, false);
     if (h_finding.has_secret) return h_finding;
 
     auto lines = core::Utils::split(content, '\n');
@@ -528,18 +590,29 @@ ScanFinding AiScanner::scan_anthropic(const std::string& file_path, std::string_
             auto resp_j = json::parse(response);
             auto f_opt = try_extract_finding(resp_j);
             if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard";
-                f_opt->reason = "Claude AI Audit: " + f_opt->reason;
+                f_opt->detector = "AI Guard (" + model + ")";
+                f_opt->model = model;
+                f_opt->ai_input = prompt;
+                f_opt->ai_output = response;
+                if (f_opt->has_secret) {
+                    f_opt->reason = "Claude AI Audit: " + f_opt->reason;
+                } else {
+                    f_opt->reason = "Clean (Claude: Không phát hiện rò rỉ mã bí mật)";
+                }
                 return *f_opt;
             }
         } catch (...) {}
     }
 
+    h_finding.detector = "AI Guard (" + model + ")";
+    h_finding.model = model;
+    h_finding.ai_input = prompt;
+    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Claude API)" : response;
     return h_finding;
 }
 
 ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_view content) const {
-    auto h_finding = scan_heuristic(file_path, content, false);
+    auto h_finding = scan_heuristic(file_path, content, false, false);
     if (h_finding.has_secret) return h_finding;
 
     auto lines = core::Utils::split(content, '\n');
@@ -585,18 +658,30 @@ ScanFinding AiScanner::scan_custom(const std::string& file_path, std::string_vie
     std::error_code ec;
     std::filesystem::remove(tmp_payload, ec);
 
+    std::string custom_model = model_.empty() ? "Custom LLM" : model_;
     if (!response.empty()) {
         try {
             auto resp_j = json::parse(response);
             auto f_opt = try_extract_finding(resp_j);
             if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard";
-                f_opt->reason = "Custom AI Audit: " + f_opt->reason;
+                f_opt->detector = "AI Guard (" + custom_model + ")";
+                f_opt->model = custom_model;
+                f_opt->ai_input = raw_body;
+                f_opt->ai_output = response;
+                if (f_opt->has_secret) {
+                    f_opt->reason = "Custom AI Audit: " + f_opt->reason;
+                } else {
+                    f_opt->reason = "Clean (Custom AI: Không phát hiện rò rỉ mã bí mật)";
+                }
                 return *f_opt;
             }
         } catch (...) {}
     }
 
+    h_finding.detector = "AI Guard (" + custom_model + ")";
+    h_finding.model = custom_model;
+    h_finding.ai_input = raw_body;
+    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Custom Endpoint)" : response;
     return h_finding;
 }
 
@@ -611,7 +696,7 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     }
 
     if (api_key.empty()) {
-        return scan_heuristic(file_path, content, false);
+        return scan_heuristic(file_path, content, false, false);
     }
 
     std::string endpoint = endpoint_;
@@ -635,8 +720,8 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
     const char* custom_model = std::getenv("SLUG_AI_MODEL");
     if (custom_model && *custom_model) model = custom_model;
 
-    // Fast heuristic first
-    auto h_finding = scan_heuristic(file_path, content, false);
+    // Fast heuristic first without entropy preemption
+    auto h_finding = scan_heuristic(file_path, content, false, false);
     if (h_finding.has_secret) return h_finding;
 
     auto lines = core::Utils::split(content, '\n');
@@ -646,6 +731,7 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
         snippet += lines[i] + "\n";
     }
 
+    std::string prompt_text = "Analyze file: " + file_path + "\n\n" + snippet;
     json req_body;
     req_body["model"] = model;
     req_body["messages"] = json::array({
@@ -655,7 +741,7 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
         },
         {
             {"role", "user"},
-            {"content", "Analyze file: " + file_path + "\n\n" + snippet}
+            {"content", prompt_text}
         }
     });
     req_body["temperature"] = 0.0;
@@ -675,13 +761,24 @@ ScanFinding AiScanner::scan_cloud(const std::string& file_path, std::string_view
             auto resp_j = json::parse(response);
             auto f_opt = try_extract_finding(resp_j);
             if (f_opt.has_value()) {
-                f_opt->detector = "AI Guard";
-                f_opt->reason = "Cloud AI Audit: " + f_opt->reason;
+                f_opt->detector = "AI Guard (" + model + ")";
+                f_opt->model = model;
+                f_opt->ai_input = prompt_text;
+                f_opt->ai_output = response;
+                if (f_opt->has_secret) {
+                    f_opt->reason = "Cloud AI Audit: " + f_opt->reason;
+                } else {
+                    f_opt->reason = "Clean (Cloud AI: Không phát hiện rò rỉ mã bí mật)";
+                }
                 return *f_opt;
             }
         } catch (...) {}
     }
 
+    h_finding.detector = "AI Guard (" + model + ")";
+    h_finding.model = model;
+    h_finding.ai_input = prompt_text;
+    h_finding.ai_output = response.empty() ? "(Không nhận được phản hồi từ Cloud Endpoint)" : response;
     return h_finding;
 }
 

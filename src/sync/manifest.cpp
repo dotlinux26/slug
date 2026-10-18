@@ -309,8 +309,12 @@ WorkspaceManifest ManifestBuilder::build(
                             idx_entry.blake3_hash = current_hash;
                             idx_entry.scanned_at = core::Utils::current_timestamp();
 
+                            idx_entry.detector = finding.detector;
+                            idx_entry.ai_input = finding.ai_input;
+                            idx_entry.ai_output = finding.ai_output;
+
                             if (finding.has_secret) {
-                                bool is_ai = (finding.detector == "AI Guard");
+                                bool is_ai = (finding.detector.find("AI Guard") != std::string::npos);
                                 idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
                                 idx_entry.line_number = finding.line_number;
                                 idx_entry.reason = finding.reason;
@@ -321,7 +325,7 @@ WorkspaceManifest ManifestBuilder::build(
                                 continue;
                             } else {
                                 idx_entry.status = core::AuditStatus::CLEAN;
-                                idx_entry.reason = "Clean";
+                                idx_entry.reason = finding.reason.empty() ? "Clean" : finding.reason;
                                 audit_index.update_entry(idx_entry);
                                 scan_status = "SCANNED";
                             }

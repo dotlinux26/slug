@@ -120,11 +120,18 @@ void StatefulAuditIndex::init_sqlite() {
         "  reason TEXT,"
         "  scanned_at INTEGER,"
         "  decision_actor TEXT,"
-        "  decision_reason TEXT"
+        "  decision_reason TEXT,"
+        "  detector TEXT,"
+        "  ai_input TEXT,"
+        "  ai_output TEXT"
         ");"
         "CREATE INDEX IF NOT EXISTS idx_status ON audit_entries(status);";
 
     sqlite3_exec(db_, schema, nullptr, nullptr, nullptr);
+    // Non-destructive migrations for existing databases
+    sqlite3_exec(db_, "ALTER TABLE audit_entries ADD COLUMN detector TEXT;", nullptr, nullptr, nullptr);
+    sqlite3_exec(db_, "ALTER TABLE audit_entries ADD COLUMN ai_input TEXT;", nullptr, nullptr, nullptr);
+    sqlite3_exec(db_, "ALTER TABLE audit_entries ADD COLUMN ai_output TEXT;", nullptr, nullptr, nullptr);
 
     // Auto-heal legacy false positives: immediately purge any AI/Smart-Filter flagged non-scannable files (binaries, compiled, media, .pyd, .dll)
     const char* heal_sql =
@@ -202,8 +209,8 @@ void StatefulAuditIndex::update_entry(const AuditIndexEntry& entry) {
 
     std::string key = normalize_path_key(entry.file_path);
     const char* sql = 
-        "INSERT INTO audit_entries (file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO audit_entries (file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason, detector, ai_input, ai_output) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(file_path) DO UPDATE SET "
         "blake3_hash=excluded.blake3_hash, "
         "status=excluded.status, "
@@ -211,7 +218,10 @@ void StatefulAuditIndex::update_entry(const AuditIndexEntry& entry) {
         "reason=excluded.reason, "
         "scanned_at=excluded.scanned_at, "
         "decision_actor=excluded.decision_actor, "
-        "decision_reason=excluded.decision_reason;";
+        "decision_reason=excluded.decision_reason, "
+        "detector=excluded.detector, "
+        "ai_input=excluded.ai_input, "
+        "ai_output=excluded.ai_output;";
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return;
@@ -224,6 +234,9 @@ void StatefulAuditIndex::update_entry(const AuditIndexEntry& entry) {
     sqlite3_bind_int64(stmt, 6, static_cast<sqlite3_int64>(entry.scanned_at));
     sqlite3_bind_text(stmt, 7, entry.decision_actor.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 8, entry.decision_reason.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 9, entry.detector.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 10, entry.ai_input.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 11, entry.ai_output.c_str(), -1, SQLITE_STATIC);
 
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -381,7 +394,7 @@ std::optional<AuditIndexEntry> StatefulAuditIndex::get_entry(const std::string& 
     if (!db_) return std::nullopt;
 
     std::string key = normalize_path_key(file_path);
-    const char* sql = "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason "
+    const char* sql = "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason, detector, ai_input, ai_output "
                       "FROM audit_entries WHERE file_path = ? LIMIT 1;";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return std::nullopt;
@@ -402,6 +415,12 @@ std::optional<AuditIndexEntry> StatefulAuditIndex::get_entry(const std::string& 
         e.decision_actor = da ? da : "";
         const char* dr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
         e.decision_reason = dr ? dr : "";
+        const char* det = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        e.detector = det ? det : "Smart Regex Guard";
+        const char* in = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+        e.ai_input = in ? in : "";
+        const char* out = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+        e.ai_output = out ? out : "";
         res = e;
     }
     sqlite3_finalize(stmt);
@@ -422,9 +441,9 @@ std::vector<AuditIndexEntry> StatefulAuditIndex::list_flagged_or_all(bool only_f
     if (!db_) return results;
 
     const char* sql = only_flagged
-        ? "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason "
+        ? "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason, detector, ai_input, ai_output "
           "FROM audit_entries WHERE status IN (2, 5, 6) ORDER BY scanned_at DESC;"
-        : "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason "
+        : "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason, detector, ai_input, ai_output "
           "FROM audit_entries ORDER BY scanned_at DESC;";
 
     sqlite3_stmt* stmt = nullptr;
@@ -445,6 +464,12 @@ std::vector<AuditIndexEntry> StatefulAuditIndex::list_flagged_or_all(bool only_f
         e.decision_actor = da ? da : "";
         const char* dr = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
         e.decision_reason = dr ? dr : "";
+        const char* det = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        e.detector = det ? det : "Smart Regex Guard";
+        const char* in = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+        e.ai_input = in ? in : "";
+        const char* out = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+        e.ai_output = out ? out : "";
         results.push_back(e);
     }
     sqlite3_finalize(stmt);
@@ -591,7 +616,7 @@ StatefulAuditIndex::QueryResult StatefulAuditIndex::query_entries(
 
     // Query rows with LIMIT and OFFSET
     size_t q_limit = (limit == 0 || limit > 1000) ? 100 : limit;
-    std::string query_sql = "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason "
+    std::string query_sql = "SELECT file_path, blake3_hash, status, line_number, reason, scanned_at, decision_actor, decision_reason, detector, ai_input, ai_output "
                             "FROM audit_entries" + where_clause + " ORDER BY scanned_at DESC LIMIT " + std::to_string(q_limit) +
                             " OFFSET " + std::to_string(offset) + ";";
 
@@ -615,6 +640,12 @@ StatefulAuditIndex::QueryResult StatefulAuditIndex::query_entries(
             e.decision_actor = da ? da : "";
             const char* dr = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 7));
             e.decision_reason = dr ? dr : "";
+            const char* det = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 8));
+            e.detector = det ? det : "Smart Regex Guard";
+            const char* in = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 9));
+            e.ai_input = in ? in : "";
+            const char* out = reinterpret_cast<const char*>(sqlite3_column_text(q_stmt, 10));
+            e.ai_output = out ? out : "";
             result.entries.push_back(e);
         }
         sqlite3_finalize(q_stmt);

@@ -15,6 +15,9 @@ struct ScanFinding {
     std::string reason;
     std::string matched_snippet;
     std::string detector{"Smart Regex Guard"};
+    std::string ai_input;
+    std::string ai_output;
+    std::string model;
 };
 
 class AiScanner {
