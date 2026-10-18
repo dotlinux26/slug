@@ -53,6 +53,7 @@ std::vector<ChunkInfo> Chunker::chunk_file(const std::filesystem::path& file_pat
 
         offset += static_cast<uint64_t>(bytes_read);
     }
+    if (ifs.bad()) return {};
     return chunks;
 }
 

@@ -133,6 +133,7 @@ public:
             std::string status_detail;
             std::string blake3;
             bool selectable;
+            std::string scan_status;
         };
 
         std::vector<ItemRow> items;
@@ -148,10 +149,10 @@ public:
                     std::string dname = p.substr(0, slash);
                     dir_sizes[dname] += f.size;
                     if (seen_dirs.insert(dname).second) {
-                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
+                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
                     }
                 } else {
-                    items.push_back({false, p, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true});
+                    items.push_back({false, p, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true, f.scan_status});
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -162,10 +163,10 @@ public:
                         std::string full_d = norm_sub + "/" + dname;
                         dir_sizes[full_d] += f.size;
                         if (seen_dirs.insert(full_d).second) {
-                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
+                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
                         }
                     } else {
-                        items.push_back({false, rem, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true});
+                        items.push_back({false, rem, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true, f.scan_status});
                     }
                 }
             }
@@ -190,10 +191,10 @@ public:
                 if (slash != std::string::npos) {
                     std::string dname = p.substr(0, slash);
                     if (seen_dirs.insert(dname).second) {
-                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
+                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
                     }
                 } else {
-                    items.push_back({false, p, p, 0, "file", st_label, badge_cls, detail, "", false});
+                    items.push_back({false, p, p, 0, "file", st_label, badge_cls, detail, "", false, ""});
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -203,10 +204,10 @@ public:
                         std::string dname = rem.substr(0, slash);
                         std::string full_d = norm_sub + "/" + dname;
                         if (seen_dirs.insert(full_d).second) {
-                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false});
+                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
                         }
                     } else {
-                        items.push_back({false, rem, p, 0, "file", st_label, badge_cls, detail, "", false});
+                        items.push_back({false, rem, p, 0, "file", st_label, badge_cls, detail, "", false, ""});
                     }
                 }
             }
@@ -766,11 +767,18 @@ public:
                         }
                     }
 
+                    std::string scan_lbl = "";
+                    if (item.scan_status == "NOT_SCANNED") {
+                        scan_lbl = " <span class='badge' style='background:#f6f8fa; color:#57606a; border:1px solid #d0d7de; font-size:10px; padding:1px 5px; margin-left:4px; font-weight:600;' title='File chưa qua kiểm tra nội dung (do vượt kích thước 10MB hoặc định dạng nhị phân)'>NOT SCANNED</span>";
+                    } else if (item.scan_status == "SCANNED") {
+                        scan_lbl = " <span class='badge' style='background:#dafbe1; color:#1a7f37; border:1px solid #aceebb; font-size:10px; padding:1px 5px; margin-left:4px; font-weight:600;' title='Nội dung đã được quét an toàn'>Đã quét</span>";
+                    }
+
                     h << "<td>" << chk << "</td>"
                       << "<td><span style='display:inline-flex; align-items:center; gap:6px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline></svg> " << html_escape(item.name) << "</span></td>"
                       << "<td style='color:var(--text-muted);'>file</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
-                      << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
+                      << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span>" << scan_lbl << "</td>"
                       << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'>" << act << "</div></td>";
                 }
                 h << "</tr>";

@@ -57,6 +57,8 @@ std::string WorkspaceManifest::to_json() const {
         item["mtime"] = f.mtime;
         item["file_blake3_hash"] = f.file_blake3_hash;
 
+        item["scan_status"] = f.scan_status;
+
         json chunks_arr = json::array();
         for (const auto& c : f.chunks) {
             json chunk_item;
@@ -99,6 +101,7 @@ std::optional<WorkspaceManifest> WorkspaceManifest::from_json(const std::string&
                 fe.size = f.value("size", 0ULL);
                 fe.mtime = f.value("mtime", 0ULL);
                 fe.file_blake3_hash = f.value("file_blake3_hash", "");
+                fe.scan_status = f.value("scan_status", "NOT_SCANNED");
                 if (f.contains("chunks") && f["chunks"].is_array()) {
                     for (const auto& c : f["chunks"]) {
                         ChunkInfo ci;
@@ -228,11 +231,13 @@ WorkspaceManifest ManifestBuilder::build(
         }
 
         // Step 2: Stateful AI & Smart Filter Audit evaluation
+        std::string scan_status = "NOT_SCANNED";
         if (is_explicitly_allowed_by_rule) {
             // Explicit rule in .slug/rules.conf has highest authority - heal any previous flags
             if (audit_index.is_flagged(proto_path)) {
                 audit_index.allow_file(proto_path, "Explicitly allowed by rule", "rule");
             }
+            scan_status = "SCANNED";
         } else if (filter_level != core::FilterLevel::LEVEL_0_RAW && filter_level != core::FilterLevel::LEVEL_1_RULES && filter_mode != core::FilterMode::NONE) {
             core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
 
@@ -266,6 +271,9 @@ WorkspaceManifest ManifestBuilder::build(
 
             if (cached_status == core::AuditStatus::USER_ALLOWED) {
                 // Whitelisted by user override - Always permitted!
+                scan_status = "SCANNED";
+            } else if (cached_status == core::AuditStatus::CLEAN) {
+                scan_status = "SCANNED";
             } else if (cached_status == core::AuditStatus::UNKNOWN || cached_status == core::AuditStatus::STALE) {
                 if (ai::AiScanner::is_scannable_file(entry.path()) && cur_sz <= 10ULL * 1024 * 1024) {
                     file_data = platform::PathUtils::read_binary_file(entry.path(), 10 * 1024 * 1024);
@@ -292,8 +300,11 @@ WorkspaceManifest ManifestBuilder::build(
                             idx_entry.status = core::AuditStatus::CLEAN;
                             idx_entry.reason = "Clean";
                             audit_index.update_entry(idx_entry);
+                            scan_status = "SCANNED";
                         }
                     }
+                } else {
+                    scan_status = "NOT_SCANNED";
                 }
             }
         }
@@ -304,6 +315,7 @@ WorkspaceManifest ManifestBuilder::build(
         fe.size = cur_sz;
         fe.mtime = cur_mtime;
         fe.file_blake3_hash = current_hash;
+        fe.scan_status = scan_status;
         if (cache_hit && !cached_chunks.empty()) {
             fe.chunks = std::move(cached_chunks);
         } else {

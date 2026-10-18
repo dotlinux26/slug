@@ -56,6 +56,7 @@ std::optional<std::string> Blake3::hash_file(const std::filesystem::path& file_p
             hasher.update(buf.data(), static_cast<size_t>(bytes_read));
         }
     }
+    if (ifs.bad()) return std::nullopt;
     return hasher.finalize_hex();
 }
 

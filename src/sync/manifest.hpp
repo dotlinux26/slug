@@ -16,6 +16,7 @@ struct ManifestFileEntry {
     uint64_t mtime{0};
     std::string file_blake3_hash;
     std::vector<ChunkInfo> chunks;
+    std::string scan_status{"NOT_SCANNED"};
 };
 
 struct ManifestSkippedEntry {
