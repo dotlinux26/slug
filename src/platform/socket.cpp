@@ -54,6 +54,28 @@ bool SocketUtils::set_timeouts(SocketHandle s, int timeout_ms) {
     return true;
 }
 
+bool SocketUtils::set_tcp_nodelay(SocketHandle s, bool nodelay) {
+    if (s == kInvalidSocket) return false;
+    int opt = nodelay ? 1 : 0;
+#if defined(SLUG_PLATFORM_WINDOWS)
+    return setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&opt), sizeof(opt)) == 0;
+#else
+    return setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) == 0;
+#endif
+}
+
+bool SocketUtils::set_buffer_sizes(SocketHandle s, int size_bytes) {
+    if (s == kInvalidSocket) return false;
+#if defined(SLUG_PLATFORM_WINDOWS)
+    setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&size_bytes), sizeof(size_bytes));
+    setsockopt(s, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&size_bytes), sizeof(size_bytes));
+#else
+    setsockopt(s, SOL_SOCKET, SO_RCVBUF, &size_bytes, sizeof(size_bytes));
+    setsockopt(s, SOL_SOCKET, SO_SNDBUF, &size_bytes, sizeof(size_bytes));
+#endif
+    return true;
+}
+
 // TcpSocket
 TcpSocket::TcpSocket() : handle_(kInvalidSocket) {}
 
@@ -165,6 +187,9 @@ bool TcpSocket::connect(const std::string& host, uint16_t port, int timeout_ms) 
 
     freeaddrinfo(res);
     if (s == kInvalidSocket) return false;
+
+    SocketUtils::set_tcp_nodelay(s, true);
+    SocketUtils::set_buffer_sizes(s, 4 * 1024 * 1024);
 
     handle_ = s;
     peer_.ip = host;
@@ -316,6 +341,9 @@ std::optional<TcpSocket> TcpListener::accept(int timeout_ms) {
     char ip_buf[INET_ADDRSTRLEN]{};
     inet_ntop(AF_INET, &client_addr.sin_addr, ip_buf, sizeof(ip_buf));
     Endpoint peer{ip_buf, ntohs(client_addr.sin_port)};
+
+    SocketUtils::set_tcp_nodelay(client_sock, true);
+    SocketUtils::set_buffer_sizes(client_sock, 4 * 1024 * 1024);
 
     return TcpSocket(client_sock, peer);
 }

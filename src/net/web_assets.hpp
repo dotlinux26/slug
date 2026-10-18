@@ -83,6 +83,10 @@ public:
           << "<span style='color:var(--text-muted);'># Step 3: Or get a specific file via CLI without web</span><br>"
           << "slug get &lt;file_path&gt; [local_dest]"
           << "</div>"
+          << "<div style='margin-top:20px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;'>"
+          << "<a href='/portal' style='display:inline-flex; align-items:center; gap:6px; padding:9px 16px; background:#0969da; color:#ffffff; text-decoration:none; border-radius:4px; font-weight:600; font-size:13px;'>&larr; Về Trang Chủ Portal (Back to Portal)</a>"
+          << "<a href='/drop' style='display:inline-flex; align-items:center; gap:6px; padding:9px 16px; background:#ffffff; color:#1f2328; border:1px solid #d0d7de; text-decoration:none; border-radius:4px; font-weight:600; font-size:13px;'>Đăng Nhập Lại (Re-login)</a>"
+          << "</div>"
           << "<div class='footer'>Slug &bull; Post-Quantum Cryptographic Isolation &bull; Apache-2.0</div>"
           << "</div></body></html>";
         return h.str();
@@ -285,7 +289,7 @@ public:
           << ".footer { margin-top: 24px; font-size: 11px; color: var(--text-muted); text-align: center; border-top: 1px solid var(--border-primary); padding-top: 14px; font-family: 'JetBrains Mono', monospace; }"
           << ".modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(31,35,40,0.5); align-items: center; justify-content: center; }"
           << ".modal-content { background: #ffffff; border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 20px; width: 480px; max-width: 90%; box-shadow: 0 8px 24px rgba(31,35,40,0.18); font-family: 'JetBrains Mono', monospace; }"
-          << "#upload-toast { position: fixed; bottom: 20px; right: 20px; background: #ffffff; border: 1px solid var(--border-primary); border-radius: var(--radius-sharp); padding: 10px 16px; box-shadow: 0 4px 12px rgba(31,35,40,0.15); font-size: 12px; font-family: 'JetBrains Mono', monospace; z-index: 9999; display: none; }"
+          << "#upload-toast { position: fixed; bottom: 24px; right: 24px; background: #ffffff; border: 1px solid var(--border-primary); border-radius: 6px; padding: 14px 18px; box-shadow: 0 8px 24px rgba(31,35,40,0.18); font-size: 12px; font-family: 'JetBrains Mono', monospace; z-index: 9999; display: none; min-width: 320px; max-width: 440px; box-sizing: border-box; }"
           << "</style><script>"
           << "const currentDir = '" << norm_sub << "';"
           << "const canWrite = " << (role != core::Role::READ_ONLY ? "true" : "false") << ";"
@@ -323,20 +327,63 @@ public:
           << "  document.getElementById('modal-preview').style.display = 'flex';"
           << "}"
           << "function closePreviewModal() { document.getElementById('modal-preview').style.display = 'none'; }"
-          << "function downloadSelected() {"
-          << "  const checks = document.querySelectorAll('.file-check:checked');"
-          << "  if (checks.length === 0) return;"
-          << "  checks.forEach((cb, idx) => {"
-          << "    setTimeout(() => {"
-          << "      const p = cb.getAttribute('data-path');"
+          << "function formatSpeed(bytesPerSec) {"
+          << "  if (bytesPerSec >= 1048576) return (bytesPerSec / 1048576).toFixed(1) + ' MB/s';"
+          << "  if (bytesPerSec >= 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';"
+          << "  return Math.round(bytesPerSec) + ' B/s';"
+          << "}"
+          << "function downloadFileWithProgress(path, filename, onComplete) {"
+          << "  const toast = document.getElementById('upload-toast');"
+          << "  if (toast) toast.style.display = 'block';"
+          << "  const startTime = Date.now();"
+          << "  const xhr = new XMLHttpRequest();"
+          << "  xhr.open('GET', '/download?path=' + encodeURIComponent(path), true);"
+          << "  xhr.responseType = 'blob';"
+          << "  xhr.onprogress = (e) => {"
+          << "    if (!toast) return;"
+          << "    const elapsed = (Date.now() - startTime) / 1000;"
+          << "    const speed = elapsed > 0.1 ? (e.loaded / elapsed) : 0;"
+          << "    const speedStr = formatSpeed(speed);"
+          << "    if (e.lengthComputable && e.total > 0) {"
+          << "      const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));"
+          << "      toast.innerHTML = '<div style=\"font-weight:700; color:#1f2328; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;\"><span>Đang tải về: ' + filename + '</span><span style=\"color:#0969da; font-size:11px;\">' + speedStr + '</span></div><div style=\"background:#e1e4e8; border-radius:3px; height:8px; width:100%; overflow:hidden; margin-bottom:6px;\"><div style=\"background:#1a7f37; height:100%; width:' + percent + '%; transition:width 0.15s ease;\"></div></div><div style=\"display:flex; justify-content:space-between; font-size:11px; color:#57606a;\"><span>' + formatSize(e.loaded) + ' / ' + formatSize(e.total) + ' (' + percent + '%)</span><span style=\"color:#0969da;\">Kênh PQC AEAD</span></div>';"
+          << "    } else {"
+          << "      toast.innerHTML = '<div style=\"font-weight:700; color:#1f2328; margin-bottom:6px;\">Đang tải về: ' + filename + ' (' + speedStr + ')</div><div style=\"font-size:11px; color:#57606a;\">Đã nhận: ' + formatSize(e.loaded) + '</div>';"
+          << "    }"
+          << "  };"
+          << "  xhr.onload = () => {"
+          << "    if (xhr.status === 200) {"
+          << "      if (toast) toast.innerHTML = '<div style=\"font-weight:700; color:#1a7f37; display:flex; align-items:center; gap:6px;\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"20 6 9 17 4 12\"></polyline></svg> Tải về thành công: ' + filename + '</div>';"
+          << "      const blob = xhr.response;"
           << "      const a = document.createElement('a');"
-          << "      a.href = '/download?path=' + encodeURIComponent(p);"
-          << "      a.download = p.split('/').pop();"
+          << "      a.href = window.URL.createObjectURL(blob);"
+          << "      a.download = filename;"
           << "      document.body.appendChild(a);"
           << "      a.click();"
           << "      document.body.removeChild(a);"
-          << "    }, idx * 250);"
-          << "  });"
+          << "      setTimeout(() => { if (toast && !onComplete) toast.style.display = 'none'; }, 2000);"
+          << "    } else {"
+          << "      if (toast) toast.innerHTML = '<div style=\"font-weight:700; color:#cf222e;\">Tải về thất bại (HTTP ' + xhr.status + ')</div>';"
+          << "      setTimeout(() => { if (toast && !onComplete) toast.style.display = 'none'; }, 3000);"
+          << "    }"
+          << "    if (onComplete) onComplete();"
+          << "  };"
+          << "  xhr.onerror = () => {"
+          << "    if (toast) toast.innerHTML = '<div style=\"font-weight:700; color:#cf222e;\">Lỗi mạng khi tải về: ' + filename + '</div>';"
+          << "    setTimeout(() => { if (toast && !onComplete) toast.style.display = 'none'; }, 3000);"
+          << "    if (onComplete) onComplete();"
+          << "  };"
+          << "  xhr.send();"
+          << "}"
+          << "async function downloadSelected() {"
+          << "  const checks = document.querySelectorAll('.file-check:checked');"
+          << "  if (checks.length === 0) return;"
+          << "  for (let i = 0; i < checks.length; i++) {"
+          << "    const cb = checks[i];"
+          << "    const p = cb.getAttribute('data-path');"
+          << "    const name = p.split('/').pop();"
+          << "    await new Promise(resolve => downloadFileWithProgress(p, name, resolve));"
+          << "  }"
           << "}"
           << "async function triggerUpload() {"
           << "  if (!canWrite) { alert('Permission Denied: Your role is read-only.'); return; }"
@@ -389,23 +436,54 @@ public:
           << "    }"
           << "  } catch(e) {}"
           << "}"
-          << "function uploadFiles(files) {"
+          << "async function uploadFiles(files) {"
           << "  if (!canWrite) { alert('Permission Denied: Your role is read-only.'); return; }"
           << "  if (!files || files.length === 0) return;"
           << "  const toast = document.getElementById('upload-toast');"
-          << "  toast.style.display = 'block'; toast.innerHTML = 'Uploading ' + files.length + ' file(s)...';"
-          << "  let completed = 0;"
-          << "  Array.from(files).forEach(file => {"
-          << "    const url = '/api/upload?dir=' + encodeURIComponent(currentDir) + '&name=' + encodeURIComponent(file.name);"
-          << "    fetch(url, { method: 'POST', body: file })"
-          << "      .then(r => r.json())"
-          << "      .then(res => {"
-          << "        completed++;"
-          << "        if (res.status === 'blocked') alert('Upload Blocked by AI Secret Guard:\\n' + res.message);"
-          << "        if (completed === files.length) { toast.innerHTML = 'Upload finished!'; setTimeout(() => location.reload(), 600); }"
-          << "      })"
-          << "      .catch(err => { alert('Upload failed: ' + err); toast.style.display = 'none'; });"
-          << "  });"
+          << "  if (toast) toast.style.display = 'block';"
+          << "  const fileList = Array.from(files);"
+          << "  let completedCount = 0; let failedCount = 0;"
+          << "  for (let i = 0; i < fileList.length; i++) {"
+          << "    const file = fileList[i];"
+          << "    const startTime = Date.now();"
+          << "    await new Promise((resolve) => {"
+          << "      const xhr = new XMLHttpRequest();"
+          << "      const url = '/api/upload?dir=' + encodeURIComponent(currentDir) + '&name=' + encodeURIComponent(file.name);"
+          << "      xhr.open('POST', url, true);"
+          << "      xhr.upload.onprogress = (e) => {"
+          << "        if (!toast) return;"
+          << "        const elapsed = (Date.now() - startTime) / 1000;"
+          << "        const speed = elapsed > 0.1 ? (e.loaded / elapsed) : 0;"
+          << "        const speedStr = formatSpeed(speed);"
+          << "        const filePercent = e.lengthComputable ? Math.min(100, Math.round((e.loaded / e.total) * 100)) : 0;"
+          << "        toast.innerHTML = '<div style=\"font-weight:700; color:#1f2328; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;\"><span>Đang tải lên (' + (i + 1) + '/' + fileList.length + '): ' + file.name + '</span><span style=\"color:#0969da; font-size:11px;\">' + speedStr + '</span></div><div style=\"background:#e1e4e8; border-radius:3px; height:8px; width:100%; overflow:hidden; margin-bottom:6px;\"><div style=\"background:#0969da; height:100%; width:' + filePercent + '%; transition:width 0.15s ease;\"></div></div><div style=\"display:flex; justify-content:space-between; font-size:11px; color:#57606a;\"><span>' + formatSize(e.loaded) + ' / ' + formatSize(e.total) + ' (' + filePercent + '%)</span><span style=\"color:#1a7f37;\">Tải lên qua PQC AEAD</span></div>';"
+          << "      };"
+          << "      xhr.onload = () => {"
+          << "        try {"
+          << "          const res = JSON.parse(xhr.responseText || '{}');"
+          << "          if (xhr.status === 200 && res.status === 'ok') {"
+          << "            completedCount++;"
+          << "          } else {"
+          << "            failedCount++;"
+          << "            if (res.status === 'blocked') alert('Tệp bị chặn bởi AI Secret Guard / Policy:\\n' + (res.message || file.name));"
+          << "          }"
+          << "        } catch(e) {"
+          << "          if (xhr.status === 200) completedCount++; else failedCount++;"
+          << "        }"
+          << "        resolve();"
+          << "      };"
+          << "      xhr.onerror = () => { failedCount++; resolve(); };"
+          << "      xhr.send(file);"
+          << "    });"
+          << "  }"
+          << "  if (!toast) return;"
+          << "  if (failedCount === 0) {"
+          << "    toast.innerHTML = '<div style=\"font-weight:700; color:#1a7f37; display:flex; align-items:center; gap:6px;\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"20 6 9 17 4 12\"></polyline></svg> Tải lên hoàn tất ' + completedCount + '/' + fileList.length + ' tệp thành công!</div>';"
+          << "    setTimeout(() => location.reload(), 800);"
+          << "  } else {"
+          << "    toast.innerHTML = '<div style=\"font-weight:700; color:#cf222e;\">Đã tải lên ' + completedCount + ' tệp, ' + failedCount + ' tệp thất bại hoặc bị chặn!</div>';"
+          << "    setTimeout(() => location.reload(), 2000);"
+          << "  }"
           << "}"
           << "function toggleManualBlockFile(p, block) {"
           << "  const ep = block ? '/api/admin/manual-block' : '/api/admin/manual-unblock';"
@@ -542,7 +620,7 @@ public:
                         : "<input type='checkbox' disabled title='File is shielded/quarantined'>";
 
                     std::string act = item.selectable
-                        ? ("<a class='act-btn' href='/download?path=" + html_escape(item.full_rel_path) + "'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> Tải Về</a><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>")
+                        ? ("<button type='button' class='act-btn' onclick='downloadFileWithProgress(\"" + js_escape(item.full_rel_path) + "\", \"" + js_escape(item.name) + "\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> Tải Về</button><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>")
                         : "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
 
                     if (identity == "host_admin") {
@@ -594,7 +672,7 @@ public:
           << "<h3 style='margin:0; font-size:14px; display:flex; align-items:center; gap:8px; font-family:\"JetBrains Mono\", monospace;'>"
           << "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg>"
           << "<span>Đồng Bộ Dữ Liệu Về Máy Của Bạn (slug pull)</span></h3>"
-          << "<span class='badge badge-pqc'>Mức 2: Modern Hybrid (ML-KEM-768)</span>"
+          << "<span class='badge badge-pqc'>" << core::suite_to_string(suite_id) << "</span>"
           << "</div>"
           << "<div style='margin-bottom:12px;'>"
           << "<label style='display:block; font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; font-family:\"JetBrains Mono\", monospace;'>Thư Mục Lưu Trên Máy Của Bạn (Local Destination Directory) <span style='color:var(--danger); font-weight:bold;'>* Bắt buộc</span></label>"
@@ -3305,15 +3383,15 @@ function renderHostedWorkspaces() {
             <div>
               <div class="host-box-title">
                 <span>${ICONS.shield} MỨC MẬT MÃ &amp; THỜI GIAN PHIÊN</span>
-                <span id="suite-badge-${w.id}" class="badge ${(w.suite === '3' || w.suite === 'pqc') ? 'badge-pqc' : ''}" style="${(w.suite === '2' || w.suite === 'modern' || !w.suite) ? 'background:#ddf4ff; color:#0969da; border:1px solid rgba(9,105,218,0.3);' : ((w.suite === '1' || w.suite === 'classical') ? 'background:#fff8c5; color:#9a6700; border:1px solid rgba(154,103,0,0.3);' : '')}">${(w.suite === '3' || w.suite === 'pqc') ? 'PQC NATIVE (FIPS 203)' : ((w.suite === '1' || w.suite === 'classical') ? 'CLASSICAL (X25519)' : 'MODERN HYBRID (ML-KEM-768)')}</span>
+                <span id="suite-badge-${w.id}" class="badge ${(w.suite === '3' || w.suite === 'pqc') ? 'badge-pqc' : ''}" style="${(w.suite === '2' || w.suite === 'modern' || !w.suite) ? 'background:#ddf4ff; color:#0969da; border:1px solid rgba(9,105,218,0.3);' : ((w.suite === '1' || w.suite === 'classical') ? 'background:#fff8c5; color:#9a6700; border:1px solid rgba(154,103,0,0.3);' : '')}">${(w.suite === '3' || w.suite === 'pqc') ? 'PQC NATIVE (FIPS 203)' : ((w.suite === '1' || w.suite === 'classical') ? 'CLASSICAL (X25519)' : 'MODERN HIGH-SPEED (BLAKE3)')}</span>
               </div>
               
               <div style="margin-bottom:8px;">
                 <label style="font-size:10px; color:var(--text-muted); font-weight:700; display:block; margin-bottom:2px;">CẤU HÌNH MẬT MÃ (CIPHER SUITE):</label>
                 <select id="suite-select-${w.id}" class="input-select" style="width:100%; font-size:11px; padding:5px 8px; height:32px;" onchange="updateHostSuite('${w.id}', this.value)">
-                  <option value="2" ${(w.suite === '2' || w.suite === 'modern' || !w.suite) ? 'selected' : ''}>Mức 2: Modern High-Speed (X25519 + Ed25519 + BLAKE3 + XChaCha20) [Mặc Định]</option>
-                  <option value="3" ${(w.suite === '3' || w.suite === 'pqc') ? 'selected' : ''}>Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203]</option>
-                  <option value="1" ${(w.suite === '1' || w.suite === 'classical') ? 'selected' : ''}>Mức 1: Classical Hardened (X25519 + Ed25519 + SHA-256 + XChaCha20)</option>
+                  <option value="2" ${(w.suite === '2' || w.suite === 'modern' || !w.suite) ? 'selected' : ''}>Mức 2: Modern High-Speed (BLAKE3 + X25519 + Ed25519 + XChaCha20) [Mặc Định]</option>
+                  <option value="3" ${(w.suite === '3' || w.suite === 'pqc') ? 'selected' : ''}>Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203/204]</option>
+                  <option value="1" ${(w.suite === '1' || w.suite === 'classical') ? 'selected' : ''}>Mức 1: Classical Hardened (SHA-256 + X25519 + Ed25519 + XChaCha20)</option>
                 </select>
               </div>
 
@@ -3540,7 +3618,7 @@ function updateHostSuite(hostId, newSuite) {
     } else if (newSuite === '2') {
       badgeEl.className = 'badge';
       badgeEl.style.cssText = 'background:#ddf4ff; color:#0969da; border:1px solid rgba(9,105,218,0.3);';
-      badgeEl.textContent = 'HYBRID (ML-KEM-768)';
+      badgeEl.textContent = 'MODERN HIGH-SPEED (BLAKE3)';
     } else {
       badgeEl.className = 'badge';
       badgeEl.style.cssText = 'background:#fff8c5; color:#9a6700; border:1px solid rgba(154,103,0,0.3);';
@@ -4610,7 +4688,7 @@ function saveSystemConfig() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ default_suite: suite, portal_port: port })
   }).then(r => r.json()).then(res => {
-    showToast('Đã lưu cấu hình mặc định (Mức 2 Modern Hybrid) vào ~/.slug/config.json!');
+    showToast('Đã lưu cấu hình mặc định (Mức 2 Modern High-Speed) vào ~/.slug/config.json!');
   }).catch(() => {
     showToast('Đã lưu cấu hình mặc định vào ~/.slug/config.json!');
   });
@@ -5023,9 +5101,9 @@ window.onload = function() {
           <div class="form-group" style="margin-bottom:0;">
             <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Mức Mật Mã (Cipher Suite)</label>
             <select id="host-suite" class="input-select" style="height:38px; box-sizing:border-box; font-size:12px;">
-              <option value="2" selected>Mức 2: Modern Hybrid (ML-KEM-768 + X25519) [Mặc Định / Khuyên Dùng]</option>
-              <option value="3">Mức 3: Pure PQC (ML-KEM-1024 + ML-DSA-87)</option>
-              <option value="1">Mức 1: Classical Fast (X25519 + AES-GCM)</option>
+              <option value="2" selected>Mức 2: Modern High-Speed (BLAKE3 + X25519 + Ed25519 + XChaCha20) [Mặc Định]</option>
+              <option value="3">Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203/204]</option>
+              <option value="1">Mức 1: Classical Hardened (SHA-256 + X25519 + Ed25519 + XChaCha20)</option>
             </select>
           </div>
         </div>
@@ -5322,9 +5400,9 @@ window.onload = function() {
         <div class="form-group">
           <label>Mức Mật Mã Mặc Định Toàn Cục (default_suite)</label>
           <select id="cfg-default-suite" class="input-select">
-            <option value="SUITE_2_MODERN_HYBRID" selected>SUITE_2_MODERN_HYBRID (ML-KEM-768 + X25519) [Mặc Định / Khuyên Dùng]</option>
-            <option value="SUITE_3_PURE_PQC">SUITE_3_PURE_PQC (ML-KEM-1024 + ML-DSA-87)</option>
-            <option value="SUITE_1_CLASSICAL_FAST">SUITE_1_CLASSICAL_FAST (X25519 + AES-GCM)</option>
+            <option value="SUITE_2_MODERN_HIGH_SPEED" selected>SUITE_2_MODERN_HIGH_SPEED (BLAKE3 + X25519 + Ed25519 + XChaCha20) [Mặc Định]</option>
+            <option value="SUITE_3_PURE_PQC">SUITE_3_PURE_PQC (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203/204]</option>
+            <option value="SUITE_1_CLASSICAL">SUITE_1_CLASSICAL (SHA-256 + X25519 + Ed25519 + XChaCha20)</option>
           </select>
         </div>
         <div class="form-group">

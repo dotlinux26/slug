@@ -871,7 +871,7 @@ int cmd_config(int argc, char* argv[]) {
         std::cout << std::left << std::setw(24) << "[KEY]" << std::setw(40) << "[VALUE]" << std::endl;
         std::cout << std::string(64, '-') << std::endl;
         if (j.empty()) {
-            std::cout << "  (No custom settings. Using defaults: default_suite=SUITE_2_MODERN_HYBRID, portal_port=8080)" << std::endl;
+            std::cout << "  (No custom settings. Using defaults: default_suite=SUITE_2_MODERN_HIGH_SPEED, portal_port=8080)" << std::endl;
         } else {
             for (auto it = j.begin(); it != j.end(); ++it) {
                 std::cout << std::left << std::setw(24) << it.key() << std::setw(40) << it.value().dump() << std::endl;
@@ -3198,13 +3198,15 @@ int cmd_portal(int argc, char* argv[]) {
 
                     if (auth_ok) {
                         if (save) {
-                            std::string cid = id.empty() ? (host + ":" + std::to_string(port)) : id;
+                            std::string ident = client->identity().empty() ? ((auth_type == "account") ? user : "totp") : client->identity();
+                            std::string role_str = core::role_to_string(client->role());
+                            std::string cid = id.empty() ? (host + ":" + std::to_string(port) + "_" + ident + "_" + role_str) : id;
                             core::ConnectionInfo ci;
                             ci.id = cid;
                             ci.host = host;
                             ci.port = port;
                             ci.workspace = client->workspace_name().empty() ? "workspace" : client->workspace_name();
-                            ci.identity = client->identity().empty() ? ((auth_type == "account") ? user : "totp") : client->identity();
+                            ci.identity = ident;
                             ci.auth_type = client->auth_type().empty() ? auth_type : client->auth_type();
                             ci.suite = suite;
                             ci.ticket = client->session_ticket();
@@ -3213,13 +3215,17 @@ int cmd_portal(int argc, char* argv[]) {
                             ci.expires_at = (client->session_ttl() > 0) ? (ci.created_at + client->session_ttl()) : 0;
                             ci.last_active = ci.created_at;
                             core::ConnectionManager::instance().add_connection(ci);
+                            {
+                                std::lock_guard<std::mutex> lk(g_portal.mtx);
+                                g_portal.active_id = cid;
+                            }
                         }
 
                         std::string ticket = client->session_ticket();
                         {
                             std::lock_guard<std::mutex> lk(g_portal.mtx);
                             g_portal.client = std::move(client);
-                            g_portal.active_id = id;
+                            if (g_portal.active_id.empty()) g_portal.active_id = id;
                             g_portal.active_host = host;
                             g_portal.active_port = port;
                             g_portal.active_suite = suite;
@@ -3394,7 +3400,7 @@ int cmd_portal(int argc, char* argv[]) {
                 } else {
                     auto j = SlugConfig::load();
                     if (!j.contains("default_suite")) {
-                        j["default_suite"] = "SUITE_2_MODERN_HYBRID";
+                        j["default_suite"] = "SUITE_2_MODERN_HIGH_SPEED";
                     }
                     if (!j.contains("portal_port")) {
                         j["portal_port"] = 8080;

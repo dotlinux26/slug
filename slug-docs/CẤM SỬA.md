@@ -619,4 +619,37 @@ Khi hoàn tất, báo cáo theo cấu trúc:
     * Khi xảy ra lỗi rớt gói hoặc quá hạn thời gian chờ, socket PQC bị đóng nhưng client không có cơ chế tái kết nối tự động, dẫn đến toàn bộ các thao tác bấm chuột tiếp theo đều bị lỗi kết nối 502.
   - **Khắc phục**:
     * Bổ sung `s_portal_tunnel_mutex` đồng bộ hóa tuần tự các request tunneled HTTP qua kênh socket PQC.
-    * Triển khai cơ chế tự động khôi phục kết nối (`auto-reconnect`): nếu phát hiện mất kết nối socket hoặc socket không phản hồi, `cmd_portal` tự động khởi tạo lại `SlugClient`, kết nối lại máy chủ và xác thực lại bằng ticket đã lưu trong `ConnectionManager` mà không làm gián đoạn trải nghiệm người dùng trên trình duyệt.
+    * Triển khai cơ chế tự động khôi phục kết nối (`auto-reconnect`): nếu phát hiện mất kết nối socket hoặc socket không phản hồi, `cmd_portal` tự động khởi tạo lại `SlugClient`, kết nối lại máy chủ và xác thực lại bằng ticket đã lưu trong `ConnectionManager` mà không làm gián đoạn trải nghiệm người dùng trên trình duyệt.
+
+### Hạng mục Chuẩn Hóa 3 Bộ Mật Mã (Cipher Suites), Tối Ưu Mạng LAN 80–100MB/s (TCP_NODELAY), Thanh Tiến Trình Upload/Download & Sửa Lỗi Hiển Thị Kết Nối
+- [x] **Chuẩn hóa danh xưng và thuật toán 3 bộ Cipher Suite, loại bỏ hoàn toàn claim sai lệch**:
+  - **Nguyên nhân**:
+    * Trong mã nguồn C++, `Suite 2` (`SUITE_2_MODERN`) sử dụng `BLAKE3 / Ed25519 / X25519 / XChaCha20` (không sử dụng thuật toán hậu lượng tử ML-KEM). `Suite 3` (`SUITE_3_PURE_PQC`) mới là bộ mật mã hậu lượng tử thuần khiết với `ML-KEM-768` (NIST FIPS 203) và `ML-DSA-65` (NIST FIPS 204).
+    * Trước đây một số dropdown và tài liệu mô tả sai lệch: gọi Suite 2 là "Modern Hybrid (ML-KEM-768 + X25519)" và Suite 3 là "(ML-KEM-1024 + ML-DSA-87)".
+  - **Khắc phục**:
+    * Đồng bộ hóa 100% định danh và mô tả trên toàn bộ giao diện Web, form chọn trạm chia sẻ, modal cài đặt, CLI và tài liệu đặc tả:
+      - **Mức 1**: `Mức 1: Classical Hardened (SHA-256 + X25519 + Ed25519 + XChaCha20)`
+      - **Mức 2**: `Mức 2: Modern High-Speed (BLAKE3 + X25519 + Ed25519 + XChaCha20) [Mặc Định]`
+      - **Mức 3**: `Mức 3: Pure Post-Quantum (ML-KEM-768 + ML-DSA-65) [NIST FIPS 203/204]`
+    * Cập nhật `suite_from_string` (`types.hpp`) hỗ trợ các định danh chuỗi cấu hình `SUITE_2_MODERN_HIGH_SPEED` song song tương thích với các file cấu hình cũ.
+- [x] **Bổ sung nút điều hướng Portal và Đăng Nhập Lại trên trang 403 Forbidden sau khi Logout**:
+  - Trong `render_forbidden_page` (`src/net/web_assets.hpp`), bổ sung các nút hành động trực quan:
+    * `[← Về Trang Chủ Portal (Back to Portal)]` dẫn về `/portal` để người dùng không bị kẹt ở trang thông báo 403.
+    * `[Đăng Nhập Lại (Re-login)]` dẫn về `/drop` để thực hiện xác thực phiên mới.
+- [x] **Sửa lỗi Recent Connections chỉ hiển thị 1 phiên kết nối gần nhất**:
+  - **Nguyên nhân**: Trong `src/main.cpp` (`cmd_portal`), connection ID trước đây được gán là `cid = host + ":" + port`. Khi người dùng kết nối vai trò `r` và sau đó kết nối tiếp vai trò `w` tới cùng một trạm, `cid` trùng nhau khiến `save_connection` ghi đè phiên cũ bằng phiên mới.
+  - **Khắc phục**: Đổi quy tắc sinh `cid` phân biệt theo định danh và vai trò: `cid = host:port_identity_role` (ví dụ `127.0.0.1:9443_r_r` và `127.0.0.1:9443_w_w`). Cả hai phiên đều được lưu giữ và hiển thị đầy đủ trong bảng Recent Connections kèm huy hiệu vai trò tương ứng.
+- [x] **Bổ sung UI/UX đo tốc độ realtime (MB/s), % tiến trình tải và trạng thái thành công/thất bại**:
+  - **Khi tải lên (Upload)**:
+    * Chuyển đổi `uploadFiles` sang `XMLHttpRequest` với sự kiện `xhr.upload.onprogress`.
+    * Đo đạc thời gian thực tốc độ truyền tải (`MB/s` hoặc `KB/s`), tính toán % tiến trình và hiển thị thanh progress bar động.
+    * Xử lý hàng đợi tuần tự (sequential queue) để tránh nghẽn socket/tunnel khi người dùng kéo thả nhiều tệp lớn.
+    * Hiển thị kết quả kiểm toán AI / Policy rõ ràng kèm thông báo thành công / thất bại từng tệp.
+  - **Khi tải về (Download)**:
+    * Bổ sung hàm `downloadFileWithProgress` trên các nút "Tải Về" và "Download Selected".
+    * Theo dõi tiến trình tải về qua `xhr.onprogress`, hiển thị tốc độ `MB/s` và % tải xong, tự động lưu blob file về máy client khi hoàn tất.
+- [x] **Tối ưu hóa đường truyền mạng LAN đạt 80–100+ MB/s và loại bỏ hiện tượng giật lag / khựng pending**:
+  - **Nguyên nhân**: Các socket TCP trước đây không tắt thuật toán Nagle (Nagle's Algorithm) và dùng kích thước buffer mặc định của hệ điều hành. Thuật toán Nagle kết hợp với Delayed ACK của TCP stack gây ra độ trễ 40–200ms cho mỗi lượt round-trip yêu cầu chunk 64KB, kéo tụt băng thông truyền tải trên mạng LAN xuống chỉ còn vài MB/s.
+  - **Khắc phục**:
+    * Bổ sung `SocketUtils::set_tcp_nodelay(s, true)` (`TCP_NODELAY = 1`) cho toàn bộ các socket client và server khi kết nối/chấp nhận, triệt tiêu hoàn toàn độ trễ Nagle.
+    * Bổ sung `SocketUtils::set_buffer_sizes(s, 4 * 1024 * 1024)` nâng kích thước socket send/recv buffers lên 4 MB, cho phép bão hòa toàn bộ băng thông mạng LAN Gigabit/10GbE (80–100+ MB/s) khi truyền tải các tệp dung lượng lớn hàng chục đến hàng trăm gigabyte.

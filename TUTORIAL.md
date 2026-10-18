@@ -31,7 +31,7 @@ Slug is a security-first, developer-centric tool for sharing and synchronizing w
 | Dimension | Git / GitHub | Rsync / SCP | Slug |
 | :--- | :--- | :--- | :--- |
 | **History Model** | Permanent commit log | In-place file mirror | Ephemeral session-bound sync |
-| **Transport Crypto** | Standard TLS | SSH / OpenSSL | Hybrid & Post-Quantum (ML-KEM-768/ML-DSA-65) |
+| **Transport Crypto** | Standard TLS | SSH / OpenSSL | Modern & Post-Quantum (BLAKE3 / ML-KEM-768 / ML-DSA-65) |
 | **Access Control** | SSH Keys / Personal Tokens | OS user accounts | 8-digit One-Time TOTP + TTL auto-expiry |
 | **Secret Shield** | Scanners on remote push (post-facto) | None (copies secrets verbatim) | Stateful AI Guard + Rules engine (blocked pre-transit) |
 | **Secrets in RAM** | Plaintext files on disk | Plaintext files on disk | EnvShield (`.env.pqc` RAM-only decryption) |
