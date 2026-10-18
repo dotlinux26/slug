@@ -3173,6 +3173,10 @@ static std::string pick_file_native() {
     return slug::platform::NativeDialog::pick_file_native();
 }
 
+static std::string save_file_native(const std::string& default_filename = "") {
+    return slug::platform::NativeDialog::save_file_native(default_filename);
+}
+
 static bool open_path_in_os(const std::string& path_str) {
     return slug::platform::NativeDialog::open_path_in_os(path_str);
 }
@@ -3939,7 +3943,12 @@ int cmd_portal(int argc, char* argv[]) {
                     std::string target_p = j.value("path", "");
                     bool ok = false;
                     if (!target_p.empty()) {
-                        ok = open_path_in_os(target_p);
+                        std::filesystem::path fp(target_p);
+                        std::error_code ec;
+                        if (std::filesystem::is_regular_file(fp, ec)) {
+                            fp = fp.parent_path();
+                        }
+                        ok = open_path_in_os(fp.string());
                     }
                     nlohmann::json res;
                     res["status"] = ok ? "ok" : "error";
@@ -4899,6 +4908,121 @@ int cmd_portal(int argc, char* argv[]) {
                 return;
             }
 
+            if (path == "/api/transfer/download-file" && method == "POST") {
+                std::string host;
+                uint16_t port = 0;
+                core::SuiteID suite = core::SuiteID::SUITE_1_CLASSICAL;
+                std::string ticket;
+                {
+                    std::lock_guard<std::mutex> lk(g_portal.mtx);
+                    if (!g_portal.client || !g_portal.client->is_connected()) {
+                        send_portal_http(sock, 401, "Unauthorized", "application/json", "{\"status\":\"error\",\"message\":\"Chưa kết nối đến workspace từ xa\"}");
+                        return;
+                    }
+                    host = g_portal.active_host;
+                    port = g_portal.active_port;
+                    suite = g_portal.active_suite;
+                    ticket = g_portal.client->session_ticket();
+                    if (ticket.empty() && !g_portal.active_id.empty()) {
+                        auto conn_opt = core::ConnectionManager::instance().get_connection(g_portal.active_id);
+                        if (conn_opt) ticket = conn_opt->ticket;
+                    }
+                }
+
+                nlohmann::json res;
+                try {
+                    auto j = nlohmann::json::parse(body);
+                    std::string fpath = j.value("path", "");
+                    std::string fname = j.value("filename", "");
+                    std::string dest = j.value("dest", "");
+
+                    if (fpath.empty()) {
+                        res["status"] = "error";
+                        res["message"] = "Thiếu thông tin đường dẫn tệp cần tải";
+                        send_portal_http(sock, 400, "Bad Request", "application/json", res.dump());
+                        return;
+                    }
+
+                    if (fname.empty()) {
+                        fname = std::filesystem::path(fpath).filename().string();
+                    }
+
+                    // Native Save As dialog on client machine
+                    if (dest.empty()) {
+                        dest = save_file_native(fname);
+                        if (dest.empty()) {
+                            res["status"] = "cancelled";
+                            res["message"] = "Đã hủy chọn nơi lưu tệp.";
+                            send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                            return;
+                        }
+                    }
+
+                    std::filesystem::path target_file(dest);
+                    std::error_code ec;
+                    if (target_file.has_parent_path()) {
+                        std::filesystem::create_directories(target_file.parent_path(), ec);
+                    }
+
+                    auto job = TransferJobManager::instance().create_job("download_file", target_file.string());
+                    job->current_file = fpath;
+                    std::string jid = job->job_id;
+
+                    // Dedicated PQC connection worker thread for streaming directly to disk
+                    job->worker_thread = std::make_unique<std::thread>([job, host, port, suite, ticket, fpath, target_file]() {
+                        job->status.store(JobStatus::RUNNING);
+                        auto dedicated_client = std::make_unique<net::SlugClient>(host, port, suite);
+                        if (!dedicated_client->is_connected() && !dedicated_client->connect(host, port)) {
+                            job->status.store(JobStatus::FAILED);
+                            job->error_message = "Không thể kết nối kênh truyền tải dữ liệu PQC chuyên dụng tới " + host + ":" + std::to_string(port);
+                            return;
+                        }
+                        auto auth = dedicated_client->authenticate_ticket(ticket);
+                        if (!auth.success) {
+                            job->status.store(JobStatus::FAILED);
+                            job->error_message = "Xác thực phiên truyền tải thất bại: " + auth.message;
+                            return;
+                        }
+
+                        auto progress_cb = [job](uint64_t bytes_done, uint64_t bytes_total, double inst_mbps) {
+                            job->bytes_transferred.store(bytes_done);
+                            job->total_bytes.store(bytes_total);
+                            job->instant_mbps.store(inst_mbps);
+
+                            uint64_t now_ms = core::Utils::current_timestamp();
+                            double total_sec = (now_ms > job->start_time_ms) ? static_cast<double>(now_ms - job->start_time_ms) / 1000.0 : 0.001;
+                            double avg = (total_sec > 0.0) ? (static_cast<double>(bytes_done) / (1024.0 * 1024.0)) / total_sec : 0.0;
+                            job->avg_mbps.store(avg);
+                        };
+
+                        bool ok = dedicated_client->stream_pull_file(fpath, target_file, 0, "", {}, progress_cb, &job->cancel_flag);
+                        if (ok) {
+                            job->status.store(JobStatus::COMPLETED);
+                            job->finish_time_ms = core::Utils::current_timestamp();
+                        } else {
+                            if (job->cancel_flag.load()) {
+                                job->status.store(JobStatus::CANCELLED);
+                                job->error_message = "Người dùng đã hủy quá trình tải tệp.";
+                            } else {
+                                job->status.store(JobStatus::FAILED);
+                                job->error_message = dedicated_client->get_last_error().empty() ? "Quá trình tải tệp thất bại hoặc kiểm tra tính toàn vẹn BLAKE3 không khớp" : dedicated_client->get_last_error();
+                            }
+                        }
+                    });
+
+                    res["status"] = "ok";
+                    res["job_id"] = jid;
+                    res["dest"] = target_file.string();
+                    res["filename"] = fname;
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (const std::exception& e) {
+                    res["status"] = "error";
+                    res["message"] = e.what();
+                    send_portal_http(sock, 500, "Internal Server Error", "application/json", res.dump());
+                }
+                return;
+            }
+
             if (path == "/api/transfer/progress") {
                 std::string jid = get_query_param(query, "job_id");
                 auto job = TransferJobManager::instance().get_job(jid);
@@ -4917,7 +5041,15 @@ int cmd_portal(int argc, char* argv[]) {
                 if (pct > 100.0) pct = 100.0;
 
                 uint64_t now_ms = core::Utils::current_timestamp();
-                uint64_t elapsed_sec = (now_ms > job->start_time_ms) ? (now_ms - job->start_time_ms) : 0;
+                uint64_t elapsed_sec = (now_ms > job->start_time_ms) ? ((now_ms - job->start_time_ms) / 1000) : 0;
+                double inst_speed = job->instant_mbps.load();
+                double avg_speed = job->avg_mbps.load();
+                uint64_t eta_sec = 0;
+                double speed_for_eta = (inst_speed > 0.05) ? inst_speed : avg_speed;
+                if (speed_for_eta > 0.05 && total > transferred) {
+                    double bytes_left = static_cast<double>(total - transferred);
+                    eta_sec = static_cast<uint64_t>(bytes_left / (speed_for_eta * 1024.0 * 1024.0));
+                }
 
                 res["job_id"] = job->job_id;
                 res["type"] = job->type;
@@ -4925,9 +5057,10 @@ int cmd_portal(int argc, char* argv[]) {
                 res["bytes_transferred"] = transferred;
                 res["total_bytes"] = total;
                 res["percent"] = pct;
-                res["instant_mbps"] = job->instant_mbps.load();
-                res["avg_mbps"] = job->avg_mbps.load();
+                res["instant_mbps"] = inst_speed;
+                res["avg_mbps"] = avg_speed;
                 res["elapsed_sec"] = elapsed_sec;
+                res["eta_sec"] = eta_sec;
                 res["error_message"] = job->error_message;
                 res["dest"] = job->target_dir;
 

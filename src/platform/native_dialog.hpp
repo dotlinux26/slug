@@ -169,6 +169,91 @@ public:
 #endif
     }
 
+    static std::string save_file_native(const std::string& default_filename, const std::wstring& title = L"Slug: Chọn Nơi Lưu Tệp Tin") {
+#if defined(SLUG_PLATFORM_WINDOWS)
+        std::string result = "";
+        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        bool need_uninit = SUCCEEDED(hr);
+
+        IFileSaveDialog* pFileSave = nullptr;
+        hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_ALL, IID_IFileSaveDialog, reinterpret_cast<void**>(&pFileSave));
+        if (SUCCEEDED(hr)) {
+            DWORD dwOptions = 0;
+            if (SUCCEEDED(pFileSave->GetOptions(&dwOptions))) {
+                pFileSave->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
+            }
+            pFileSave->SetTitle(title.c_str());
+            if (!default_filename.empty()) {
+                int wlen = MultiByteToWideChar(CP_UTF8, 0, default_filename.c_str(), -1, NULL, 0);
+                if (wlen > 0) {
+                    std::wstring wname(wlen - 1, L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, default_filename.c_str(), -1, &wname[0], wlen);
+                    pFileSave->SetFileName(wname.c_str());
+                }
+            }
+            HWND hwndOwner = GetForegroundWindow();
+            if (!hwndOwner) hwndOwner = GetActiveWindow();
+            if (hwndOwner) {
+                SetForegroundWindow(hwndOwner);
+                BringWindowToTop(hwndOwner);
+            }
+            hr = pFileSave->Show(hwndOwner);
+            if (SUCCEEDED(hr)) {
+                IShellItem* pItem = nullptr;
+                hr = pFileSave->GetResult(&pItem);
+                if (SUCCEEDED(hr)) {
+                    PWSTR pszFilePath = nullptr;
+                    hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                    if (SUCCEEDED(hr)) {
+                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                        if (size_needed > 0) {
+                            result.resize(size_needed - 1);
+                            WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                        }
+                        CoTaskMemFree(pszFilePath);
+                    }
+                    pItem->Release();
+                }
+            }
+            pFileSave->Release();
+        }
+        if (need_uninit) CoUninitialize();
+        return result;
+#elif defined(SLUG_PLATFORM_POSIX)
+        std::string chosen_path = "";
+        std::string cmd = "zenity --file-selection --save --confirm-overwrite --title='Slug: Chọn Nơi Lưu Tệp Tin'";
+        if (!default_filename.empty()) {
+            cmd += " --filename='" + default_filename + "'";
+        }
+        cmd += " --modal 2>/dev/null";
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (pipe) {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), pipe)) {
+                chosen_path += buf;
+            }
+            pclose(pipe);
+        }
+        if (chosen_path.empty()) {
+            std::string kcmd = "kdialog --getsavefilename . --title 'Slug: Chọn Nơi Lưu Tệp Tin' 2>/dev/null";
+            pipe = popen(kcmd.c_str(), "r");
+            if (pipe) {
+                char buf[512];
+                while (fgets(buf, sizeof(buf), pipe)) {
+                    chosen_path += buf;
+                }
+                pclose(pipe);
+            }
+        }
+        while (!chosen_path.empty() && (chosen_path.back() == '\r' || chosen_path.back() == '\n')) {
+            chosen_path.pop_back();
+        }
+        return chosen_path;
+#else
+        return "";
+#endif
+    }
+
     static bool open_path_in_os(const std::string& path_str) {
         if (path_str.empty()) return false;
         try {
