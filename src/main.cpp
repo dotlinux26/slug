@@ -2965,6 +2965,11 @@ inline const char* job_status_to_string(JobStatus s) {
     return "unknown";
 }
 
+static inline uint64_t current_timestamp_ms() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
 struct TransferJob {
     std::string job_id;
     std::string type; // "pull" or "push"
@@ -3007,7 +3012,7 @@ public:
         job->type = type;
         job->target_dir = target_dir;
         job->total_bytes.store(total_expected);
-        job->start_time_ms = core::Utils::current_timestamp();
+        job->start_time_ms = current_timestamp_ms();
         job->status.store(JobStatus::PENDING);
 
         jobs_[jid] = job;
@@ -4870,21 +4875,31 @@ int cmd_portal(int argc, char* argv[]) {
                             return;
                         }
 
+                        job->start_time_ms = current_timestamp_ms();
                         auto progress_cb = [job](uint64_t bytes_done, uint64_t bytes_total, double inst_mbps) {
                             job->bytes_transferred.store(bytes_done);
                             job->total_bytes.store(bytes_total);
                             job->instant_mbps.store(inst_mbps);
 
-                            uint64_t now_ms = core::Utils::current_timestamp();
-                            double total_sec = (now_ms > job->start_time_ms) ? static_cast<double>(now_ms - job->start_time_ms) : 0.001;
-                            double avg = (static_cast<double>(bytes_done) / (1024.0 * 1024.0)) / total_sec;
-                            job->avg_mbps.store(avg);
+                            uint64_t now_ms = current_timestamp_ms();
+                            double total_sec = (now_ms > job->start_time_ms) ? static_cast<double>(now_ms - job->start_time_ms) / 1000.0 : 0.0;
+                            if (total_sec > 0.05 && bytes_done > 0) {
+                                double avg = (static_cast<double>(bytes_done) / (1024.0 * 1024.0)) / total_sec;
+                                job->avg_mbps.store(avg);
+                            } else {
+                                job->avg_mbps.store(inst_mbps);
+                            }
                         };
 
                         bool ok = dedicated_client->pull(target_dir, opts, nullptr, manifest_opt, progress_cb, &job->cancel_flag);
+                        job->finish_time_ms = current_timestamp_ms();
                         if (ok) {
                             job->status.store(JobStatus::COMPLETED);
-                            job->finish_time_ms = core::Utils::current_timestamp();
+                            uint64_t dur_ms = (job->finish_time_ms > job->start_time_ms) ? (job->finish_time_ms - job->start_time_ms) : 1;
+                            double total_sec = static_cast<double>(dur_ms) / 1000.0;
+                            if (total_sec > 0.001 && job->bytes_transferred.load() > 0) {
+                                job->avg_mbps.store((static_cast<double>(job->bytes_transferred.load()) / (1024.0 * 1024.0)) / total_sec);
+                            }
                         } else {
                             if (job->cancel_flag.load()) {
                                 job->status.store(JobStatus::CANCELLED);
@@ -4991,21 +5006,31 @@ int cmd_portal(int argc, char* argv[]) {
                             return;
                         }
 
+                        job->start_time_ms = current_timestamp_ms();
                         auto progress_cb = [job](uint64_t bytes_done, uint64_t bytes_total, double inst_mbps) {
                             job->bytes_transferred.store(bytes_done);
                             job->total_bytes.store(bytes_total);
                             job->instant_mbps.store(inst_mbps);
 
-                            uint64_t now_ms = core::Utils::current_timestamp();
-                            double total_sec = (now_ms > job->start_time_ms) ? static_cast<double>(now_ms - job->start_time_ms) / 1000.0 : 0.001;
-                            double avg = (total_sec > 0.0) ? (static_cast<double>(bytes_done) / (1024.0 * 1024.0)) / total_sec : 0.0;
-                            job->avg_mbps.store(avg);
+                            uint64_t now_ms = current_timestamp_ms();
+                            double total_sec = (now_ms > job->start_time_ms) ? static_cast<double>(now_ms - job->start_time_ms) / 1000.0 : 0.0;
+                            if (total_sec > 0.05 && bytes_done > 0) {
+                                double avg = (static_cast<double>(bytes_done) / (1024.0 * 1024.0)) / total_sec;
+                                job->avg_mbps.store(avg);
+                            } else {
+                                job->avg_mbps.store(inst_mbps);
+                            }
                         };
 
                         bool ok = dedicated_client->stream_pull_file(fpath, target_file, 0, "", {}, progress_cb, &job->cancel_flag);
+                        job->finish_time_ms = current_timestamp_ms();
                         if (ok) {
                             job->status.store(JobStatus::COMPLETED);
-                            job->finish_time_ms = core::Utils::current_timestamp();
+                            uint64_t dur_ms = (job->finish_time_ms > job->start_time_ms) ? (job->finish_time_ms - job->start_time_ms) : 1;
+                            double total_sec = static_cast<double>(dur_ms) / 1000.0;
+                            if (total_sec > 0.001 && job->bytes_transferred.load() > 0) {
+                                job->avg_mbps.store((static_cast<double>(job->bytes_transferred.load()) / (1024.0 * 1024.0)) / total_sec);
+                            }
                         } else {
                             if (job->cancel_flag.load()) {
                                 job->status.store(JobStatus::CANCELLED);
@@ -5047,10 +5072,19 @@ int cmd_portal(int argc, char* argv[]) {
                 double pct = (total > 0) ? (static_cast<double>(transferred) * 100.0 / static_cast<double>(total)) : 0.0;
                 if (pct > 100.0) pct = 100.0;
 
-                uint64_t now_ms = core::Utils::current_timestamp();
-                uint64_t elapsed_sec = (now_ms > job->start_time_ms) ? ((now_ms - job->start_time_ms) / 1000) : 0;
+                uint64_t now_ms = (st == JobStatus::COMPLETED && job->finish_time_ms > 0) ? job->finish_time_ms : current_timestamp_ms();
+                uint64_t elapsed_ms = (now_ms > job->start_time_ms) ? (now_ms - job->start_time_ms) : 0;
+                uint64_t elapsed_sec = (elapsed_ms + 500) / 1000;
+                if (elapsed_sec == 0 && elapsed_ms > 50) elapsed_sec = 1;
+                double total_sec = (elapsed_ms > 0) ? static_cast<double>(elapsed_ms) / 1000.0 : 0.001;
+
                 double inst_speed = job->instant_mbps.load();
                 double avg_speed = job->avg_mbps.load();
+                if (total_sec > 0.1 && transferred > 0) {
+                    avg_speed = (static_cast<double>(transferred) / (1024.0 * 1024.0)) / total_sec;
+                    job->avg_mbps.store(avg_speed);
+                }
+
                 uint64_t eta_sec = 0;
                 double speed_for_eta = (inst_speed > 0.05) ? inst_speed : avg_speed;
                 if (speed_for_eta > 0.05 && total > transferred) {
@@ -5067,6 +5101,7 @@ int cmd_portal(int argc, char* argv[]) {
                 res["instant_mbps"] = inst_speed;
                 res["avg_mbps"] = avg_speed;
                 res["elapsed_sec"] = elapsed_sec;
+                res["elapsed_ms"] = elapsed_ms;
                 res["eta_sec"] = eta_sec;
                 res["error_message"] = job->error_message;
                 res["dest"] = job->target_dir;
