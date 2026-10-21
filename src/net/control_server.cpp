@@ -586,7 +586,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             auto data = core::Utils::from_base64(b64_data);
 
             // AI Secret Guard inspection
-            if (enable_ai_) {
+            if (enable_ai_ && ai::AiScanner::is_scannable_file(dest_path)) {
                 ai::AiScanner scanner;
                 std::string text(data.begin(), data.end());
                 auto finding = scanner.scan_content(dest_path, text);
@@ -880,7 +880,7 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                     }
 
                     // AI Secret Guard inspection for text files if enabled
-                    if (enable_ai_ && total_written < 10ULL * 1024 * 1024) {
+                    if (enable_ai_ && ai::AiScanner::is_scannable_file(final_dest_path) && total_written < 10ULL * 1024 * 1024) {
                         ai::AiScanner scanner;
                         std::ifstream check_ifs(temp_upload_path, std::ios::binary);
                         std::string text_sample((std::istreambuf_iterator<char>(check_ifs)), std::istreambuf_iterator<char>());
