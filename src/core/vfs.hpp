@@ -56,6 +56,35 @@ struct VfsResolveResult {
     bool is_ok() const { return status == VfsStatus::OK; }
 };
 
+enum class UploadCollisionOutcome {
+    PROCEED,         // Target path does not exist, can write directly
+    ALREADY_EXISTS,  // Target exists with identical BLAKE3 hash -> skip overwrite
+    RENAMED          // Target exists with different hash -> auto-incremented name (Windows-style: (1), (2)...)
+};
+
+struct UploadPlan {
+    UploadCollisionOutcome outcome{UploadCollisionOutcome::PROCEED};
+    std::string target_virtual_path;
+    std::string target_filename;
+    std::filesystem::path target_real_path;
+    std::string matched_hash;
+    VfsStatus status{VfsStatus::OK};
+    std::string error_message;
+
+    bool is_ok() const { return status == VfsStatus::OK; }
+};
+
+struct UploadResult {
+    VfsStatus status{VfsStatus::OK};
+    UploadCollisionOutcome outcome{UploadCollisionOutcome::PROCEED};
+    std::string target_virtual_path;
+    std::string target_filename;
+    std::string error_message;
+    bool renamed{false};
+
+    bool is_ok() const { return status == VfsStatus::OK; }
+};
+
 class SlugVFS {
 public:
     explicit SlugVFS(std::filesystem::path server_root_path,
@@ -82,6 +111,21 @@ public:
 
     // Writes binary content to a jailed file
     VfsStatus write_file(std::string_view virtual_path, std::span<const uint8_t> data, Role role, bool overwrite = true);
+
+    // Plans target path for file upload with multi-tier fast path:
+    // Tier 1: O(1) file_size pre-check (zero disk I/O)
+    // Tier 2: 64KB Head & Tail sample comparison (< 0.2ms)
+    // Tier 3: BLAKE3 streaming verification
+    UploadPlan plan_upload(std::string_view virtual_path,
+                           std::string_view incoming_blake3_hash,
+                           uint64_t incoming_size,
+                           Role role) const;
+
+    // Writes an uploaded file safely: computes BLAKE3, plans upload path, avoids duplicate
+    // overwrite when content matches, and renames with incremented suffix when different.
+    UploadResult write_uploaded_file(std::string_view virtual_path,
+                                     std::span<const uint8_t> data,
+                                     Role role);
 
     policy::PolicyEngine& policy_engine() { return policy_engine_; }
     const policy::PolicyEngine& policy_engine() const { return policy_engine_; }

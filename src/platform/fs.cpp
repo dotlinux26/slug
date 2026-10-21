@@ -119,7 +119,8 @@ std::optional<fs::path> PathUtils::resolve_safe_path(const fs::path& root_dir, c
     if (ec) return std::nullopt;
 
     // Strict path jailing via mismatch on canonical path components
-    auto [root_end, nothing] = std::mismatch(root_canonical.begin(), root_canonical.end(), target_canonical.begin());
+    auto [root_end, nothing] = std::mismatch(root_canonical.begin(), root_canonical.end(),
+                                             target_canonical.begin(), target_canonical.end());
     if (root_end != root_canonical.end()) {
         return std::nullopt; // Escaped root! Traversal detected!
     }
@@ -128,7 +129,8 @@ std::optional<fs::path> PathUtils::resolve_safe_path(const fs::path& root_dir, c
     if (fs::is_symlink(candidate, ec)) {
         fs::path symlink_target = fs::canonical(candidate, ec);
         if (ec) return std::nullopt;
-        auto [sym_end, sym_nothing] = std::mismatch(root_canonical.begin(), root_canonical.end(), symlink_target.begin());
+        auto [sym_end, sym_nothing] = std::mismatch(root_canonical.begin(), root_canonical.end(),
+                                                   symlink_target.begin(), symlink_target.end());
         if (sym_end != root_canonical.end()) {
             return std::nullopt;
         }
@@ -161,6 +163,77 @@ std::optional<std::string> PathUtils::read_text_file(const fs::path& path) {
     auto bin = read_binary_file(path);
     if (!bin) return std::nullopt;
     return std::string(bin->begin(), bin->end());
+}
+
+bool PathUtils::fast_head_tail_match_data(const fs::path& existing_file, std::span<const uint8_t> incoming_data, size_t sample_size) {
+    std::error_code ec;
+    uint64_t file_sz = fs::file_size(existing_file, ec);
+    if (ec || file_sz != incoming_data.size()) {
+        return false;
+    }
+    if (file_sz <= sample_size * 2) {
+        return true;
+    }
+
+    std::ifstream file(existing_file, std::ios::binary);
+    if (!file.is_open()) return false;
+
+    constexpr size_t kChunk = 65536;
+    size_t check_len = std::min(sample_size, kChunk);
+    uint8_t buf[kChunk];
+
+    // Check head
+    file.read(reinterpret_cast<char*>(buf), static_cast<std::streamsize>(check_len));
+    if (file.gcount() != static_cast<std::streamsize>(check_len)) return false;
+    if (std::memcmp(buf, incoming_data.data(), check_len) != 0) {
+        return false;
+    }
+
+    // Check tail
+    file.seekg(static_cast<std::streamoff>(file_sz - check_len), std::ios::beg);
+    file.read(reinterpret_cast<char*>(buf), static_cast<std::streamsize>(check_len));
+    if (file.gcount() != static_cast<std::streamsize>(check_len)) return false;
+    if (std::memcmp(buf, incoming_data.data() + (file_sz - check_len), check_len) != 0) {
+        return false;
+    }
+
+    return true;
+}
+
+bool PathUtils::fast_head_tail_match_files(const fs::path& path_a, const fs::path& path_b, size_t sample_size) {
+    std::error_code ec;
+    uint64_t sz_a = fs::file_size(path_a, ec);
+    if (ec) return false;
+    uint64_t sz_b = fs::file_size(path_b, ec);
+    if (ec || sz_a != sz_b) return false;
+    if (sz_a <= sample_size * 2) return true;
+
+    std::ifstream fa(path_a, std::ios::binary);
+    std::ifstream fb(path_b, std::ios::binary);
+    if (!fa.is_open() || !fb.is_open()) return false;
+
+    constexpr size_t kChunk = 65536;
+    size_t check_len = std::min(sample_size, kChunk);
+    uint8_t bufa[kChunk];
+    uint8_t bufb[kChunk];
+
+    // Check head
+    fa.read(reinterpret_cast<char*>(bufa), static_cast<std::streamsize>(check_len));
+    fb.read(reinterpret_cast<char*>(bufb), static_cast<std::streamsize>(check_len));
+    if (fa.gcount() != fb.gcount() || std::memcmp(bufa, bufb, static_cast<size_t>(fa.gcount())) != 0) {
+        return false;
+    }
+
+    // Check tail
+    fa.seekg(static_cast<std::streamoff>(sz_a - check_len), std::ios::beg);
+    fb.seekg(static_cast<std::streamoff>(sz_b - check_len), std::ios::beg);
+    fa.read(reinterpret_cast<char*>(bufa), static_cast<std::streamsize>(check_len));
+    fb.read(reinterpret_cast<char*>(bufb), static_cast<std::streamsize>(check_len));
+    if (fa.gcount() != fb.gcount() || std::memcmp(bufa, bufb, static_cast<size_t>(fa.gcount())) != 0) {
+        return false;
+    }
+
+    return true;
 }
 
 bool PathUtils::ensure_directory(const fs::path& path) {

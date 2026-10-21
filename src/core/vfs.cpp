@@ -292,4 +292,167 @@ VfsStatus SlugVFS::write_file(std::string_view virtual_path, std::span<const uin
     return VfsStatus::OK;
 }
 
+UploadPlan SlugVFS::plan_upload(std::string_view virtual_path,
+                               std::string_view incoming_blake3_hash,
+                               uint64_t incoming_size,
+                               Role role) const {
+    UploadPlan plan;
+    auto resolved = resolve_and_jail(virtual_path, role, true);
+    if (!resolved.is_ok()) {
+        plan.status = resolved.status;
+        plan.error_message = resolved.error_message.empty() ? vfs_status_to_string(resolved.status) : resolved.error_message;
+        return plan;
+    }
+
+    std::error_code ec;
+    // Check if the original resolved file exists
+    if (!fs::exists(resolved.real_path, ec)) {
+        plan.outcome = UploadCollisionOutcome::PROCEED;
+        plan.target_virtual_path = resolved.virtual_path;
+        plan.target_filename = platform::PathUtils::path_to_u8(resolved.real_path.filename());
+        plan.target_real_path = resolved.real_path;
+        plan.status = VfsStatus::OK;
+        return plan;
+    }
+
+    // Target file already exists!
+    // FAST PATH TIER 1: O(1) Size Pre-check (zero disk read, < 1 microsecond)
+    uint64_t existing_sz = fs::file_size(resolved.real_path, ec);
+    bool size_matches = (incoming_size == 0 || (!ec && existing_sz == incoming_size));
+
+    // FAST PATH TIER 3: BLAKE3 Verification (only if sizes match)
+    if (size_matches && !incoming_blake3_hash.empty()) {
+        auto existing_hash = crypto::Blake3::hash_file(resolved.real_path);
+        if (existing_hash && *existing_hash == incoming_blake3_hash) {
+            plan.outcome = UploadCollisionOutcome::ALREADY_EXISTS;
+            plan.target_virtual_path = resolved.virtual_path;
+            plan.target_filename = platform::PathUtils::path_to_u8(resolved.real_path.filename());
+            plan.target_real_path = resolved.real_path;
+            plan.matched_hash = *existing_hash;
+            plan.status = VfsStatus::OK;
+            return plan;
+        }
+    }
+
+    // Name collision with different content!
+    // Split filename into stem and extension
+    fs::path fname_path = resolved.real_path.filename();
+    std::string stem = platform::PathUtils::path_to_u8(fname_path.stem());
+    std::string ext = platform::PathUtils::path_to_u8(fname_path.extension());
+    if (stem.empty() && !ext.empty()) {
+        stem = ext;
+        ext.clear();
+    }
+
+    // Virtual parent directory (e.g. "/docs" or "")
+    fs::path v_path = platform::PathUtils::u8_to_path(resolved.virtual_path);
+    std::string v_parent = platform::PathUtils::path_to_u8(v_path.parent_path());
+    if (v_parent == "/" || v_parent == ".") {
+        v_parent.clear();
+    }
+
+    // Find next available incremental number (1), (2), (3)...
+    for (int i = 1; i <= 9999; ++i) {
+        std::string cand_name = stem + " (" + std::to_string(i) + ")" + ext;
+        std::string cand_virtual = v_parent.empty() ? ("/" + cand_name) : (v_parent + "/" + cand_name);
+
+        auto cand_res = resolve_and_jail(cand_virtual, role, true);
+        if (!cand_res.is_ok()) {
+            continue;
+        }
+
+        if (!fs::exists(cand_res.real_path, ec)) {
+            // Found a free slot!
+            plan.outcome = UploadCollisionOutcome::RENAMED;
+            plan.target_virtual_path = cand_res.virtual_path;
+            plan.target_filename = cand_name;
+            plan.target_real_path = cand_res.real_path;
+            plan.status = VfsStatus::OK;
+            return plan;
+        }
+
+        // The numbered candidate file also exists:
+        // FAST PATH TIER 1: Size check for candidate (skip hash if size differs)
+        uint64_t cand_sz = fs::file_size(cand_res.real_path, ec);
+        if (incoming_size > 0 && !ec && cand_sz != incoming_size) {
+            continue;
+        }
+
+        if (!incoming_blake3_hash.empty()) {
+            auto cand_hash = crypto::Blake3::hash_file(cand_res.real_path);
+            if (cand_hash && *cand_hash == incoming_blake3_hash) {
+                // Identical to one of the numbered versions already on the server!
+                plan.outcome = UploadCollisionOutcome::ALREADY_EXISTS;
+                plan.target_virtual_path = cand_res.virtual_path;
+                plan.target_filename = cand_name;
+                plan.target_real_path = cand_res.real_path;
+                plan.matched_hash = *cand_hash;
+                plan.status = VfsStatus::OK;
+                return plan;
+            }
+        }
+    }
+
+    // Fallback if 9999 iterations reached
+    plan.outcome = UploadCollisionOutcome::PROCEED;
+    plan.target_virtual_path = resolved.virtual_path;
+    plan.target_filename = platform::PathUtils::path_to_u8(resolved.real_path.filename());
+    plan.target_real_path = resolved.real_path;
+    plan.status = VfsStatus::OK;
+    return plan;
+}
+
+UploadResult SlugVFS::write_uploaded_file(std::string_view virtual_path,
+                                         std::span<const uint8_t> data,
+                                         Role role) {
+    UploadResult res;
+    auto resolved = resolve_and_jail(virtual_path, role, true);
+    if (!resolved.is_ok()) {
+        res.status = resolved.status;
+        res.error_message = resolved.error_message.empty() ? vfs_status_to_string(resolved.status) : resolved.error_message;
+        return res;
+    }
+
+    std::string incoming_hash;
+    std::error_code ec;
+
+    // Check if target file exists and if size matches before doing any hashing
+    if (fs::exists(resolved.real_path, ec)) {
+        uint64_t ex_sz = fs::file_size(resolved.real_path, ec);
+        // Only if exact size matches, do Tier 2 Head/Tail check
+        if (!ec && ex_sz == data.size()) {
+            if (platform::PathUtils::fast_head_tail_match_data(resolved.real_path, data)) {
+                // Tier 3: Compute BLAKE3 for full verification
+                incoming_hash = crypto::Blake3::hash_hex(data);
+            }
+        }
+    }
+
+    UploadPlan plan = plan_upload(virtual_path, incoming_hash, data.size(), role);
+    if (!plan.is_ok()) {
+        res.status = plan.status;
+        res.outcome = plan.outcome;
+        res.error_message = plan.error_message;
+        return res;
+    }
+
+    res.outcome = plan.outcome;
+    res.target_virtual_path = plan.target_virtual_path;
+    res.target_filename = plan.target_filename;
+    res.renamed = (plan.outcome == UploadCollisionOutcome::RENAMED);
+
+    if (plan.outcome == UploadCollisionOutcome::ALREADY_EXISTS) {
+        // Skip writing: file already exists with identical content
+        res.status = VfsStatus::OK;
+        return res;
+    }
+
+    // Write file to plan.target_virtual_path
+    res.status = write_file(plan.target_virtual_path, data, role, true);
+    if (res.status != VfsStatus::OK) {
+        res.error_message = vfs_status_to_string(res.status);
+    }
+    return res;
+}
+
 } // namespace slug::core

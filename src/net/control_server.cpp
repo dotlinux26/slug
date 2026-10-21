@@ -775,21 +775,38 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             std::string dest_path = req.value("path", "");
             uint32_t transfer_id = req.value("transfer_id", 1U);
             std::string expected_blake3_hash = req.value("blake3_hash", "");
+            uint64_t incoming_file_size = req.value("file_size", 0ULL);
 
-            auto vres = vfs_.resolve_and_jail(dest_path, sess->role, true);
-            if (!vres.is_ok()) {
+            auto plan = vfs_.plan_upload(dest_path, expected_blake3_hash, incoming_file_size, sess->role);
+            if (!plan.is_ok()) {
                 json err;
                 err["status"] = "error";
-                err["message"] = vres.error_message.empty() ? core::vfs_status_to_string(vres.status) : vres.error_message;
+                err["message"] = plan.error_message.empty() ? core::vfs_status_to_string(plan.status) : plan.error_message;
                 audit_logger_.log(sess->identity, "PUSH_REJECTED", dest_path, err["message"], false);
                 send_packet(err);
                 continue;
             }
 
+            if (plan.outcome == core::UploadCollisionOutcome::ALREADY_EXISTS) {
+                audit_logger_.log(sess->identity, "PUSH_SKIPPED_EXISTING", plan.target_virtual_path, "File already exists with identical BLAKE3 hash");
+                json resp;
+                resp["status"] = "exists";
+                resp["path"] = plan.target_virtual_path;
+                resp["filename"] = plan.target_filename;
+                resp["transfer_id"] = transfer_id;
+                resp["message"] = "File already exists on remote with identical BLAKE3 hash";
+                send_packet(resp);
+                continue;
+            }
+
+            bool was_renamed = (plan.outcome == core::UploadCollisionOutcome::RENAMED);
+            std::string final_dest_path = plan.target_virtual_path;
+            std::filesystem::path final_real_path = plan.target_real_path;
+
             // Create temp upload file in parent directory
             std::error_code ec_dir;
-            std::filesystem::create_directories(vres.real_path.parent_path(), ec_dir);
-            std::filesystem::path temp_upload_path = vres.real_path;
+            std::filesystem::create_directories(final_real_path.parent_path(), ec_dir);
+            std::filesystem::path temp_upload_path = final_real_path;
             temp_upload_path += ".slug_upload_tmp." + std::to_string(transfer_id);
 
             std::ofstream dst(temp_upload_path, std::ios::binary | std::ios::trunc);
@@ -804,6 +821,9 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             json resp;
             resp["status"] = "ok";
             resp["transfer_id"] = transfer_id;
+            resp["renamed"] = was_renamed;
+            resp["path"] = final_dest_path;
+            resp["filename"] = plan.target_filename;
             if (!send_packet(resp)) {
                 dst.close();
                 std::filesystem::remove(temp_upload_path, ec_dir);
@@ -864,19 +884,19 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                         ai::AiScanner scanner;
                         std::ifstream check_ifs(temp_upload_path, std::ios::binary);
                         std::string text_sample((std::istreambuf_iterator<char>(check_ifs)), std::istreambuf_iterator<char>());
-                        auto finding = scanner.scan_content(dest_path, text_sample);
+                        auto finding = scanner.scan_content(final_dest_path, text_sample);
                         if (finding.has_secret) {
                             error_msg = "AI Guard: Sensitive secret detected (" + finding.reason + "). Upload rejected.";
-                            audit_logger_.log(sess->identity, "AI_REJECT", dest_path, finding.reason, false);
+                            audit_logger_.log(sess->identity, "AI_REJECT", final_dest_path, finding.reason, false);
                             break;
                         }
                     }
 
                     // Commit atomically: rename temp file to real destination
                     std::error_code ec_rename;
-                    std::filesystem::rename(temp_upload_path, vres.real_path, ec_rename);
+                    std::filesystem::rename(temp_upload_path, final_real_path, ec_rename);
                     if (ec_rename) {
-                        std::filesystem::copy_file(temp_upload_path, vres.real_path, std::filesystem::copy_options::overwrite_existing, ec_rename);
+                        std::filesystem::copy_file(temp_upload_path, final_real_path, std::filesystem::copy_options::overwrite_existing, ec_rename);
                         std::filesystem::remove(temp_upload_path, ec_rename);
                     }
                     upload_success = true;
@@ -898,9 +918,13 @@ void ControlServer::handle_client(platform::TcpSocket client) {
                 invalidate_manifest_cache();
                 json ok_resp;
                 ok_resp["status"] = "ok";
-                ok_resp["path"] = dest_path;
+                ok_resp["path"] = final_dest_path;
+                ok_resp["filename"] = plan.target_filename;
+                ok_resp["renamed"] = was_renamed;
                 ok_resp["bytes"] = total_written;
-                audit_logger_.log(sess->identity, "FILE_UPLOAD", dest_path, "Stream uploaded " + core::Utils::format_size(total_written));
+                audit_logger_.log(sess->identity, "FILE_UPLOAD", final_dest_path,
+                    was_renamed ? ("Stream uploaded (renamed: " + plan.target_filename + ", " + core::Utils::format_size(total_written) + ")")
+                                : ("Stream uploaded " + core::Utils::format_size(total_written)));
                 if (!send_packet(ok_resp)) break;
             }
 

@@ -183,46 +183,51 @@ static std::string safe_dump_json(const json& j, int indent = -1) {
 }
 
 bool AiScanner::is_scannable_file(const std::filesystem::path& path) {
-    std::string fname = path.filename().string();
-    std::string ext = path.extension().string();
-    for (auto& c : fname) c = static_cast<char>(std::tolower(c));
-    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+    try {
+        std::string fname = slug::platform::PathUtils::path_to_u8(path.filename());
+        std::string ext = slug::platform::PathUtils::path_to_u8(path.extension());
+        for (auto& c : fname) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-    // Absolute exclusion for binary, compiled, compressed, database, and encrypted files
-    static const std::vector<std::string> binary_exts = {
-        ".pyd", ".dll", ".exe", ".bin", ".pak", ".so", ".dylib", ".obj", ".o",
-        ".class", ".pyc", ".dat", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp",
-        ".svg", ".mp4", ".mp3", ".pdf", ".zip", ".tar", ".gz", ".7z", ".iso",
-        ".ttf", ".woff", ".woff2", ".wasm", ".pdb", ".lib", ".a", ".node",
-        ".pqc", ".vault", ".enc", ".sealed", ".sig", ".db", ".sqlite", ".sqlite3"
-    };
-    for (const auto& be : binary_exts) {
-        if (ext == be) return false;
-    }
+        // Absolute exclusion for binary, compiled, compressed, database, and encrypted files
+        static const std::vector<std::string> binary_exts = {
+            ".pyd", ".dll", ".exe", ".bin", ".pak", ".so", ".dylib", ".obj", ".o",
+            ".class", ".pyc", ".dat", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp",
+            ".svg", ".mp4", ".mp3", ".pdf", ".zip", ".tar", ".gz", ".7z", ".iso",
+            ".ttf", ".woff", ".woff2", ".wasm", ".pdb", ".lib", ".a", ".node",
+            ".pqc", ".vault", ".enc", ".sealed", ".sig", ".db", ".sqlite", ".sqlite3",
+            ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt"
+        };
+        for (const auto& be : binary_exts) {
+            if (ext == be) return false;
+        }
 
-    // Encrypted files or Slug env containers (.env.pqc, .env.vault) are NOT plaintext code/secrets
-    if (fname.ends_with(".pqc") || fname.ends_with(".vault") || fname.ends_with(".enc") || fname.ends_with(".sealed") ||
-        ext == ".pqc" || ext == ".vault" || ext == ".enc" || ext == ".sealed") {
+        // Encrypted files or Slug env containers (.env.pqc, .env.vault) are NOT plaintext code/secrets
+        if (fname.ends_with(".pqc") || fname.ends_with(".vault") || fname.ends_with(".enc") || fname.ends_with(".sealed") ||
+            ext == ".pqc" || ext == ".vault" || ext == ".enc" || ext == ".sealed") {
+            return false;
+        }
+
+        // Support .env and variants (.env.local, .env.production, etc.)
+        if (fname == ".env" || fname.rfind(".env.", 0) == 0 || ext == ".env") {
+            return true;
+        }
+
+        static const std::vector<std::string> scannable_exts = {
+            ".py", ".js", ".ts", ".jsx", ".tsx", ".cpp", ".hpp", ".c", ".h",
+            ".go", ".rs", ".java", ".json", ".yaml", ".yml", ".toml",
+            ".xml", ".ini", ".conf", ".sh", ".bash", ".zsh", ".rb", ".php",
+            ".txt", ".md", ".cfg", ".properties", ".csv", ".log", ".sql",
+            ".pem", ".key", ".crt", ".auth", ".token", ".secret", ".cert", ".config", ".cnf"
+        };
+
+        for (const auto& e : scannable_exts) {
+            if (ext == e) return true;
+        }
+        return false;
+    } catch (...) {
         return false;
     }
-
-    // Support .env and variants (.env.local, .env.production, etc.)
-    if (fname == ".env" || fname.rfind(".env.", 0) == 0 || ext == ".env") {
-        return true;
-    }
-
-    static const std::vector<std::string> scannable_exts = {
-        ".py", ".js", ".ts", ".jsx", ".tsx", ".cpp", ".hpp", ".c", ".h",
-        ".go", ".rs", ".java", ".json", ".yaml", ".yml", ".toml",
-        ".xml", ".ini", ".conf", ".sh", ".bash", ".zsh", ".rb", ".php",
-        ".txt", ".md", ".cfg", ".properties", ".csv", ".log", ".sql",
-        ".pem", ".key", ".crt", ".auth", ".token", ".secret", ".cert", ".config", ".cnf"
-    };
-
-    for (const auto& e : scannable_exts) {
-        if (ext == e) return true;
-    }
-    return false;
 }
 
 // Shannon entropy calculation
@@ -244,24 +249,30 @@ ScanFinding AiScanner::scan_heuristic(const std::string& file_path, std::string_
     ScanFinding finding;
     finding.detector = "Smart Regex Guard";
 
-    if (!is_scannable_file(file_path)) {
-        return finding;
-    }
+    try {
+        if (!is_scannable_file(file_path)) {
+            return finding;
+        }
 
-    std::string fname = std::filesystem::path(file_path).filename().string();
-    for (auto& c : fname) c = static_cast<char>(std::tolower(c));
+        std::string fname = slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(file_path).filename());
+        std::string ext = slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(file_path).extension());
+        for (auto& c : fname) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-    // Direct check for environment secret files (.env, .env.local, .env.production, etc.)
-    // Exclude documentation or template examples: .env.example, .env.sample, .env.template
-    // Exclude sealed/encrypted files: .env.pqc, .env.vault, .env.enc, .env.sealed
-    if ((fname == ".env" || fname.rfind(".env.", 0) == 0 || std::filesystem::path(file_path).extension().string() == ".env") &&
-        fname != ".env.example" && fname != ".env.sample" && fname != ".env.template" &&
-        !fname.ends_with(".pqc") && !fname.ends_with(".vault") && !fname.ends_with(".enc") && !fname.ends_with(".sealed")) {
-        finding.has_secret = true;
-        finding.status = ScanStatus::SECRET_FOUND;
-        finding.line_number = 1;
-        finding.reason = "Environment Secret File (" + fname + ")";
-        finding.matched_snippet = content.empty() ? fname : sanitize_utf8(content.substr(0, std::min(content.size(), (size_t)80)));
+        // Direct check for environment secret files (.env, .env.local, .env.production, etc.)
+        // Exclude documentation or template examples: .env.example, .env.sample, .env.template
+        // Exclude sealed/encrypted files: .env.pqc, .env.vault, .env.enc, .env.sealed
+        if ((fname == ".env" || fname.rfind(".env.", 0) == 0 || ext == ".env") &&
+            fname != ".env.example" && fname != ".env.sample" && fname != ".env.template" &&
+            !fname.ends_with(".pqc") && !fname.ends_with(".vault") && !fname.ends_with(".enc") && !fname.ends_with(".sealed")) {
+            finding.has_secret = true;
+            finding.status = ScanStatus::SECRET_FOUND;
+            finding.line_number = 1;
+            finding.reason = "Environment Secret File (" + fname + ")";
+            finding.matched_snippet = content.empty() ? fname : sanitize_utf8(content.substr(0, std::min(content.size(), (size_t)80)));
+            return finding;
+        }
+    } catch (...) {
         return finding;
     }
 

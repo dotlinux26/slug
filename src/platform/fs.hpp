@@ -41,6 +41,10 @@ public:
     // Read text file
     static std::optional<std::string> read_text_file(const fs::path& path);
 
+    // Fast head & tail sample comparison for large files (64KB head + 64KB tail)
+    static bool fast_head_tail_match_data(const fs::path& existing_file, std::span<const uint8_t> incoming_data, size_t sample_size = 64 * 1024);
+    static bool fast_head_tail_match_files(const fs::path& path_a, const fs::path& path_b, size_t sample_size = 64 * 1024);
+
     // Atomic write to file via temporary file
     static bool write_binary_file_atomic(const fs::path& path, std::span<const uint8_t> data);
     static bool write_text_file_atomic(const fs::path& path, const std::string& content);

@@ -589,58 +589,97 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             std::string source_str = j.value("source_path", "");
             std::string rel_dir = j.value("dir", "");
             bool is_dir = j.value("is_dir", false);
+            while (!source_str.empty() && (std::isspace(static_cast<unsigned char>(source_str.front())) || source_str.front() == '"' || source_str.front() == '\'')) {
+                source_str.erase(0, 1);
+            }
+            while (!source_str.empty() && (std::isspace(static_cast<unsigned char>(source_str.back())) || source_str.back() == '"' || source_str.back() == '\'')) {
+                source_str.pop_back();
+            }
             if (source_str.empty()) {
                 send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"source_path required\"}");
                 return;
             }
-            fs::path src_path(source_str);
+            fs::path src_path = slug::platform::PathUtils::u8_to_path(source_str);
             if (!fs::exists(src_path)) {
                 send_resp(404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Đường dẫn không tồn tại trên máy.\"}");
                 return;
             }
 
             if (!fs::is_directory(src_path) && !is_dir) {
-                std::string filename = src_path.filename().string();
+                std::string filename = slug::platform::PathUtils::path_to_u8(src_path.filename());
                 std::string target_rel = rel_dir.empty() ? filename : (rel_dir + "/" + filename);
                 auto file_bytes = slug::platform::PathUtils::read_binary_file(src_path);
                 if (!file_bytes) {
                     send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Không thể đọc tệp từ máy.\"}");
                     return;
                 }
-                core::VfsStatus vfs_st = control_server_.vfs().write_file(target_rel, *file_bytes, current_session->role, true);
-                if (vfs_st == core::VfsStatus::FILTERED) {
+                auto up_res = control_server_.vfs().write_uploaded_file(target_rel, *file_bytes, current_session->role);
+                if (up_res.outcome == core::UploadCollisionOutcome::ALREADY_EXISTS) {
+                    control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_SKIP", up_res.target_virtual_path, "Tệp đã tồn tại với nội dung giống hệt (bỏ qua)");
+                    json res;
+                    res["status"] = "exists";
+                    res["filename"] = up_res.target_filename;
+                    res["message"] = "Tệp đã tồn tại trong workspace (nội dung giống hệt nhau - bỏ qua ghi đè).";
+                    send_resp(200, "OK", "application/json", res.dump());
+                    return;
+                }
+                if (up_res.status == core::VfsStatus::FILTERED) {
                     control_server_.audit_logger().log(current_session->identity, "AI_UPLOAD_BLOCKED", target_rel, "Blocked by Policy or AI Secret Guard", false);
                     send_resp(400, "Bad Request", "application/json", "{\"status\":\"blocked\",\"message\":\"Upload blocked by Policy or AI Secret Guard!\"}");
                     return;
                 }
-                if (vfs_st != core::VfsStatus::OK) {
-                    send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Lỗi ghi tệp VFS: " + core::vfs_status_to_string(vfs_st) + "\"}");
+                if (up_res.status != core::VfsStatus::OK) {
+                    send_resp(500, "Error", "application/json", "{\"status\":\"error\",\"message\":\"Lỗi ghi tệp VFS: " + core::vfs_status_to_string(up_res.status) + "\"}");
                     return;
                 }
-                control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_LOCAL", target_rel, "Uploaded native local file (" + std::to_string(file_bytes->size()) + " bytes)");
+                bool renamed = (up_res.outcome == core::UploadCollisionOutcome::RENAMED);
+                control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_LOCAL", up_res.target_virtual_path,
+                    renamed ? ("Uploaded native local file (renamed: " + up_res.target_filename + ", " + std::to_string(file_bytes->size()) + " bytes)")
+                            : ("Uploaded native local file (" + std::to_string(file_bytes->size()) + " bytes)"));
                 control_server_.invalidate_manifest_cache();
-                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"filename\":\"" + filename + "\",\"count\":1}");
+                json res;
+                res["status"] = "ok";
+                res["renamed"] = renamed;
+                res["filename"] = up_res.target_filename;
+                res["path"] = up_res.target_virtual_path;
+                res["count"] = 1;
+                send_resp(200, "OK", "application/json", res.dump());
                 return;
             } else {
                 int uploaded_count = 0;
-                std::string top_folder = src_path.filename().string();
+                int skipped_count = 0;
+                int renamed_count = 0;
+                std::string top_folder = slug::platform::PathUtils::path_to_u8(src_path.filename());
                 std::string base_target = rel_dir.empty() ? top_folder : (rel_dir + "/" + top_folder);
                 for (const auto& entry : fs::recursive_directory_iterator(src_path, fs::directory_options::skip_permission_denied)) {
                     if (entry.is_regular_file()) {
-                        auto rel_from_src = fs::relative(entry.path(), src_path).generic_string();
+                        auto rel_from_src = slug::platform::PathUtils::path_to_u8(fs::relative(entry.path(), src_path));
+                        std::replace(rel_from_src.begin(), rel_from_src.end(), '\\', '/');
                         std::string target_rel = base_target + "/" + rel_from_src;
                         auto file_bytes = slug::platform::PathUtils::read_binary_file(entry.path());
                         if (file_bytes) {
-                            core::VfsStatus vfs_st = control_server_.vfs().write_file(target_rel, *file_bytes, current_session->role, true);
-                            if (vfs_st == core::VfsStatus::OK) {
+                            auto up_res = control_server_.vfs().write_uploaded_file(target_rel, *file_bytes, current_session->role);
+                            if (up_res.outcome == core::UploadCollisionOutcome::ALREADY_EXISTS) {
+                                skipped_count++;
+                            } else if (up_res.status == core::VfsStatus::OK) {
                                 uploaded_count++;
+                                if (up_res.outcome == core::UploadCollisionOutcome::RENAMED) {
+                                    renamed_count++;
+                                }
                             }
                         }
                     }
                 }
-                control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_LOCAL_DIR", base_target, "Uploaded native directory (" + std::to_string(uploaded_count) + " files)");
+                control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_LOCAL_DIR", base_target,
+                    "Uploaded native directory (" + std::to_string(uploaded_count) + " files, " + std::to_string(skipped_count) + " skipped identical)");
                 control_server_.invalidate_manifest_cache();
-                send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"filename\":\"" + top_folder + "\",\"count\":" + std::to_string(uploaded_count) + "}");
+                json res;
+                res["status"] = "ok";
+                res["filename"] = top_folder;
+                res["count"] = uploaded_count;
+                res["skipped"] = skipped_count;
+                res["renamed"] = renamed_count;
+                send_resp(200, "OK", "application/json", res.dump());
                 return;
             }
         } catch (...) {
@@ -1789,7 +1828,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         }
         uint64_t file_sz = std::filesystem::file_size(vres.real_path, ec_sz);
 
-        std::string fname = fs::path(rel_path).filename().string();
+        std::string fname = slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(rel_path).filename());
         for (char& c : fname) {
             if (c == '\r' || c == '\n' || c == '"' || c == '\\') c = '_';
         }
@@ -1962,7 +2001,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
 
         zip_bytes.insert(zip_bytes.end(), eocd, eocd + 22);
 
-        std::string zip_name = norm_dir.empty() ? control_server_.workspace_root().filename().string() : fs::path(norm_dir).filename().string();
+        std::string zip_name = norm_dir.empty() ? slug::platform::PathUtils::path_to_u8(control_server_.workspace_root().filename()) : slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(norm_dir).filename());
         if (zip_name.empty()) zip_name = "workspace";
         for (char& c : zip_name) {
             if (c == '\r' || c == '\n' || c == '"' || c == '\\') c = '_';
@@ -2098,29 +2137,47 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         std::string target_rel = rel_dir.empty() ? file_name : (rel_dir + "/" + file_name);
 
         std::vector<uint8_t> bytes(req.body.begin(), req.body.end());
-        core::VfsStatus vfs_st = control_server_.vfs().write_file(target_rel, bytes, current_session->role, true);
+        auto up_res = control_server_.vfs().write_uploaded_file(target_rel, bytes, current_session->role);
 
-        if (vfs_st == core::VfsStatus::ACCESS_DENIED) {
+        if (up_res.outcome == core::UploadCollisionOutcome::ALREADY_EXISTS) {
+            control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD_SKIP", up_res.target_virtual_path, "Tệp đã tồn tại (nội dung trùng khớp)");
+            json res;
+            res["status"] = "exists";
+            res["filename"] = up_res.target_filename;
+            res["path"] = up_res.target_virtual_path;
+            res["message"] = "Tệp đã tồn tại trong workspace với nội dung giống hệt nhau (bỏ qua ghi đè).";
+            send_resp(200, "OK", "application/json", res.dump());
+            return;
+        }
+        if (up_res.status == core::VfsStatus::ACCESS_DENIED) {
             send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\",\"message\":\"Read-only role cannot upload.\"}");
             return;
         }
-        if (vfs_st == core::VfsStatus::PATH_TRAVERSAL) {
+        if (up_res.status == core::VfsStatus::PATH_TRAVERSAL) {
             send_resp(403, "Forbidden", "application/json", "{\"status\":\"error\",\"message\":\"Directory traversal rejected.\"}");
             return;
         }
-        if (vfs_st == core::VfsStatus::FILTERED) {
+        if (up_res.status == core::VfsStatus::FILTERED) {
             control_server_.audit_logger().log(current_session->identity, "AI_UPLOAD_BLOCKED", target_rel, "Blocked by Policy or AI Secret Guard", false);
             send_resp(400, "Bad Request", "application/json", "{\"status\":\"blocked\",\"message\":\"Upload blocked by Policy or AI Secret Guard!\"}");
             return;
         }
-        if (vfs_st != core::VfsStatus::OK) {
-            send_resp(500, "Internal Server Error", "application/json", "{\"status\":\"error\",\"message\":\"Failed to save file: " + core::vfs_status_to_string(vfs_st) + "\"}");
+        if (up_res.status != core::VfsStatus::OK) {
+            send_resp(500, "Internal Server Error", "application/json", "{\"status\":\"error\",\"message\":\"Failed to save file: " + core::vfs_status_to_string(up_res.status) + "\"}");
             return;
         }
 
-        control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD", target_rel, "File uploaded successfully (" + std::to_string(bytes.size()) + " bytes)");
+        bool renamed = (up_res.outcome == core::UploadCollisionOutcome::RENAMED);
+        control_server_.audit_logger().log(current_session->identity, "WEB_UPLOAD", up_res.target_virtual_path,
+            renamed ? ("File uploaded (renamed: " + up_res.target_filename + ", " + std::to_string(bytes.size()) + " bytes)")
+                    : ("File uploaded successfully (" + std::to_string(bytes.size()) + " bytes)"));
         control_server_.invalidate_manifest_cache();
-        send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"filename\":\"" + file_name + "\"}");
+        json res;
+        res["status"] = "ok";
+        res["renamed"] = renamed;
+        res["filename"] = up_res.target_filename;
+        res["path"] = up_res.target_virtual_path;
+        send_resp(200, "OK", "application/json", res.dump());
         return;
     }
 

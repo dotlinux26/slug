@@ -2607,7 +2607,7 @@ int cmd_get(int argc, char* argv[]) {
     while (!remote_path.empty() && remote_path.front() == '/') remote_path.erase(0, 1);
 
     if (local_dest.empty() && !remote_path.empty()) {
-        local_dest = std::filesystem::path(remote_path).filename().string();
+        local_dest = slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(remote_path).filename());
     }
 
     net::SlugClient client;
@@ -2892,7 +2892,7 @@ int cmd_push(int argc, char* argv[]) {
     }
 
     if (remote_dest.empty()) {
-        remote_dest = std::filesystem::path(local_file).filename().string();
+        remote_dest = slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(local_file).filename());
     }
 
     net::SlugClient client;

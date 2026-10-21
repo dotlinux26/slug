@@ -553,15 +553,15 @@ bool SlugClient::stream_pull_file(const std::string& remote_path,
     // Resolve destination path
     fs::path final_dest = local_dest;
     if (final_dest.empty()) {
-        final_dest = fs::path(norm_remote).filename();
+        final_dest = platform::PathUtils::u8_to_path(norm_remote).filename();
     } else if (fs::is_directory(final_dest)) {
-        final_dest = final_dest / fs::path(norm_remote).filename();
+        final_dest = final_dest / platform::PathUtils::u8_to_path(norm_remote).filename();
     }
 
     platform::PathUtils::ensure_directory(final_dest.parent_path());
 
     // Temporary download file (.slug_tmp.<tid>)
-    fs::path temp_dest = final_dest.parent_path() / (final_dest.filename().string() + ".slug_tmp." + std::to_string(tmp_id));
+    fs::path temp_dest = final_dest.parent_path() / (platform::PathUtils::path_to_u8(final_dest.filename()) + ".slug_tmp." + std::to_string(tmp_id));
 
     // If partial ranges and base file exists, copy existing file as base
     if (!ranges.empty() && fs::exists(final_dest)) {
@@ -674,6 +674,13 @@ bool SlugClient::stream_push_file(const fs::path& local_file,
     }
 
     const auto& resp = *resp_opt;
+    if (resp.value("status", "") == "exists") {
+        // Remote already has identical file content: finish instantly!
+        if (progress_cb) {
+            progress_cb(file_size, file_size, 0.0);
+        }
+        return true;
+    }
     if (resp.value("status", "") != "ok") {
         last_error_ = resp.value("message", "Server rejected stream push");
         return false;
