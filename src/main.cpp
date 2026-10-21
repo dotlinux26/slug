@@ -3185,7 +3185,7 @@ static std::string pick_file_native() {
     return slug::platform::NativeDialog::pick_file_native();
 }
 
-static std::string save_file_native(const std::string& default_filename = "") {
+[[maybe_unused]] static std::string save_file_native(const std::string& default_filename = "") {
     return slug::platform::NativeDialog::save_file_native(default_filename);
 }
 

@@ -25,7 +25,7 @@ namespace slug::platform {
 
 class NativeDialog {
 public:
-    static std::string pick_folder_native(const std::wstring& title = L"Slug: Chọn Thư Mục", const std::string& posix_title = "Slug: Chọn Thư Mục") {
+    static std::string pick_folder_native([[maybe_unused]] const std::wstring& title = L"Slug: Chọn Thư Mục", const std::string& posix_title = "Slug: Chọn Thư Mục") {
 #if defined(SLUG_PLATFORM_WINDOWS)
         std::string result = "";
         HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -100,7 +100,7 @@ public:
 #endif
     }
 
-    static std::string pick_file_native(const std::wstring& title = L"Slug: Chọn Tệp Tin") {
+    static std::string pick_file_native([[maybe_unused]] const std::wstring& title = L"Slug: Chọn Tệp Tin") {
 #if defined(SLUG_PLATFORM_WINDOWS)
         std::string result = "";
         HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -171,7 +171,7 @@ public:
 #endif
     }
 
-    static std::string save_file_native(const std::string& default_filename, const std::wstring& title = L"Slug: Chọn Nơi Lưu Tệp Tin") {
+    static std::string save_file_native([[maybe_unused]] const std::string& default_filename, [[maybe_unused]] const std::wstring& title = L"Slug: Chọn Nơi Lưu Tệp Tin") {
 #if defined(SLUG_PLATFORM_WINDOWS)
         std::string result = "";
         HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);

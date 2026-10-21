@@ -2,6 +2,7 @@
 #include "src/platform/platform.hpp"
 #include <fstream>
 #include <algorithm>
+#include <cstring>
 #include <system_error>
 #include <random>
 #include <set>
