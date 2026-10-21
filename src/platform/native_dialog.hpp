@@ -2,6 +2,8 @@
 
 #include <string>
 #include <filesystem>
+#include <thread>
+#include "src/core/logger.hpp"
 
 #if defined(_WIN32) || defined(_WIN64)
 #  ifndef SLUG_PLATFORM_WINDOWS
@@ -11,6 +13,7 @@
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
+#  include <ole2.h>
 #  include <shobjidl.h>
 #  include <shellapi.h>
 #elif defined(__linux__) || defined(__unix__) || defined(__APPLE__)
@@ -28,44 +31,55 @@ public:
     static std::string pick_folder_native([[maybe_unused]] const std::wstring& title = L"Slug: Chọn Thư Mục", const std::string& posix_title = "Slug: Chọn Thư Mục") {
 #if defined(SLUG_PLATFORM_WINDOWS)
         std::string result = "";
-        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        bool need_uninit = SUCCEEDED(hr);
+        std::thread t([&]() {
+            try {
+                HRESULT hr = OleInitialize(NULL);
+                bool need_uninit = SUCCEEDED(hr);
 
-        IFileOpenDialog* pFileOpen = nullptr;
-        hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-        if (SUCCEEDED(hr)) {
-            DWORD dwOptions = 0;
-            if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
-                pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-            }
-            pFileOpen->SetTitle(title.c_str());
-            HWND hwndOwner = GetForegroundWindow();
-            if (!hwndOwner) hwndOwner = GetActiveWindow();
-            if (hwndOwner) {
-                SetForegroundWindow(hwndOwner);
-                BringWindowToTop(hwndOwner);
-            }
-            hr = pFileOpen->Show(hwndOwner);
-            if (SUCCEEDED(hr)) {
-                IShellItem* pItem = nullptr;
-                hr = pFileOpen->GetResult(&pItem);
+                IFileOpenDialog* pFileOpen = nullptr;
+                hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
                 if (SUCCEEDED(hr)) {
-                    PWSTR pszFilePath = nullptr;
-                    hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-                    if (SUCCEEDED(hr)) {
-                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
-                        if (size_needed > 0) {
-                            result.resize(size_needed - 1);
-                            WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
-                        }
-                        CoTaskMemFree(pszFilePath);
+                    DWORD dwOptions = 0;
+                    if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+                        pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
                     }
-                    pItem->Release();
+                    pFileOpen->SetTitle(title.c_str());
+                    HWND hwndOwner = GetForegroundWindow();
+                    if (!hwndOwner) hwndOwner = GetActiveWindow();
+                    if (hwndOwner) {
+                        SetForegroundWindow(hwndOwner);
+                        BringWindowToTop(hwndOwner);
+                    }
+                    hr = pFileOpen->Show(hwndOwner);
+                    if (SUCCEEDED(hr)) {
+                        IShellItem* pItem = nullptr;
+                        hr = pFileOpen->GetResult(&pItem);
+                        if (SUCCEEDED(hr)) {
+                            PWSTR pszFilePath = nullptr;
+                            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                            if (SUCCEEDED(hr)) {
+                                int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                                if (size_needed > 0) {
+                                    result.resize(size_needed - 1);
+                                    WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                                }
+                                CoTaskMemFree(pszFilePath);
+                            }
+                            pItem->Release();
+                        }
+                    }
+                    pFileOpen->Release();
+                } else {
+                    SLUG_LOG_ERROR("NativeDialog::pick_folder_native CoCreateInstance failed hr=0x" << std::hex << hr);
                 }
+                if (need_uninit) OleUninitialize();
+            } catch (const std::exception& e) {
+                SLUG_LOG_ERROR("NativeDialog::pick_folder_native exception: " << e.what());
+            } catch (...) {
+                SLUG_LOG_ERROR("NativeDialog::pick_folder_native unknown exception");
             }
-            pFileOpen->Release();
-        }
-        if (need_uninit) CoUninitialize();
+        });
+        if (t.joinable()) t.join();
         return result;
 #elif defined(SLUG_PLATFORM_POSIX)
         std::string chosen_path = "";
@@ -103,44 +117,55 @@ public:
     static std::string pick_file_native([[maybe_unused]] const std::wstring& title = L"Slug: Chọn Tệp Tin") {
 #if defined(SLUG_PLATFORM_WINDOWS)
         std::string result = "";
-        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        bool need_uninit = SUCCEEDED(hr);
+        std::thread t([&]() {
+            try {
+                HRESULT hr = OleInitialize(NULL);
+                bool need_uninit = SUCCEEDED(hr);
 
-        IFileOpenDialog* pFileOpen = nullptr;
-        hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-        if (SUCCEEDED(hr)) {
-            DWORD dwOptions = 0;
-            if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
-                pFileOpen->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
-            }
-            pFileOpen->SetTitle(title.c_str());
-            HWND hwndOwner = GetForegroundWindow();
-            if (!hwndOwner) hwndOwner = GetActiveWindow();
-            if (hwndOwner) {
-                SetForegroundWindow(hwndOwner);
-                BringWindowToTop(hwndOwner);
-            }
-            hr = pFileOpen->Show(hwndOwner);
-            if (SUCCEEDED(hr)) {
-                IShellItem* pItem = nullptr;
-                hr = pFileOpen->GetResult(&pItem);
+                IFileOpenDialog* pFileOpen = nullptr;
+                hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
                 if (SUCCEEDED(hr)) {
-                    PWSTR pszFilePath = nullptr;
-                    hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-                    if (SUCCEEDED(hr)) {
-                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
-                        if (size_needed > 0) {
-                            result.resize(size_needed - 1);
-                            WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
-                        }
-                        CoTaskMemFree(pszFilePath);
+                    DWORD dwOptions = 0;
+                    if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+                        pFileOpen->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
                     }
-                    pItem->Release();
+                    pFileOpen->SetTitle(title.c_str());
+                    HWND hwndOwner = GetForegroundWindow();
+                    if (!hwndOwner) hwndOwner = GetActiveWindow();
+                    if (hwndOwner) {
+                        SetForegroundWindow(hwndOwner);
+                        BringWindowToTop(hwndOwner);
+                    }
+                    hr = pFileOpen->Show(hwndOwner);
+                    if (SUCCEEDED(hr)) {
+                        IShellItem* pItem = nullptr;
+                        hr = pFileOpen->GetResult(&pItem);
+                        if (SUCCEEDED(hr)) {
+                            PWSTR pszFilePath = nullptr;
+                            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                            if (SUCCEEDED(hr)) {
+                                int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                                if (size_needed > 0) {
+                                    result.resize(size_needed - 1);
+                                    WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                                }
+                                CoTaskMemFree(pszFilePath);
+                            }
+                            pItem->Release();
+                        }
+                    }
+                    pFileOpen->Release();
+                } else {
+                    SLUG_LOG_ERROR("NativeDialog::pick_file_native CoCreateInstance failed hr=0x" << std::hex << hr);
                 }
+                if (need_uninit) OleUninitialize();
+            } catch (const std::exception& e) {
+                SLUG_LOG_ERROR("NativeDialog::pick_file_native exception: " << e.what());
+            } catch (...) {
+                SLUG_LOG_ERROR("NativeDialog::pick_file_native unknown exception");
             }
-            pFileOpen->Release();
-        }
-        if (need_uninit) CoUninitialize();
+        });
+        if (t.joinable()) t.join();
         return result;
 #elif defined(SLUG_PLATFORM_POSIX)
         std::string chosen_path = "";
@@ -174,52 +199,63 @@ public:
     static std::string save_file_native([[maybe_unused]] const std::string& default_filename, [[maybe_unused]] const std::wstring& title = L"Slug: Chọn Nơi Lưu Tệp Tin") {
 #if defined(SLUG_PLATFORM_WINDOWS)
         std::string result = "";
-        HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        bool need_uninit = SUCCEEDED(hr);
+        std::thread t([&]() {
+            try {
+                HRESULT hr = OleInitialize(NULL);
+                bool need_uninit = SUCCEEDED(hr);
 
-        IFileSaveDialog* pFileSave = nullptr;
-        hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_ALL, IID_IFileSaveDialog, reinterpret_cast<void**>(&pFileSave));
-        if (SUCCEEDED(hr)) {
-            DWORD dwOptions = 0;
-            if (SUCCEEDED(pFileSave->GetOptions(&dwOptions))) {
-                pFileSave->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
-            }
-            pFileSave->SetTitle(title.c_str());
-            if (!default_filename.empty()) {
-                int wlen = MultiByteToWideChar(CP_UTF8, 0, default_filename.c_str(), -1, NULL, 0);
-                if (wlen > 0) {
-                    std::wstring wname(wlen - 1, L'\0');
-                    MultiByteToWideChar(CP_UTF8, 0, default_filename.c_str(), -1, &wname[0], wlen);
-                    pFileSave->SetFileName(wname.c_str());
-                }
-            }
-            HWND hwndOwner = GetForegroundWindow();
-            if (!hwndOwner) hwndOwner = GetActiveWindow();
-            if (hwndOwner) {
-                SetForegroundWindow(hwndOwner);
-                BringWindowToTop(hwndOwner);
-            }
-            hr = pFileSave->Show(hwndOwner);
-            if (SUCCEEDED(hr)) {
-                IShellItem* pItem = nullptr;
-                hr = pFileSave->GetResult(&pItem);
+                IFileSaveDialog* pFileSave = nullptr;
+                hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_INPROC_SERVER, IID_IFileSaveDialog, reinterpret_cast<void**>(&pFileSave));
                 if (SUCCEEDED(hr)) {
-                    PWSTR pszFilePath = nullptr;
-                    hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-                    if (SUCCEEDED(hr)) {
-                        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
-                        if (size_needed > 0) {
-                            result.resize(size_needed - 1);
-                            WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
-                        }
-                        CoTaskMemFree(pszFilePath);
+                    DWORD dwOptions = 0;
+                    if (SUCCEEDED(pFileSave->GetOptions(&dwOptions))) {
+                        pFileSave->SetOptions(dwOptions | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT);
                     }
-                    pItem->Release();
+                    pFileSave->SetTitle(title.c_str());
+                    if (!default_filename.empty()) {
+                        int wlen = MultiByteToWideChar(CP_UTF8, 0, default_filename.c_str(), -1, NULL, 0);
+                        if (wlen > 0) {
+                            std::wstring wname(wlen - 1, L'\0');
+                            MultiByteToWideChar(CP_UTF8, 0, default_filename.c_str(), -1, &wname[0], wlen);
+                            pFileSave->SetFileName(wname.c_str());
+                        }
+                    }
+                    HWND hwndOwner = GetForegroundWindow();
+                    if (!hwndOwner) hwndOwner = GetActiveWindow();
+                    if (hwndOwner) {
+                        SetForegroundWindow(hwndOwner);
+                        BringWindowToTop(hwndOwner);
+                    }
+                    hr = pFileSave->Show(hwndOwner);
+                    if (SUCCEEDED(hr)) {
+                        IShellItem* pItem = nullptr;
+                        hr = pFileSave->GetResult(&pItem);
+                        if (SUCCEEDED(hr)) {
+                            PWSTR pszFilePath = nullptr;
+                            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                            if (SUCCEEDED(hr)) {
+                                int size_needed = WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, NULL, 0, NULL, NULL);
+                                if (size_needed > 0) {
+                                    result.resize(size_needed - 1);
+                                    WideCharToMultiByte(CP_UTF8, 0, pszFilePath, -1, &result[0], size_needed, NULL, NULL);
+                                }
+                                CoTaskMemFree(pszFilePath);
+                            }
+                            pItem->Release();
+                        }
+                    }
+                    pFileSave->Release();
+                } else {
+                    SLUG_LOG_ERROR("NativeDialog::save_file_native CoCreateInstance failed hr=0x" << std::hex << hr);
                 }
+                if (need_uninit) OleUninitialize();
+            } catch (const std::exception& e) {
+                SLUG_LOG_ERROR("NativeDialog::save_file_native exception: " << e.what());
+            } catch (...) {
+                SLUG_LOG_ERROR("NativeDialog::save_file_native unknown exception");
             }
-            pFileSave->Release();
-        }
-        if (need_uninit) CoUninitialize();
+        });
+        if (t.joinable()) t.join();
         return result;
 #elif defined(SLUG_PLATFORM_POSIX)
         std::string chosen_path = "";

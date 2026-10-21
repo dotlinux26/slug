@@ -1,6 +1,7 @@
 #include "src/core/workspace.hpp"
 #include "src/core/connection_manager.hpp"
 #include "src/core/utils.hpp"
+#include "src/core/logger.hpp"
 #include "src/core/acl.hpp"
 #include "src/crypto/blake3_wrapper.hpp"
 #include "src/policy/rules.hpp"
@@ -6193,54 +6194,77 @@ int cmd_uninstall(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
+    slug::core::Logger::instance().init();
     platform::initialize_network();
 
-    if (argc < 2) {
-        return cmd_portal(argc, argv);
+    std::string arg_summary;
+    for (int i = 0; i < argc; ++i) {
+        if (i > 0) arg_summary += " ";
+        arg_summary += argv[i];
     }
+    SLUG_LOG_INFO("Process started: " << arg_summary);
 
-    std::string cmd = argv[1];
+    int exit_code = 0;
+    try {
+        if (argc < 2) {
+            exit_code = cmd_portal(argc, argv);
+        } else {
+            std::string cmd = argv[1];
 
-    if (cmd == "portal" || cmd == "web" || cmd == "ui") return cmd_portal(argc, argv);
-    if (cmd == "config") return cmd_config(argc, argv);
-    if (cmd == "shortcut") return cmd_shortcut(argc, argv);
-    if (cmd == "host" || cmd == "add") return cmd_add(argc, argv);
-    if (cmd == "status") return cmd_status(argc, argv);
-    if (cmd == "serve" || cmd == "server" || cmd == "inspect") return cmd_serve(argc, argv);
-    if (cmd == "totp") return cmd_totp(argc, argv);
-    if (cmd == "stop") return cmd_stop(argc, argv);
-    if (cmd == "connect") return cmd_connect(argc, argv);
-    if (cmd == "conn" || cmd == "connections") return cmd_conn(argc, argv);
-    if (cmd == "set") return cmd_set(argc, argv);
-    if (cmd == "list" || cmd == "ls") return cmd_list(argc, argv);
-    if (cmd == "pull") return cmd_pull(argc, argv);
-    if (cmd == "push") return cmd_push(argc, argv);
-    if (cmd == "user") return cmd_user(argc, argv);
-    if (cmd == "session" || cmd == "sessions") return cmd_session(argc, argv);
-    if (cmd == "rule") return cmd_rule(argc, argv);
-    if (cmd == "audit") return cmd_audit(argc, argv);
-    if (cmd == "env") return cmd_env(argc, argv);
-    if (cmd == "bench" || cmd == "benchmark") return cmd_bench(argc, argv);
-    if (cmd == "--internal-list-ports") {
-        auto list = core::WorkspaceManager::load_registry();
-        for (size_t i = 0; i < list.size(); ++i) {
-            std::cout << list[i].port << (i + 1 < list.size() ? " " : "");
+            if (cmd == "portal" || cmd == "web" || cmd == "ui") exit_code = cmd_portal(argc, argv);
+            else if (cmd == "config") exit_code = cmd_config(argc, argv);
+            else if (cmd == "shortcut") exit_code = cmd_shortcut(argc, argv);
+            else if (cmd == "host" || cmd == "add") exit_code = cmd_add(argc, argv);
+            else if (cmd == "status") exit_code = cmd_status(argc, argv);
+            else if (cmd == "serve" || cmd == "server" || cmd == "inspect") exit_code = cmd_serve(argc, argv);
+            else if (cmd == "totp") exit_code = cmd_totp(argc, argv);
+            else if (cmd == "stop") exit_code = cmd_stop(argc, argv);
+            else if (cmd == "connect") exit_code = cmd_connect(argc, argv);
+            else if (cmd == "conn" || cmd == "connections") exit_code = cmd_conn(argc, argv);
+            else if (cmd == "set") exit_code = cmd_set(argc, argv);
+            else if (cmd == "list" || cmd == "ls") exit_code = cmd_list(argc, argv);
+            else if (cmd == "pull") exit_code = cmd_pull(argc, argv);
+            else if (cmd == "push") exit_code = cmd_push(argc, argv);
+            else if (cmd == "user") exit_code = cmd_user(argc, argv);
+            else if (cmd == "session" || cmd == "sessions") exit_code = cmd_session(argc, argv);
+            else if (cmd == "rule") exit_code = cmd_rule(argc, argv);
+            else if (cmd == "audit") exit_code = cmd_audit(argc, argv);
+            else if (cmd == "env") exit_code = cmd_env(argc, argv);
+            else if (cmd == "bench" || cmd == "benchmark") exit_code = cmd_bench(argc, argv);
+            else if (cmd == "--internal-list-ports") {
+                auto list = core::WorkspaceManager::load_registry();
+                for (size_t i = 0; i < list.size(); ++i) {
+                    std::cout << list[i].port << (i + 1 < list.size() ? " " : "");
+                }
+                std::cout << std::endl;
+                exit_code = 0;
+            }
+            else if (cmd == "get") exit_code = cmd_get(argc, argv);
+            else if (cmd == "completion") exit_code = cmd_completion(argc, argv);
+            else if (cmd == "version" || cmd == "-v" || cmd == "--version") {
+                std::cout << "Slug 1.0.0 (Linux/Windows/macOS x86_64, Post-Quantum Suites 1-3, Apache-2.0)" << std::endl;
+                exit_code = 0;
+            }
+            else if (cmd == "help" || cmd == "-h" || cmd == "--help") {
+                print_help();
+                exit_code = 0;
+            }
+            else {
+                std::cerr << "Unknown command: " << cmd << ". Run 'slug help' for usage." << std::endl;
+                exit_code = 1;
+            }
         }
-        std::cout << std::endl;
-        return 0;
-    }
-    if (cmd == "get") return cmd_get(argc, argv);
-    if (cmd == "completion") return cmd_completion(argc, argv);
-    if (cmd == "version" || cmd == "-v" || cmd == "--version") {
-        std::cout << "Slug 1.0.0 (Linux/Windows/macOS x86_64, Post-Quantum Suites 1-3, Apache-2.0)" << std::endl;
-        return 0;
-    }
-    if (cmd == "help" || cmd == "-h" || cmd == "--help") {
-        print_help();
-        return 0;
+    } catch (const std::exception& ex) {
+        SLUG_LOG_FATAL("Unhandled std::exception in main: " << ex.what());
+        std::cerr << "[-] Fatal error: " << ex.what() << std::endl;
+        exit_code = 1;
+    } catch (...) {
+        SLUG_LOG_FATAL("Unhandled unknown fatal exception in main");
+        std::cerr << "[-] Fatal error: unknown exception" << std::endl;
+        exit_code = 1;
     }
 
-    std::cerr << "Unknown command: " << cmd << ". Run 'slug help' for usage." << std::endl;
+    SLUG_LOG_INFO("Process exiting with code " << exit_code);
     platform::cleanup_network();
-    return 1;
+    return exit_code;
 }
