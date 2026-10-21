@@ -131,6 +131,7 @@ private:
     core::SuiteID suite_id_;
     uint64_t cert_ttl_;
     bool enable_ai_;
+    core::FilterMode filter_mode_{core::FilterMode::PROTECTED};
     core::FilterLevel filter_level_{core::FilterLevel::LEVEL_2_REGEX};
     core::AiModelProvider ai_provider_{core::AiModelProvider::OLLAMA};
     uint32_t totp_step_{60};
@@ -143,7 +144,6 @@ private:
     std::unique_ptr<std::thread> worker_thread_;
 
     std::unique_ptr<crypto::ICryptoSuite> suite_;
-    core::FilterMode filter_mode_{core::FilterMode::PROTECTED};
     crypto::TotpManager totp_manager_;
     core::AclManager acl_manager_;
     core::AuditLogger audit_logger_;

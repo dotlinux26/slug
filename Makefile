@@ -20,6 +20,7 @@ SRC_CXX = src/main.cpp \
           src/platform/fs.cpp \
           src/platform/process.cpp \
           src/core/utils.cpp \
+          src/core/logger.cpp \
           src/core/acl.cpp \
           src/core/audit.cpp \
           src/core/workspace.cpp \
