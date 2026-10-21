@@ -399,6 +399,12 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         return;
     }
 
+    // Direct redirect to local loopback portal
+    if (path == "/portal") {
+        send_resp(302, "Found", "text/html", "", "Location: http://127.0.0.1:8081/portal\r\n");
+        return;
+    }
+
     // Local loopback status query for host CLI (slug status, slug totp, slug web)
     if (path == "/api/status" && is_localhost) {
         json j;
@@ -484,11 +490,6 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         }
     }
 
-    // Authenticated endpoints:
-    if (path == "/portal") {
-        send_resp(302, "Found", "text/html", "", "Location: /portal\r\n");
-        return;
-    }
 
     // Native OS file / folder pickers and openers (Available on localhost)
     if (path == "/api/fs/pick-folder") {
