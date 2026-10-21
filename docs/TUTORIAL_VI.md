@@ -1,7 +1,7 @@
 # Slug - Hướng Dẫn Sử Dụng & Triển Khai Toàn Diện (Tiếng Việt)
 
 > **Slug: Chia Sẻ & Đồng Bộ Workspace Bảo Mật P2P, Mật Mã Hậu Lượng Tử (Post-Quantum)**  
-> Giấy phép: Apache-2.0 | Kiến trúc: C++20 Portable, Độc lập runtime (Zero-Dependency Static Binary ~8.4 MB)
+> Giấy phép: Apache-2.0 | Kiến trúc: C++20 Portable, Độc lập runtime (Zero-Dependency Static Binary ~10MB)
 
 ---
 
@@ -83,7 +83,7 @@ slug
 slug portal
 ```
 Slug sẽ tự động:
-1. Kích hoạt Web Viewing Engine trên loopback cục bộ `http://127.0.0.1:8080/` (tự động tịnh tiến cổng nếu 8080 bận).
+1. Kích hoạt Web Viewing Engine trên loopback cục bộ `http://127.0.0.1:8081/` (tự động tịnh tiến cổng nếu 8081 bận).
 2. Tự động mở trình duyệt web mặc định của bạn.
 3. Toàn bộ lưu lượng truyền tải từ xa qua mạng LAN/Internet đều là các gói nhị phân PQC đã mã hóa, hoàn toàn **Zero Remote HTTP**.
 
@@ -158,7 +158,7 @@ Mở giao diện Web Viewing Engine cục bộ:
 ```bash
 slug
 ```
-Trình duyệt tự mở `http://127.0.0.1:8080/`. Nhập IP `192.168.1.105:9443` và mã OTP `12822565` -> Bấm **Kết Nối Nhanh** -> Vào **Tab 3: Web Dropbox Explorer** để duyệt tệp hoặc nhấn **Tải Toàn Bộ Thư Mục (ZIP)**.
+Trình duyệt tự mở `http://127.0.0.1:8081/`. Nhập IP `192.168.1.105:9443` và mã OTP `12822565` -> Bấm **Kết Nối Nhanh** -> Vào **Tab 3: Web Dropbox Explorer** để duyệt tệp hoặc nhấn **Tải Toàn Bộ Thư Mục (ZIP)**.
 
 ---
 
@@ -288,7 +288,7 @@ Kết quả đo đạc thực tế trên CPU phổ thông:
 
 | Lệnh CLI | Chức năng chính |
 | :--- | :--- |
-| `slug` | Mở ngay Web Viewing Engine trên `http://127.0.0.1:8080/` (Aliases: `slug portal`, `slug web`) |
+| `slug` | Mở ngay Web Viewing Engine trên `http://127.0.0.1:8081/` (Aliases: `slug portal`, `slug web`) |
 | `slug shortcut` | Tạo lối tắt Desktop Windows (`Slug Workspace.lnk`) mở 1-chạm ẩn cửa sổ console |
 | `slug host <path>` | Khởi tạo trạm host (hỗ trợ `--filter-level <0-4>`, `--ai-model <provider>`, `--otp-step`, `--workspace-ttl`, `-d`) |
 | `slug status` | Xem danh sách các workspace đang host, cổng, PID và trạng thái OTP |

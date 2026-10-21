@@ -486,7 +486,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
 
     // Authenticated endpoints:
     if (path == "/portal") {
-        send_resp(302, "Found", "text/html", "", "Location: http://127.0.0.1:8080/portal\r\n");
+        send_resp(302, "Found", "text/html", "", "Location: /portal\r\n");
         return;
     }
 
@@ -2094,7 +2094,7 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Missing filename.\"}");
             return;
         }
-        file_name = fs::path(file_name).filename().string();
+        file_name = platform::PathUtils::path_to_u8(platform::PathUtils::u8_to_path(file_name).filename());
         std::string target_rel = rel_dir.empty() ? file_name : (rel_dir + "/" + file_name);
 
         std::vector<uint8_t> bytes(req.body.begin(), req.body.end());
@@ -2154,8 +2154,15 @@ static bool parse_http_raw(platform::TcpSocket& client, HttpRequest& req, const 
     std::string line;
     if (!std::getline(h_stream, line)) return false;
 
-    std::istringstream req_line(line);
-    req_line >> req.method >> req.uri;
+    size_t first_sp = line.find(' ');
+    size_t last_sp = line.rfind(' ');
+    if (first_sp != std::string::npos && last_sp != std::string::npos && last_sp > first_sp) {
+        req.method = line.substr(0, first_sp);
+        req.uri = line.substr(first_sp + 1, last_sp - first_sp - 1);
+    } else {
+        std::istringstream req_line(line);
+        req_line >> req.method >> req.uri;
+    }
     size_t qmark = req.uri.find('?');
     if (qmark != std::string::npos) {
         req.path = req.uri.substr(0, qmark);
@@ -2230,8 +2237,15 @@ static bool parse_http_from_string(const std::string& raw, HttpRequest& req) {
     std::string line;
     if (!std::getline(h_stream, line)) return false;
 
-    std::istringstream req_line(line);
-    req_line >> req.method >> req.uri;
+    size_t first_sp = line.find(' ');
+    size_t last_sp = line.rfind(' ');
+    if (first_sp != std::string::npos && last_sp != std::string::npos && last_sp > first_sp) {
+        req.method = line.substr(0, first_sp);
+        req.uri = line.substr(first_sp + 1, last_sp - first_sp - 1);
+    } else {
+        std::istringstream req_line(line);
+        req_line >> req.method >> req.uri;
+    }
     size_t qmark = req.uri.find('?');
     if (qmark != std::string::npos) {
         req.path = req.uri.substr(0, qmark);

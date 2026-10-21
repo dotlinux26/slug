@@ -20,6 +20,12 @@ public:
     // Validates that all path components contain only portable, cross-platform valid characters (blocks <>:"|?* and controls)
     static bool is_valid_portable_path(const std::string& path_str);
 
+    // UTF-8 string to std::filesystem::path conversion (cross-platform, handles Windows Unicode)
+    static fs::path u8_to_path(std::string_view utf8_str);
+
+    // std::filesystem::path to UTF-8 string conversion (cross-platform, handles Windows Unicode)
+    static std::string path_to_u8(const fs::path& p);
+
     // Normalizes path separators to forward slashes for cross-platform protocol consistency
     static std::string to_protocol_path(const fs::path& relative_path);
 

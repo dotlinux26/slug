@@ -7,7 +7,7 @@
 +-----------------------------------------------------------------------------------+
 | LAYER 1: PRESENTATION & UX LAYER (Tầng Giao Diện)                                 |
 |  ├── CLI Dispatcher (src/main.cpp)      : Parse POSIX commands/flags, ANSI render |
-|  ├── Loopback Web Viewing Engine        : Zero Remote HTTP (127.0.0.1:8080)       |
+|  ├── Loopback Web Viewing Engine        : Zero Remote HTTP (127.0.0.1:8081)       |
 |  └── Web Assets (src/net/web_assets.hpp): Techno B2B UI (HTML/CSS/JS, JetBrains)  |
 +-----------------------------------------+-----------------------------------------+
                                           | (Standardized Struct Requests)
@@ -63,7 +63,7 @@
    - Chiều Server -> Client: Nonce = ServerToClient_Salt || tx_seq.
    - AAD = [Len (4B) || SeqNum (8B)] bảo vệ toàn vẹn Header.
    - Bộ lọc `AntiReplaySlidingWindow` (64-bit) ở phía nhận ngăn chặn tấn công phát lại.
-3. **Zero Remote HTTP Architecture:** Không mở cổng Web HTTP ra ngoài Internet. Giao diện Web chạy cục bộ trên loopback `127.0.0.1:8080/` và chuyển tiếp các thao tác qua kết nối nhị phân PQC.
+3. **Zero Remote HTTP Architecture:** Không mở cổng Web HTTP ra ngoài Internet. Giao diện Web chạy cục bộ trên loopback `127.0.0.1:8081/` và chuyển tiếp các thao tác qua kết nối nhị phân PQC.
 
 ### Chốt chặn 2: Tầng Hệ Thống Tập Tin Ảo `SlugVFS` (Layer 3)
 1. **Jail & Path Traversal Prevention:**

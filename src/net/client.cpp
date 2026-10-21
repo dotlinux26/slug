@@ -636,14 +636,14 @@ bool SlugClient::stream_push_file(const fs::path& local_file,
 
     std::error_code ec;
     if (!fs::exists(local_file, ec) || fs::is_directory(local_file, ec)) {
-        last_error_ = "Local file does not exist or is a directory: " + local_file.string();
+        last_error_ = "Local file does not exist or is a directory: " + platform::PathUtils::path_to_u8(local_file);
         return false;
     }
 
     uint64_t file_size = fs::file_size(local_file, ec);
     auto hash_opt = crypto::Blake3::hash_file(local_file);
     if (!hash_opt) {
-        last_error_ = "Failed to compute BLAKE3 hash for " + local_file.string();
+        last_error_ = "Failed to compute BLAKE3 hash for " + platform::PathUtils::path_to_u8(local_file);
         return false;
     }
     std::string file_hash = *hash_opt;
@@ -681,7 +681,7 @@ bool SlugClient::stream_push_file(const fs::path& local_file,
 
     std::ifstream src(local_file, std::ios::binary);
     if (!src.is_open()) {
-        last_error_ = "Cannot open local file for reading: " + local_file.string();
+        last_error_ = "Cannot open local file for reading: " + platform::PathUtils::path_to_u8(local_file);
         return false;
     }
 

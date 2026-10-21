@@ -8,8 +8,38 @@
 
 namespace slug::platform {
 
+fs::path PathUtils::u8_to_path(std::string_view utf8_str) {
+    if (utf8_str.empty()) return fs::path();
+#if defined(SLUG_PLATFORM_WINDOWS)
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8_str.data(), static_cast<int>(utf8_str.size()), nullptr, 0);
+    if (wlen <= 0) {
+        return fs::path(std::string(utf8_str));
+    }
+    std::wstring wstr(wlen, 0);
+    MultiByteToWideChar(CP_UTF8, 0, utf8_str.data(), static_cast<int>(utf8_str.size()), wstr.data(), wlen);
+    return fs::path(wstr);
+#else
+    return fs::path(utf8_str);
+#endif
+}
+
+std::string PathUtils::path_to_u8(const fs::path& p) {
+#if defined(SLUG_PLATFORM_WINDOWS)
+    std::wstring wstr = p.wstring();
+    if (wstr.empty()) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()), nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return p.string();
+    std::string u8(len, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()), u8.data(), len, nullptr, nullptr);
+    return u8;
+#else
+    return p.string();
+#endif
+}
+
 std::string PathUtils::to_protocol_path(const fs::path& relative_path) {
-    std::string s = relative_path.generic_string();
+    std::string s = path_to_u8(relative_path);
+    std::replace(s.begin(), s.end(), '\\', '/');
     while (!s.empty() && (s.front() == '/' || s.front() == '.')) {
         if (s.rfind("./", 0) == 0) {
             s = s.substr(2);
@@ -23,12 +53,12 @@ std::string PathUtils::to_protocol_path(const fs::path& relative_path) {
 }
 
 fs::path PathUtils::from_protocol_path(const std::string& protocol_path) {
-    return fs::path(protocol_path);
+    return u8_to_path(protocol_path);
 }
 
 bool PathUtils::is_internal_slug_path(const fs::path& path) {
     for (const auto& part : path) {
-        std::string s = part.string();
+        std::string s = path_to_u8(part);
         if (s == ".slug" || s == ".git") {
             return true;
         }
@@ -37,25 +67,25 @@ bool PathUtils::is_internal_slug_path(const fs::path& path) {
 }
 
 bool PathUtils::is_valid_portable_path(const std::string& path_str) {
-    const std::string forbidden_chars = "<>:\"|?*";
+    const std::wstring forbidden_chars = L"<>:\"|?*";
     static const std::set<std::string> dos_devices = {
         "CON", "PRN", "AUX", "NUL",
         "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
     };
 
-    fs::path p(path_str);
+    fs::path p = u8_to_path(path_str);
     for (const auto& comp : p) {
-        std::string s = comp.string();
-        if (s == "." || s == "..") continue;
-        for (char c : s) {
-            if (forbidden_chars.find(c) != std::string::npos || static_cast<unsigned char>(c) < 32) {
+        std::wstring ws = comp.wstring();
+        if (ws == L"." || ws == L"..") continue;
+        for (wchar_t wc : ws) {
+            if (forbidden_chars.find(wc) != std::wstring::npos || (static_cast<uint32_t>(wc) < 32)) {
                 return false;
             }
         }
 
         // Reject Windows DOS reserved device names (CON, NUL, COM1, AUX, etc.)
-        std::string stem = comp.stem().string();
+        std::string stem = path_to_u8(comp.stem());
         for (char& c : stem) {
             c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         }
@@ -78,13 +108,13 @@ std::optional<fs::path> PathUtils::resolve_safe_path(const fs::path& root_dir, c
 
     // Check raw string for obvious traversal tricks
     if (relative_path.find("..") != std::string::npos) {
-        fs::path test_path(relative_path);
+        fs::path test_path = u8_to_path(relative_path);
         for (const auto& comp : test_path) {
             if (comp == "..") return std::nullopt;
         }
     }
 
-    fs::path candidate = root_canonical / fs::path(relative_path).relative_path();
+    fs::path candidate = root_canonical / u8_to_path(relative_path).relative_path();
     fs::path target_canonical = fs::weakly_canonical(candidate, ec);
     if (ec) return std::nullopt;
 

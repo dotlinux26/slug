@@ -760,17 +760,17 @@ public:
           << "    .catch(e => alert('Lỗi: ' + e));"
           << "}"
           << "function returnToPortal() {"
-          << "  if (window.location.port === '8080' || window.location.pathname.startsWith('/portal')) {"
+          << "  if (window.location.port === '8081' || window.location.port === '8080' || window.location.pathname.startsWith('/portal')) {"
           << "    window.location.href = '/portal';"
           << "    return;"
           << "  }"
-          << "  if (document.referrer && (document.referrer.includes('/portal') || document.referrer.includes(':8080'))) {"
+          << "  if (document.referrer && (document.referrer.includes('/portal') || document.referrer.includes(':8081') || document.referrer.includes(':8080'))) {"
           << "    window.location.href = document.referrer;"
           << "    return;"
           << "  }"
           << "  let savedCfg = null;"
           << "  try { savedCfg = JSON.parse(localStorage.getItem('slug_system_config') || '{}'); } catch(e){}"
-          << "  const pPort = (savedCfg && savedCfg.portal_port) ? savedCfg.portal_port : 8080;"
+          << "  const pPort = (savedCfg && savedCfg.portal_port) ? savedCfg.portal_port : 8081;"
           << "  window.location.href = 'http://127.0.0.1:' + pPort + '/portal';"
           << "}"
           << "setInterval(() => {"
@@ -5543,7 +5543,7 @@ function createDesktopShortcut() {
 
 function saveSystemConfig() {
   const suite = document.getElementById('cfg-default-suite').value;
-  const port = parseInt(document.getElementById('cfg-portal-port').value) || 8080;
+  const port = parseInt(document.getElementById('cfg-portal-port').value) || 8081;
   localStorage.setItem('slug_system_config', JSON.stringify({ default_suite: suite, portal_port: port }));
   fetch('/api/config/system', {
     method: 'POST',
@@ -6269,7 +6269,7 @@ window.onload = function() {
         </div>
         <div class="form-group">
           <label>Cổng Web Loopback Mặc Định (portal_port)</label>
-          <input type="number" id="cfg-portal-port" class="input-text" value="8080" placeholder="8080">
+          <input type="number" id="cfg-portal-port" class="input-text" value="8081" placeholder="8081">
         </div>
       </div>
     </div>

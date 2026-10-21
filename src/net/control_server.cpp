@@ -789,7 +789,8 @@ void ControlServer::handle_client(platform::TcpSocket client) {
             // Create temp upload file in parent directory
             std::error_code ec_dir;
             std::filesystem::create_directories(vres.real_path.parent_path(), ec_dir);
-            std::filesystem::path temp_upload_path = vres.real_path.parent_path() / (vres.real_path.filename().string() + ".slug_upload_tmp." + std::to_string(transfer_id));
+            std::filesystem::path temp_upload_path = vres.real_path;
+            temp_upload_path += ".slug_upload_tmp." + std::to_string(transfer_id);
 
             std::ofstream dst(temp_upload_path, std::ios::binary | std::ios::trunc);
             if (!dst.is_open()) {

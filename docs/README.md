@@ -66,7 +66,7 @@ docs/
 | Khía cạnh | Thực trạng & Giải pháp của Slug | Minh chứng kỹ thuật & Tra cứu |
 | :--- | :--- | :--- |
 | **1. Mức độ cần thiết & Tính thực tế** | Giải quyết trực diện nhu cầu làm việc hàng ngày:<br>• Chuyển tệp nội bộ tốc độ cao qua LAN, không gửi dữ liệu ra ngoài Internet.<br>• Thu bài phòng máy một chiều chống xem bài chép bài.<br>• Giảm thiểu rủi ro lộ tệp cấu hình chứa secret vào công cụ AI hoặc commit lên kho mã nguồn. | • [01-PROBLEM.md](01-PROBLEM.md)<br>• Bảng so sánh tính năng ở Mục 2. |
-| **2. Tính khả thi & Mức độ hoàn thiện** | • Đóng gói thành **1 file thực thi nhị phân duy nhất (~8.4MB)**, zero-dependency, không đòi hỏi cài thêm runtime.<br>• Được triển khai bằng C++20, hỗ trợ cả Linux và Windows.<br>• Cung cấp giao diện CLI POSIX lẫn Web Viewing Engine nội bộ (`127.0.0.1:8080/`). | • [02-SOLUTION.md](02-SOLUTION.md)<br>• [BUILD.md](../BUILD.md)<br>• CI/CD tự động build binary đa nền tảng trong `.github/workflows/`. |
+| **2. Tính khả thi & Mức độ hoàn thiện** | • Đóng gói thành **1 file thực thi nhị phân duy nhất (~10MB)**, zero-dependency, không đòi hỏi cài thêm runtime.<br>• Được triển khai bằng C++20, hỗ trợ cả Linux và Windows.<br>• Cung cấp giao diện CLI POSIX lẫn Web Viewing Engine nội bộ (`127.0.0.1:8081/`). | • [02-SOLUTION.md](02-SOLUTION.md)<br>• [BUILD.md](../BUILD.md)<br>• CI/CD tự động build binary đa nền tảng trong `.github/workflows/`. |
 | **3. Điểm mới & Khác biệt kỹ thuật** | • **Kênh truyền nhị phân bảo mật:** Thay đường truyền plain HTTP bằng kênh PQC AEAD; cơ chế xác thực OTP 3 vai trò (`[rw]`, `[r]`, `[w]`).<br>• **Kiểm soát nội dung chia sẻ:** Tự động loại bỏ thư mục theo `.gitignore` và hỗ trợ Whitelist (`!.env.example`).<br>• **EnvShield:** Nạp biến môi trường vào RAM tiến trình con khi thực thi lệnh, giảm thiểu lưu tệp cấu hình bản rõ trên đĩa. | • [04-ARCHITECTURE.md](04-ARCHITECTURE.md)<br>• [MODULE-MAP.md](MODULE-MAP.md)<br>• Kiến trúc Directional AEAD và VFS Jail. |
 | **4. Ứng dụng AI & Giá trị thực tế** | • **Slug Guard:** Tầng chặn xác định offline (Heuristic Regex + Shannon Entropy $H(X) \ge 4.0$).<br>• **Slug AI:** Tùy chọn cố vấn ngữ cảnh (`--ai`), trả về schema JSON (`has_secret`, `reason`, `line`) hỗ trợ người dùng phân tích thêm ngữ cảnh.<br>• Bộ nhớ đệm trạng thái BLAKE3 (`index.db`), tránh quét lặp lại tệp không đổi.<br>• Hướng dẫn công cụ (`.slug/ai-rule.md`). | • [03-AI-USAGE.md](03-AI-USAGE.md)<br>• Mã nguồn module `src/ai/stateful_audit.hpp` và `src/ai/scanner.cpp`. |
 
@@ -92,7 +92,7 @@ slug add . -p 9443
 slug pull -i <IP_SERVER> -p 9443 -o <OTP> --to ./tai_ve
 # Hoặc tải 1 file cụ thể:
 slug get <IP_SERVER>:9443?otp=<OTP> src/main.cpp ./main.cpp
-# Hoặc mở trực tiếp Web Viewing Engine trên loopback: gõ 'slug' (http://127.0.0.1:8080/)
+# Hoặc mở trực tiếp Web Viewing Engine trên loopback: gõ 'slug' (http://127.0.0.1:8081/)
 ```
 
 ---

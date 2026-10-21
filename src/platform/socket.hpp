@@ -27,9 +27,11 @@ public:
     static void close_socket(SocketHandle s);
     static bool set_nonblocking(SocketHandle s, bool nonblocking);
     static bool set_reuse_addr(SocketHandle s, bool reuse);
+    static bool set_exclusive_addr(SocketHandle s, bool exclusive);
     static bool set_timeouts(SocketHandle s, int timeout_ms);
     static bool set_tcp_nodelay(SocketHandle s, bool nodelay);
     static bool set_buffer_sizes(SocketHandle s, int size_bytes);
+    static bool is_port_in_use(const std::string& ip, uint16_t port, int timeout_ms = 60);
 };
 
 class TcpSocket {

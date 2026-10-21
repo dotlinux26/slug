@@ -871,7 +871,7 @@ int cmd_config(int argc, char* argv[]) {
         std::cout << std::left << std::setw(24) << "[KEY]" << std::setw(40) << "[VALUE]" << std::endl;
         std::cout << std::string(64, '-') << std::endl;
         if (j.empty()) {
-            std::cout << "  (No custom settings. Using defaults: default_suite=SUITE_2_MODERN_HIGH_SPEED, portal_port=8080)" << std::endl;
+            std::cout << "  (No custom settings. Using defaults: default_suite=SUITE_2_MODERN_HIGH_SPEED, portal_port=8081)" << std::endl;
         } else {
             for (auto it = j.begin(); it != j.end(); ++it) {
                 std::cout << std::left << std::setw(24) << it.key() << std::setw(40) << it.value().dump() << std::endl;
@@ -1001,7 +1001,7 @@ void print_help() {
 THE ESSENTIAL 9 - CORE COMMAND SUITE:
 
   [CLIENT WORKSPACE & WEB VIEWING ENGINE]
-    portal [-p <port>]       Launch local loopback Web Viewing Engine (Default: http://127.0.0.1:8080)
+    portal [-p <port>]       Launch local loopback Web Viewing Engine (Default: http://127.0.0.1:8081)
                              (Zero Remote HTTP - all remote traffic is tunneled via pure Post-Quantum frames)
                              Aliases: slug (no arguments), slug web, slug ui
     shortcut                 Create Windows Desktop shortcut ("Slug Workspace.lnk") for 1-click launch
@@ -3109,9 +3109,16 @@ static bool read_http_request_raw(platform::TcpSocket& sock, std::string& raw_ou
     std::string line;
     if (!std::getline(h_stream, line)) return false;
 
-    std::istringstream req_line(line);
     std::string uri;
-    req_line >> method >> uri;
+    size_t first_sp = line.find(' ');
+    size_t last_sp = line.rfind(' ');
+    if (first_sp != std::string::npos && last_sp != std::string::npos && last_sp > first_sp) {
+        method = line.substr(0, first_sp);
+        uri = line.substr(first_sp + 1, last_sp - first_sp - 1);
+    } else {
+        std::istringstream req_line(line);
+        req_line >> method >> uri;
+    }
     size_t qmark = uri.find('?');
     if (qmark != std::string::npos) {
         path = uri.substr(0, qmark);
@@ -3197,8 +3204,8 @@ static std::string get_query_param(const std::string& query, const std::string& 
 }
 
 int cmd_portal(int argc, char* argv[]) {
-    uint16_t start_port = 8080;
-    std::string cfg_port = SlugConfig::get("portal_port", "8080");
+    uint16_t start_port = 8081;
+    std::string cfg_port = SlugConfig::get("portal_port", "8081");
     try { start_port = static_cast<uint16_t>(std::stoi(cfg_port)); } catch (...) {}
 
     std::string auto_connect_id = "";
@@ -3212,13 +3219,16 @@ int cmd_portal(int argc, char* argv[]) {
     }
 
     // Try binding 127.0.0.1 starting from start_port, auto-incrementing if occupied (tự tịnh tiến cổng)
+    // Proactively checks if port is active + uses exclusive binding to prevent school/lab port hijacking!
     platform::TcpListener listener;
     uint16_t actual_port = start_port;
     bool bound = false;
     for (int i = 0; i < 50; ++i) {
-        if (listener.bind_and_listen("127.0.0.1", actual_port, 32)) {
-            bound = true;
-            break;
+        if (!platform::SocketUtils::is_port_in_use("127.0.0.1", actual_port)) {
+            if (listener.bind_and_listen("127.0.0.1", actual_port, 32)) {
+                bound = true;
+                break;
+            }
         }
         actual_port++;
     }
@@ -3552,7 +3562,7 @@ int cmd_portal(int argc, char* argv[]) {
                         j["default_suite"] = "SUITE_2_MODERN_HIGH_SPEED";
                     }
                     if (!j.contains("portal_port")) {
-                        j["portal_port"] = 8080;
+                        j["portal_port"] = 8081;
                     }
                     send_portal_http(sock, 200, "OK", "application/json", j.dump());
                     return;
@@ -3818,7 +3828,7 @@ int cmd_portal(int argc, char* argv[]) {
                     return;
                 }
                 std::error_code ec;
-                std::filesystem::path p(target_dir);
+                std::filesystem::path p = slug::platform::PathUtils::u8_to_path(target_dir);
                 bool exists = std::filesystem::exists(p, ec);
                 bool is_dir = exists && std::filesystem::is_directory(p, ec);
                 bool has_slug = exists && std::filesystem::exists(p / ".slug", ec);
@@ -3948,12 +3958,12 @@ int cmd_portal(int argc, char* argv[]) {
                     std::string target_p = j.value("path", "");
                     bool ok = false;
                     if (!target_p.empty()) {
-                        std::filesystem::path fp(target_p);
+                        std::filesystem::path fp = slug::platform::PathUtils::u8_to_path(target_p);
                         std::error_code ec;
                         if (std::filesystem::is_regular_file(fp, ec)) {
                             fp = fp.parent_path();
                         }
-                        ok = open_path_in_os(fp.string());
+                        ok = open_path_in_os(slug::platform::PathUtils::path_to_u8(fp));
                     }
                     nlohmann::json res;
                     res["status"] = ok ? "ok" : "error";
@@ -4485,7 +4495,7 @@ int cmd_portal(int argc, char* argv[]) {
                         return;
                     }
                     if (dest.empty()) {
-                        dest = "./" + std::filesystem::path(fpath).filename().string();
+                        dest = "./" + slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(fpath).filename());
                     }
 
                     // Path Traversal Security Check
@@ -4496,7 +4506,7 @@ int cmd_portal(int argc, char* argv[]) {
                         send_portal_http(sock, 403, "Forbidden", "application/json", "{\"status\":\"error\",\"message\":\"Path Traversal blocked: Destination path outside current directory or invalid filename.\"}");
                         return;
                     }
-                    dest = safe_dest->string();
+                    dest = slug::platform::PathUtils::path_to_u8(*safe_dest);
 
                     std::lock_guard<std::mutex> lk(g_portal.mtx);
                     if (!g_portal.client || !g_portal.client->is_connected()) {
@@ -4959,7 +4969,7 @@ int cmd_portal(int argc, char* argv[]) {
                     }
 
                     if (fname.empty()) {
-                        fname = std::filesystem::path(fpath).filename().string();
+                        fname = slug::platform::PathUtils::path_to_u8(slug::platform::PathUtils::u8_to_path(fpath).filename());
                     }
 
                     // Native Folder Picker dialog on client machine: user selects folder, filename is preserved
@@ -4973,11 +4983,11 @@ int cmd_portal(int argc, char* argv[]) {
                         }
                     }
 
-                    std::filesystem::path chosen_folder(dest);
+                    std::filesystem::path chosen_folder = slug::platform::PathUtils::u8_to_path(dest);
                     std::filesystem::path target_file;
                     std::error_code ec;
                     if (std::filesystem::is_directory(chosen_folder, ec) || !chosen_folder.has_extension()) {
-                        target_file = chosen_folder / fname;
+                        target_file = chosen_folder / slug::platform::PathUtils::u8_to_path(fname);
                     } else {
                         target_file = chosen_folder;
                     }
@@ -5147,11 +5157,17 @@ int cmd_portal(int argc, char* argv[]) {
                     std::string source_str = j.value("source_path", "");
                     std::string rel_dir = j.value("dir", "");
                     bool is_dir = j.value("is_dir", false);
+                    while (!source_str.empty() && (std::isspace(static_cast<unsigned char>(source_str.front())) || source_str.front() == '"' || source_str.front() == '\'')) {
+                        source_str.erase(0, 1);
+                    }
+                    while (!source_str.empty() && (std::isspace(static_cast<unsigned char>(source_str.back())) || source_str.back() == '"' || source_str.back() == '\'')) {
+                        source_str.pop_back();
+                    }
                     if (source_str.empty()) {
                         send_portal_http(sock, 400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"source_path required\"}");
                         return;
                     }
-                    std::filesystem::path src_path(source_str);
+                    std::filesystem::path src_path = slug::platform::PathUtils::u8_to_path(source_str);
                     if (!std::filesystem::exists(src_path)) {
                         send_portal_http(sock, 404, "Not Found", "application/json", "{\"status\":\"error\",\"message\":\"Đường dẫn không tồn tại trên máy.\"}");
                         return;
@@ -5169,7 +5185,7 @@ int cmd_portal(int argc, char* argv[]) {
                     }
 
                     if (!std::filesystem::is_directory(src_path) && !is_dir) {
-                        std::string filename = src_path.filename().string();
+                        std::string filename = slug::platform::PathUtils::path_to_u8(src_path.filename());
                         std::string target_rel = rel_dir.empty() ? filename : (rel_dir + "/" + filename);
                         bool ok = upload_client->push(src_path, target_rel);
                         if (ok) {
@@ -5187,8 +5203,8 @@ int cmd_portal(int argc, char* argv[]) {
                         std::error_code ec;
                         for (const auto& entry : std::filesystem::recursive_directory_iterator(src_path, ec)) {
                             if (entry.is_regular_file()) {
-                                auto sub_rel = std::filesystem::relative(entry.path(), src_path).generic_string();
-                                std::string base_dir = src_path.filename().generic_string();
+                                auto sub_rel = slug::platform::PathUtils::to_protocol_path(std::filesystem::relative(entry.path(), src_path));
+                                std::string base_dir = slug::platform::PathUtils::path_to_u8(src_path.filename());
                                 std::string target_rel = rel_dir.empty() ? (base_dir + "/" + sub_rel) : (rel_dir + "/" + base_dir + "/" + sub_rel);
                                 if (upload_client->push(entry.path(), target_rel)) {
                                     uploaded_count++;

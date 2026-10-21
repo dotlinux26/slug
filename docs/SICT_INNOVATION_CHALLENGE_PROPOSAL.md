@@ -15,7 +15,7 @@ Trong kỷ nguyên phát triển phần mềm hiện đại, sinh viên và kỹ
 2. **Ô nhiễm dữ liệu và thiếu kiểm soát khi chia sẻ qua mạng:** Việc chia sẻ nhanh mã nguồn dở dang cho bạn bè thường được thực hiện qua các công cụ truyền thống như `python -m http.server` hoặc nén file `.zip`. Cách làm này truyền tải cả hàng trăm megabyte dữ liệu rác (`node_modules/`, `build/`), không có mã hóa trên mạng Wi-Fi công cộng, và không có cơ chế ngăn chặn việc gửi nhầm các file cấu hình nhạy cảm.
 3. **Lãng phí băng thông WAN và thiếu công cụ thu bài học sinh gọn nhẹ:** Khi chuyển file trong cùng mạng LAN văn phòng/trường học, người dùng vẫn phải tải qua Google Drive/Zalo (tốn băng thông Internet, phụ thuộc bên thứ 3). Trong khi đó, giảng viên cần thu bài 40–50 sinh viên trong phòng lab thiếu một giải pháp một chiều (Write-Only) vừa nhẹ, vừa tránh sinh viên xem bài của nhau.
 
-**Giải pháp Slug:** Slug là một công cụ độc lập, tinh gọn (~8.4MB), cung cấp **Lớp kiểm soát biên thống nhất (Unified Workspace Boundary Controller)** cho môi trường học tập và phát triển:
+**Giải pháp Slug:** Slug là một công cụ độc lập, tinh gọn (~10MB), cung cấp **Lớp kiểm soát biên thống nhất (Unified Workspace Boundary Controller)** cho môi trường học tập và phát triển:
 - **Kiểm soát bí mật với Slug Guard & Module Cố Vấn AI:** 
   - **Slug Guard (Cốt lõi xác định, hoạt động offline):** Hệ thống phòng thủ tự động bằng bộ lọc Heuristic/Regex, phân tích độ hỗn loạn toán học Shannon Entropy (phát hiện chuỗi ngẫu nhiên $H(X) \ge 4.0$) và VFS Jail chặn tệp nghi vấn ngay tại tầng đọc filesystem.
   - **Slug AI (Cố vấn mở rộng tùy chọn):** Hỗ trợ kết nối LLM (Local Ollama / Cloud API) đóng vai trò cố vấn tham khảo (advisory) khi người dùng muốn phân tích thêm ngữ cảnh, không thay thế các quy tắc lọc cứng.
@@ -48,9 +48,9 @@ Mỗi ngày, sinh viên công nghệ thông tin và lập trình viên đối m�
 Slug được **hiện thực hóa hoàn chỉnh bằng mã nguồn C++20**, có sẵn bản phát hành độc lập chạy trên cả Windows và Linux.
 
 ### 2.1. Kiến trúc tối giản, sẵn sàng sử dụng ngay
-- **Zero-Dependency:** Đóng gói thành đúng **1 file thực thi duy nhất (`slug`) với dung lượng chỉ ~8.4MB**.
+- **Zero-Dependency:** Đóng gói thành đúng **1 file thực thi duy nhất (`slug`) với dung lượng chỉ ~10MB**.
 - **Không cần cài đặt môi trường:** Không đòi hỏi cài Node.js runtime, Python, Java, hay cơ sở dữ liệu bên ngoài. Tải về là chạy ngay.
-- **Tích hợp Web Explorer:** Ngoài giao diện dòng lệnh (CLI), Slug tích hợp sẵn một Engine Viewing nội bộ hiển thị trên trình duyệt (`127.0.0.1:8080/drop`) với phong cách Techno B2B trực quan, hỗ trợ xem cây thư mục và tải file một chạm.
+- **Tích hợp Web Explorer:** Ngoài giao diện dòng lệnh (CLI), Slug tích hợp sẵn một Engine Viewing nội bộ hiển thị trên trình duyệt (`127.0.0.1:8081/drop`) với phong cách Techno B2B trực quan, hỗ trợ xem cây thư mục và tải file một chạm.
 
 ![Giao diện chia sẻ workspace an toàn qua Web Viewing Engine của Slug](chiase.png)  
 *Hình 1: Giao diện Web Viewing Engine & Dashboard chia sẻ Workspace trực quan của Slug.*
@@ -69,7 +69,7 @@ Sản phẩm được thiết kế sao cho người dùng có thể làm quen nh
 - **Bước 3 — Máy nhận kết nối và tải về:**
   ```bash
   slug pull -i <IP> -p 9443 -o <OTP> --to ./du_an
-  # Hoặc mở giao diện Web trên trình duyệt: gõ lệnh 'slug' -> http://127.0.0.1:8080/
+  # Hoặc mở giao diện Web trên trình duyệt: gõ lệnh 'slug' -> http://127.0.0.1:8081/
   ```
 
 ![Quy trình kết nối và xác thực an toàn giữa các máy trạm](ketnoi.png)  
@@ -213,7 +213,7 @@ Quy trình trình diễn thực nghiệm:
 
 Slug hướng đến giải quyết các bài toán thực tế trong môi trường học tập và phát triển phần mềm:
 1. **Phù hợp với chủ đề SICT Innovation Challenge:** Giải quyết vấn đề trong cả hai lĩnh vực **Phần mềm** (quy trình làm việc, dữ liệu, biến môi trường) và **Mạng** (kết nối P2P, băng thông, bảo mật đường truyền).
-2. **Khả thi và hoàn thiện:** Sản phẩm là ứng dụng C++20 hoàn chỉnh, chạy thực tế với hiệu năng cao, đóng gói 1 file nhị phân duy nhất ~8.4MB.
+2. **Khả thi và hoàn thiện:** Sản phẩm là ứng dụng C++20 hoàn chỉnh, chạy thực tế với hiệu năng cao, đóng gói 1 file nhị phân duy nhất ~10MB.
 3. **Phân định AI rõ ràng:** Đặt nền tảng an toàn trên các quy tắc xác định của Slug Guard; định vị AI đúng vai trò cố vấn ngữ nghĩa tùy chọn.
 
 Thông tin mã nguồn và tài liệu kỹ thuật:

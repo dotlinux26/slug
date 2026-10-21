@@ -159,7 +159,7 @@ WorkspaceManifest ManifestBuilder::build(
 
         fs::path p = it->path();
         fs::path rel = p.lexically_relative(workspace_root);
-        std::string filename = p.filename().string();
+        std::string filename = platform::PathUtils::path_to_u8(p.filename());
         std::string lower = filename;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 

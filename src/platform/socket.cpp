@@ -36,6 +36,76 @@ bool SocketUtils::set_reuse_addr(SocketHandle s, bool reuse) {
 #endif
 }
 
+bool SocketUtils::set_exclusive_addr(SocketHandle s, bool exclusive) {
+    if (s == kInvalidSocket) return false;
+#if defined(SLUG_PLATFORM_WINDOWS)
+    int opt = exclusive ? 1 : 0;
+    return setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&opt), sizeof(opt)) == 0;
+#else
+    (void)exclusive;
+    return true;
+#endif
+}
+
+bool SocketUtils::is_port_in_use(const std::string& ip, uint16_t port, int timeout_ms) {
+    initialize_network();
+    SocketHandle s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == kInvalidSocket) return false;
+
+    set_nonblocking(s, true);
+
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    std::string check_ip = (ip.empty() || ip == "0.0.0.0") ? "127.0.0.1" : ip;
+    inet_pton(AF_INET, check_ip.c_str(), &addr.sin_addr);
+
+    int res = ::connect(s, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    if (res == 0) {
+        close_socket(s);
+        return true;
+    }
+
+#if defined(SLUG_PLATFORM_WINDOWS)
+    int err = WSAGetLastError();
+    if (err == WSAEWOULDBLOCK) {
+        struct pollfd pfd{};
+        pfd.fd = s;
+        pfd.events = POLLOUT;
+        int pr = WSAPoll(&pfd, 1, timeout_ms);
+        if (pr > 0 && (pfd.revents & POLLOUT)) {
+            int sock_err = 0;
+            socklen_t len = sizeof(sock_err);
+            getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&sock_err), &len);
+            if (sock_err == 0) {
+                close_socket(s);
+                return true;
+            }
+        }
+    }
+#else
+    if (errno == EINPROGRESS) {
+        struct pollfd pfd{};
+        pfd.fd = s;
+        pfd.events = POLLOUT;
+        int pr = poll(&pfd, 1, timeout_ms);
+        if (pr > 0 && (pfd.revents & POLLOUT)) {
+            int sock_err = 0;
+            socklen_t len = sizeof(sock_err);
+            getsockopt(s, SOL_SOCKET, SO_ERROR, &sock_err, &len);
+            if (sock_err == 0) {
+                close_socket(s);
+                return true;
+            }
+        }
+    }
+#endif
+
+    close_socket(s);
+    return false;
+}
+
+
 bool SocketUtils::set_timeouts(SocketHandle s, int timeout_ms) {
     if (s == kInvalidSocket) return false;
 #if defined(SLUG_PLATFORM_WINDOWS)
@@ -276,7 +346,11 @@ bool TcpListener::bind_and_listen(const std::string& bind_ip, uint16_t port, int
     SocketHandle s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == kInvalidSocket) return false;
 
+#if defined(SLUG_PLATFORM_WINDOWS)
+    SocketUtils::set_exclusive_addr(s, true);
+#else
     SocketUtils::set_reuse_addr(s, true);
+#endif
 
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;

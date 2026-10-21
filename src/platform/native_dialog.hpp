@@ -259,26 +259,36 @@ public:
     static bool open_path_in_os(const std::string& path_str) {
         if (path_str.empty()) return false;
         try {
+#if defined(SLUG_PLATFORM_WINDOWS)
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, path_str.c_str(), -1, NULL, 0);
+            std::wstring wpath;
+            if (wlen > 0) {
+                wpath.resize(wlen - 1);
+                MultiByteToWideChar(CP_UTF8, 0, path_str.c_str(), -1, &wpath[0], wlen);
+            } else {
+                wpath.assign(path_str.begin(), path_str.end());
+            }
+            std::filesystem::path p(wpath);
+            std::error_code ec;
+            if (!std::filesystem::exists(p, ec)) {
+                p = std::filesystem::absolute(p, ec);
+            }
+            std::wstring native_w = p.make_preferred().wstring();
+            HWND hwnd_owner = GetForegroundWindow();
+            if (!hwnd_owner) hwnd_owner = GetDesktopWindow();
+            AllowSetForegroundWindow(ASFW_ANY);
+            HINSTANCE res = ShellExecuteW(hwnd_owner, L"explore", native_w.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(res) <= 32) {
+                res = ShellExecuteW(hwnd_owner, L"open", native_w.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            }
+            return reinterpret_cast<INT_PTR>(res) > 32;
+#elif defined(SLUG_PLATFORM_POSIX)
             std::filesystem::path p(path_str);
             std::error_code ec;
             if (!std::filesystem::exists(p, ec)) {
                 p = std::filesystem::absolute(p, ec);
             }
             std::string native_p = p.make_preferred().string();
-#if defined(SLUG_PLATFORM_WINDOWS)
-            HWND hwnd_owner = GetForegroundWindow();
-            if (!hwnd_owner) hwnd_owner = GetDesktopWindow();
-            AllowSetForegroundWindow(ASFW_ANY);
-            HINSTANCE res = ShellExecuteA(hwnd_owner, "explore", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
-            if (reinterpret_cast<INT_PTR>(res) <= 32) {
-                res = ShellExecuteA(hwnd_owner, "open", native_p.c_str(), NULL, NULL, SW_SHOWNORMAL);
-            }
-            if (reinterpret_cast<INT_PTR>(res) <= 32) {
-                std::string cmd = "explorer.exe \"" + native_p + "\"";
-                system(cmd.c_str());
-            }
-            return true;
-#elif defined(SLUG_PLATFORM_POSIX)
             std::string cmd = "xdg-open \"" + native_p + "\" >/dev/null 2>&1 &";
             int ret = system(cmd.c_str());
             return ret == 0;

@@ -79,7 +79,7 @@ VfsResolveResult SlugVFS::resolve_and_jail(std::string_view virtual_path, Role r
 
     // 2. Anti-Traversal check on virtual path components
     std::string rel = (res.virtual_path == "/") ? "" : res.virtual_path.substr(1);
-    fs::path test_p(rel);
+    fs::path test_p = platform::PathUtils::u8_to_path(rel);
     for (const auto& part : test_p) {
         if (part == ".." || part == "") {
             res.status = VfsStatus::PATH_TRAVERSAL;
@@ -147,7 +147,7 @@ std::pair<VfsStatus, std::vector<VfsEntry>> SlugVFS::list_directory(std::string_
 
     std::vector<VfsEntry> entries;
     for (const auto& item : fs::directory_iterator(resolved.real_path, ec)) {
-        std::string fname = item.path().filename().string();
+        std::string fname = platform::PathUtils::path_to_u8(item.path().filename());
         if (fname == ".slug" || fname == ".git") continue;
 
         fs::path rel_p = fs::relative(item.path(), server_root_, ec);

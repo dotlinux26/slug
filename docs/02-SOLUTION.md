@@ -1,7 +1,7 @@
 # 02. Giải pháp và Các Kịch Bản Ứng Dụng Thực Tế của Slug
 
 > **Định vị sản phẩm:** Công cụ chia sẻ tệp tin và kiểm soát mã nguồn an toàn cục bộ, bảo vệ bí mật trước các trợ lý AI.  
-> **Hình thức sản phẩm:** Ứng dụng dòng lệnh (CLI Tool) đa nền tảng viết bằng C++20, đóng gói 1 file thực thi duy nhất (~8MB, zero-dependency) tích hợp Web Portal cục bộ.
+> **Hình thức sản phẩm:** Ứng dụng dòng lệnh (CLI Tool) đa nền tảng viết bằng C++20, đóng gói 1 file thực thi duy nhất (~10MB, zero-dependency) tích hợp Web Portal cục bộ.
 
 ---
 
@@ -58,7 +58,7 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
      # Hoặc tải 1 file đơn lẻ cụ thể:
      slug get 192.168.1.105:9443?otp=12822565 bao_cao.pdf ./bao_cao.pdf
 
-     # Hoặc mở giao diện Web Viewing Engine cục bộ trên máy mình (gõ 'slug' -> http://127.0.0.1:8080/):
+     # Hoặc mở giao diện Web Viewing Engine cục bộ trên máy mình (gõ 'slug' -> http://127.0.0.1:8081/):
      # Kết nối tới 192.168.1.105:9443 bằng OTP và nhấn "Tải ZIP Toàn Bộ Thư Mục"
      ```
   - **Lợi ích:** 0 byte băng thông Internet (WAN), không phụ thuộc bên thứ ba, bảo mật hai đầu bằng mật mã Hậu Lượng Tử NIST FIPS 203 (ML-KEM-768), áp dụng mô hình Zero Remote HTTP trên mạng ngoài.
@@ -118,7 +118,7 @@ Slug chuẩn hóa toàn bộ quy trình kiểm soát và chia sẻ tệp tin th�
 | :--- | :---: | :---: | :---: | :---: |
 | **Bảo mật kênh truyền (Wire Security)** | ❌ Plaintext (HTTP) | ⚠️ SFTP có TLS/SSH, FTP là bản rõ | ⚠️ TLS tới Cloud bên thứ ba | ✅ **PQC AEAD** (ML-KEM-768 + XChaCha20) |
 | **Băng thông & Tốc độ** | ✅ Tối đa LAN | ✅ Tối đa LAN | ❌ Phụ thuộc tốc độ WAN Internet | ✅ **Tối đa LAN gigabit (0 byte WAN)** |
-| **Cài đặt & Thiết lập** | ✅ Cực nhanh (cần Python) | ❌ Rất phức tạp (cần root/admin) | ⚠️ Cần tài khoản, login mạng | ✅ **1 file nhị phân (~8MB, zero-setup)** |
+| **Cài đặt & Thiết lập** | ✅ Cực nhanh (cần Python) | ❌ Rất phức tạp (cần root/admin) | ⚠️ Cần tài khoản, login mạng | ✅ **1 file nhị phân (~10MB, zero-setup)** |
 | **Phân quyền nộp bài (Write-Only)** | ❌ Không có | ⚠️ Cấu hình quyền thư mục phức tạp | ❌ Khó kiểm soát bài nộp chép nhau | ✅ **Hỗ trợ sẵn OTP quyền Ghi `[w]` (Blind Drop)** |
 | **Nhận thức cấu trúc dự án** | ❌ Không (gửi cả rác build) | ❌ Không (gửi nguyên thư mục) | ❌ Không (phải tự nén thủ công) | ✅ **Tự động đọc `.gitignore` lọc rác build** |
 | **Kiểm duyệt bí mật (Secret Scanner)** | ❌ Không (lộ sạch `.env`) | ❌ Không có | ❌ Không có | ✅ **Slug Guard (Entropy + AI Semantic Guard)** |

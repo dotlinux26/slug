@@ -39,13 +39,13 @@ Khi cần chia sẻ nhanh workspace cho đồng nghiệp, mentor, tester hoặc 
 
 ### 1.3. Kiến Trúc Engine Viewing Nội Bộ (Zero Remote HTTP)
 - Trên mạng LAN/Internet, kết nối giữa hai máy sử dụng kênh nhị phân mã hóa Hậu Lượng Tử (PQC AEAD, mặc định cổng `9443`), không mở cổng HTTP ra mạng ngoài.
-- Giao diện Web là Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8080` của client và Host Admin Dashboard trên loopback `http://127.0.0.1:<port>/admin`. Mọi thao tác duyệt cây thư mục, tải tệp đơn, tải nén ZIP hoặc đẩy dữ liệu đều được chuyển tiếp qua frame nhị phân mã hóa.
+- Giao diện Web là Engine Viewing nội bộ chạy trên loopback `127.0.0.1:8081` của client và Host Admin Dashboard trên loopback `http://127.0.0.1:<port>/admin`. Mọi thao tác duyệt cây thư mục, tải tệp đơn, tải nén ZIP hoặc đẩy dữ liệu đều được chuyển tiếp qua frame nhị phân mã hóa.
 
 ---
 
 ## 2. Cài Đặt & Biên Dịch Nhanh (Installation & Build)
 
-Slug có thể đóng gói dưới dạng binary tĩnh độc lập (Static Binary, ~8.4 MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy trên các bản phân phối Linux và Windows.
+Slug có thể đóng gói dưới dạng binary tĩnh độc lập (Static Binary, ~10MB) không phụ thuộc vào `glibc` của hệ thống máy chủ, chạy trên các bản phân phối Linux và Windows.
 
 ### 2.1. Cài Đặt Nhanh (Quick Install)
 
@@ -114,7 +114,7 @@ bash scripts/test_local.sh
 
 Slug tích hợp sẵn Web Command Center và Web Dropbox Explorer tinh gọn theo phong cách **Techno B2B** (bo góc sắc cạnh 2px, font JetBrains Mono, SVG vector offline không phụ thuộc internet).
 
-> **Chỉ cần gõ `slug` (không tham số) hoặc `slug portal`:** Hệ thống tự động kích hoạt Web Viewing Engine trên `http://127.0.0.1:8080/` và tự động mở trình duyệt mặc định của bạn!
+> **Chỉ cần gõ `slug` (không tham số) hoặc `slug portal`:** Hệ thống tự động kích hoạt Web Viewing Engine trên `http://127.0.0.1:8081/` và tự động mở trình duyệt mặc định của bạn!
 
 ### 3.1. Trạm Kết Nối & Quản Lý Phiên Làm Việc (Client Portal & Quick Connect)
 > Cho phép nhập nhanh IP trạm và mã OTP 1 lần (hoặc tài khoản Ephemeral RBAC), tự động thương lượng kênh mật mã Hậu lượng tử NIST FIPS 203 và lưu danh sách trạm thường dùng để truy cập 1 chạm.
@@ -147,7 +147,7 @@ Toàn bộ hệ thống CLI của Slug tuân thủ nghiêm ngặt chuẩn POSIX/
 SLUG THE ESSENTIAL COMMAND SUITE
 
 [CLIENT WORKSPACE & WEB VIEWING ENGINE]
-  slug (không tham số)        Mở ngay Web Viewing Engine trên loopback http://127.0.0.1:8080/
+  slug (không tham số)        Mở ngay Web Viewing Engine trên loopback http://127.0.0.1:8081/
   slug portal [-p <port>]     Chỉ định cổng loopback cho Web Viewing Engine (Aliases: slug web, slug ui)
   slug shortcut               Tạo lối tắt Desktop Windows ("Slug Workspace.lnk") chạy 1-chạm ẩn console
   slug config [list|get|set]  Quản lý cấu hình toàn cục (~/.slug/config.json): default_suite, portal_port
@@ -228,7 +228,7 @@ Người nhận có 3 cách kết nối cực kỳ linh hoạt:
      ```bash
      slug
      ```
-   - Trình duyệt tự động mở `http://127.0.0.1:8080/`. Nhập IP `192.168.1.107:9443` và mã OTP `12822565` -> Nhấn **Kết Nối Nhanh**.
+   - Trình duyệt tự động mở `http://127.0.0.1:8081/`. Nhập IP `192.168.1.107:9443` và mã OTP `12822565` -> Nhấn **Kết Nối Nhanh**.
    - Tại Tab 3 (Web Dropbox), bạn có thể xem cây thư mục từ xa, tải từng file, hoặc nhấn **Tải ZIP Toàn Bộ Thư Mục** để nhận trọn vẹn dự án.
 
 ---
