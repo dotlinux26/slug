@@ -3,6 +3,7 @@
 #include "src/platform/fs.hpp"
 #include "src/platform/process.hpp"
 #include "src/core/utils.hpp"
+#include "src/core/logger.hpp"
 #include "src/sync/manifest.hpp"
 #include "third_party/json/json.hpp"
 #include <iostream>
@@ -298,7 +299,13 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     if (filter_level != FilterLevel::LEVEL_0_RAW && filter_level != FilterLevel::LEVEL_1_RULES && filter_mode != FilterMode::NONE) {
         // Run initial scan asynchronously in background thread so add_workspace returns in 0.01s
         std::thread([canonical_path, suite, filter_mode, filter_level, ai_provider]() {
-            sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode, filter_level, ai_provider);
+            try {
+                sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode, filter_level, ai_provider);
+            } catch (const std::exception& ex) {
+                SLUG_LOG_ERROR("Exception in initial scan thread: " << ex.what());
+            } catch (...) {
+                SLUG_LOG_ERROR("Unknown exception in initial scan thread");
+            }
         }).detach();
     }
 

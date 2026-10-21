@@ -471,7 +471,7 @@ static nlohmann::json inspect_network_interfaces(uint16_t current_port = 9443) {
 static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& ws_path) {
     nlohmann::json res;
     res["status"] = "ok";
-    res["workspace"] = ws_path.string();
+    res["workspace"] = platform::PathUtils::path_to_u8(ws_path);
 
     nlohmann::json quarantined = nlohmann::json::array();
     nlohmann::json clean = nlohmann::json::array();
@@ -489,30 +489,31 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
         return res;
     }
 
-    policy::HierarchicalGitignore gi;
-    gi.scan_and_load_all(canonical_ws);
+    try {
+        policy::HierarchicalGitignore gi;
+        gi.scan_and_load_all(canonical_ws);
 
-    policy::RulesManager rules_mgr(canonical_ws / ".slug" / "rules.conf");
+        policy::RulesManager rules_mgr(canonical_ws / ".slug" / "rules.conf");
 
-    std::filesystem::path idx_file = canonical_ws / ".slug" / "index.db";
-    ai::StatefulAuditIndex audit_idx(idx_file);
-    audit_idx.load();
+        std::filesystem::path idx_file = canonical_ws / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+        audit_idx.load();
 
-    ai::AiScanner scanner(ai::AiScanner::ProviderType::LOCAL_HEURISTIC);
+        ai::AiScanner scanner(ai::AiScanner::ProviderType::LOCAL_HEURISTIC);
 
-    for (std::filesystem::recursive_directory_iterator it(canonical_ws, std::filesystem::directory_options::skip_permission_denied, ec), end;
-         it != end; ++it) {
-        if (ec) { ec.clear(); continue; }
+        for (std::filesystem::recursive_directory_iterator it(canonical_ws, std::filesystem::directory_options::skip_permission_denied, ec), end;
+             it != end; ++it) {
+            if (ec) { ec.clear(); continue; }
 
-        std::filesystem::path p = it->path();
-        std::filesystem::path rel_path = std::filesystem::relative(p, canonical_ws, ec);
-        std::string rel = rel_path.generic_string();
-        std::string filename = p.filename().generic_string();
-        std::string lower = rel;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            std::filesystem::path p = it->path();
+            std::filesystem::path rel_path = std::filesystem::relative(p, canonical_ws, ec);
+            std::string rel = platform::PathUtils::to_protocol_path(rel_path);
+            std::string filename = platform::PathUtils::path_to_u8(p.filename());
+            std::string lower = rel;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
-        bool is_dir = it->is_directory(ec);
-        bool is_excluded = false;
+            bool is_dir = it->is_directory(ec);
+            bool is_excluded = false;
         std::string excl_rule = "";
 
         const auto* rm = rules_mgr.match(rel);
@@ -765,6 +766,12 @@ static nlohmann::json perform_real_workspace_audit(const std::filesystem::path& 
     res["allowed_files"] = allowed_files;
     audit_idx.save();
     return res;
+    } catch (const std::exception& ex) {
+        SLUG_LOG_ERROR("Exception in perform_real_workspace_audit: " << ex.what());
+    } catch (...) {
+        SLUG_LOG_ERROR("Unknown exception in perform_real_workspace_audit");
+    }
+    return res;
 }
 
 static std::mutex g_audit_cache_mtx;
@@ -772,7 +779,7 @@ static std::map<std::string, std::pair<uint64_t, nlohmann::json>> g_audit_cache;
 static std::set<std::string> g_audit_running;
 
 static nlohmann::json get_cached_workspace_audit(const std::filesystem::path& ws_path, bool force_fresh = false) {
-    std::string key = ws_path.string();
+    std::string key = platform::PathUtils::path_to_u8(ws_path);
     uint64_t now = core::Utils::current_timestamp();
     {
         std::lock_guard<std::mutex> lk(g_audit_cache_mtx);
@@ -785,9 +792,16 @@ static nlohmann::json get_cached_workspace_audit(const std::filesystem::path& ws
             if (g_audit_running.find(key) == g_audit_running.end()) {
                 g_audit_running.insert(key);
                 std::thread([ws_path, key]() {
-                    auto result = perform_real_workspace_audit(ws_path);
+                    try {
+                        auto result = perform_real_workspace_audit(ws_path);
+                        std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
+                        g_audit_cache[key] = {core::Utils::current_timestamp(), result};
+                    } catch (const std::exception& ex) {
+                        SLUG_LOG_ERROR("Exception in get_cached_workspace_audit background thread: " << ex.what());
+                    } catch (...) {
+                        SLUG_LOG_ERROR("Unknown exception in get_cached_workspace_audit background thread");
+                    }
                     std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
-                    g_audit_cache[key] = {core::Utils::current_timestamp(), result};
                     g_audit_running.erase(key);
                 }).detach();
             }
@@ -798,9 +812,16 @@ static nlohmann::json get_cached_workspace_audit(const std::filesystem::path& ws
         if (g_audit_running.find(key) == g_audit_running.end()) {
             g_audit_running.insert(key);
             std::thread([ws_path, key]() {
-                auto result = perform_real_workspace_audit(ws_path);
+                try {
+                    auto result = perform_real_workspace_audit(ws_path);
+                    std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
+                    g_audit_cache[key] = {core::Utils::current_timestamp(), result};
+                } catch (const std::exception& ex) {
+                    SLUG_LOG_ERROR("Exception in get_cached_workspace_audit background thread: " << ex.what());
+                } catch (...) {
+                    SLUG_LOG_ERROR("Unknown exception in get_cached_workspace_audit background thread");
+                }
                 std::lock_guard<std::mutex> lk2(g_audit_cache_mtx);
-                g_audit_cache[key] = {core::Utils::current_timestamp(), result};
                 g_audit_running.erase(key);
             }).detach();
         }
@@ -3289,7 +3310,8 @@ int cmd_portal(int argc, char* argv[]) {
         if (!client_opt) continue;
 
         std::thread([sock = std::move(*client_opt), actual_port]() mutable {
-            std::string raw, method, path, query, body;
+            try {
+                std::string raw, method, path, query, body;
             if (!read_http_request_raw(sock, raw, method, path, query, body)) {
                 return;
             }
@@ -3682,128 +3704,133 @@ int cmd_portal(int argc, char* argv[]) {
             }
 
             if (path == "/api/host/workspaces") {
-                auto list = core::WorkspaceManager::load_registry();
-                nlohmann::json arr = nlohmann::json::array();
-                for (const auto& w : list) {
-                    nlohmann::json item;
-                    item["id"] = "host-" + std::to_string(w.port);
-                    item["port"] = w.port;
-                    item["path"] = w.path.string();
-                    item["suite"] = core::suite_to_short_name(w.suite);
-                    item["filter_mode"] = core::filter_mode_to_string(w.filter_mode);
-                    item["filter_level"] = core::filter_level_to_string(w.filter_level);
-                    item["ai_model"] = core::ai_model_to_string(w.ai_provider);
-                    item["ai_enabled"] = w.ai_enabled;
+                try {
+                    auto list = core::WorkspaceManager::load_registry();
+                    nlohmann::json arr = nlohmann::json::array();
+                    for (const auto& w : list) {
+                        nlohmann::json item;
+                        item["id"] = "host-" + std::to_string(w.port);
+                        item["port"] = w.port;
+                        item["path"] = platform::PathUtils::path_to_u8(w.path);
+                        item["suite"] = core::suite_to_short_name(w.suite);
+                        item["filter_mode"] = core::filter_mode_to_string(w.filter_mode);
+                        item["filter_level"] = core::filter_level_to_string(w.filter_level);
+                        item["ai_model"] = core::ai_model_to_string(w.ai_provider);
+                        item["ai_enabled"] = w.ai_enabled;
 
-                    auto st = query_workspace_api(w.port);
-                    bool is_live = (st.is_object() && st.contains("port"));
-                    item["is_live"] = is_live;
-                    if (is_live) {
-                        item["otp_rw"] = st.value("totp_rw", st.value("totp", ""));
-                        item["otp_r"] = st.value("totp_r", "");
-                        item["otp_w"] = st.value("totp_w", "");
-                        item["otp"] = item["otp_rw"];
-                        uint32_t step = st.value("totp_step_sec", 60);
-                        item["step_sec"] = step;
-                        item["maxTtl"] = step;
-                        item["ttl"] = st.value("totp_remaining_sec", step);
-                        item["cert_ttl"] = st.value("ttl_seconds", 86400);
-                        item["workspace_ttl"] = st.value("workspace_ttl", 86400);
-                        item["workspace_remaining_sec"] = st.value("workspace_remaining_sec", 0);
-                        item["filter_mode"] = st.value("filter_mode", core::filter_mode_to_string(w.filter_mode));
-                        item["filter_level"] = st.value("filter_level", core::filter_level_to_string(w.filter_level));
-                        item["ai_model"] = st.value("ai_model", core::ai_model_to_string(w.ai_provider));
+                        auto st = query_workspace_api(w.port);
+                        bool is_live = (st.is_object() && st.contains("port"));
+                        item["is_live"] = is_live;
+                        if (is_live) {
+                            item["otp_rw"] = st.value("totp_rw", st.value("totp", ""));
+                            item["otp_r"] = st.value("totp_r", "");
+                            item["otp_w"] = st.value("totp_w", "");
+                            item["otp"] = item["otp_rw"];
+                            uint32_t step = st.value("totp_step_sec", 60);
+                            item["step_sec"] = step;
+                            item["maxTtl"] = step;
+                            item["ttl"] = st.value("totp_remaining_sec", step);
+                            item["cert_ttl"] = st.value("ttl_seconds", 86400);
+                            item["workspace_ttl"] = st.value("workspace_ttl", 86400);
+                            item["workspace_remaining_sec"] = st.value("workspace_remaining_sec", 0);
+                            item["filter_mode"] = st.value("filter_mode", core::filter_mode_to_string(w.filter_mode));
+                            item["filter_level"] = st.value("filter_level", core::filter_level_to_string(w.filter_level));
+                            item["ai_model"] = st.value("ai_model", core::ai_model_to_string(w.ai_provider));
 
-                        // Filter sessions: ensure host_admin is completely excluded from peers
-                        nlohmann::json peers_arr = nlohmann::json::array();
-                        if (st.contains("sessions") && st["sessions"].is_array()) {
-                            for (const auto& s : st["sessions"]) {
-                                std::string ident = s.value("identity", s.value("name", ""));
-                                std::string atype = s.value("auth_type", "");
-                                if (ident == "host_admin" || atype == "Host Admin") continue;
-                                nlohmann::json p = s;
-                                p["id"] = s.contains("id") ? s["id"].get<std::string>() : std::to_string(s.value("session_id", 0U));
-                                p["name"] = ident;
-                                p["ip"] = s.value("remote_endpoint", s.value("ip", ""));
-                                p["authType"] = s.value("authType", atype + " [" + s.value("role", "rw") + "]");
-                                p["connectedAt"] = s.value("connectedAt", core::Utils::format_timestamp(s.value("created_at", 0ULL)));
-                                p["transferred"] = s.value("transferred", "Active (Live)");
-                                peers_arr.push_back(p);
+                            // Filter sessions: ensure host_admin is completely excluded from peers
+                            nlohmann::json peers_arr = nlohmann::json::array();
+                            if (st.contains("sessions") && st["sessions"].is_array()) {
+                                for (const auto& s : st["sessions"]) {
+                                    std::string ident = s.value("identity", s.value("name", ""));
+                                    std::string atype = s.value("auth_type", "");
+                                    if (ident == "host_admin" || atype == "Host Admin") continue;
+                                    nlohmann::json p = s;
+                                    p["id"] = s.contains("id") ? s["id"].get<std::string>() : std::to_string(s.value("session_id", 0U));
+                                    p["name"] = ident;
+                                    p["ip"] = s.value("remote_endpoint", s.value("ip", ""));
+                                    p["authType"] = s.value("authType", atype + " [" + s.value("role", "rw") + "]");
+                                    p["connectedAt"] = s.value("connectedAt", core::Utils::format_timestamp(s.value("created_at", 0ULL)));
+                                    p["transferred"] = s.value("transferred", "Active (Live)");
+                                    peers_arr.push_back(p);
+                                }
+                            }
+                            item["peers"] = peers_arr;
+                        } else {
+                            item["otp_rw"] = "-";
+                            item["otp_r"] = "-";
+                            item["otp_w"] = "-";
+                            item["otp"] = "-";
+                            item["ttl"] = 0;
+                            item["maxTtl"] = 60;
+                            item["step_sec"] = 60;
+                            item["peers"] = nlohmann::json::array();
+                        }
+
+                        // Attach real audit data, quarantined files, and rules for this workspace
+                        auto audit_data = get_cached_workspace_audit(w.path);
+                        item["auditStats"] = audit_data.value("stats", nlohmann::json{{"clean", 0}, {"quarantined", 0}, {"excluded", 0}, {"allowed", 0}});
+                        item["quarantinedFiles"] = audit_data.value("quarantined_files", nlohmann::json::array());
+                        item["cleanFiles"] = audit_data.value("clean_files", nlohmann::json::array());
+                        item["excludedFiles"] = audit_data.value("excluded_files", nlohmann::json::array());
+                        item["allowedFiles"] = audit_data.value("allowed_files", nlohmann::json::array());
+
+                        // Read custom rules from canonical .slug/rules.conf
+                        std::filesystem::path rules_file = w.path / ".slug" / "rules.conf";
+                        if (std::filesystem::exists(rules_file)) {
+                            std::ifstream rf(rules_file);
+                            if (rf.is_open()) {
+                                std::string content((std::istreambuf_iterator<char>(rf)), std::istreambuf_iterator<char>());
+                                item["customRules"] = content;
                             }
                         }
-                        item["peers"] = peers_arr;
-                    } else {
-                        item["otp_rw"] = "-";
-                        item["otp_r"] = "-";
-                        item["otp_w"] = "-";
-                        item["otp"] = "-";
-                        item["ttl"] = 0;
-                        item["maxTtl"] = 60;
-                        item["step_sec"] = 60;
-                        item["peers"] = nlohmann::json::array();
-                    }
 
-                    // Attach real audit data, quarantined files, and rules for this workspace
-                    auto audit_data = get_cached_workspace_audit(w.path);
-                    item["auditStats"] = audit_data.value("stats", nlohmann::json{{"clean", 0}, {"quarantined", 0}, {"excluded", 0}, {"allowed", 0}});
-                    item["quarantinedFiles"] = audit_data.value("quarantined_files", nlohmann::json::array());
-                    item["cleanFiles"] = audit_data.value("clean_files", nlohmann::json::array());
-                    item["excludedFiles"] = audit_data.value("excluded_files", nlohmann::json::array());
-                    item["allowedFiles"] = audit_data.value("allowed_files", nlohmann::json::array());
+                        // Read audit log if exists
+                        std::filesystem::path log_file = w.path / ".slug" / "audit.log";
+                        nlohmann::json log_arr = nlohmann::json::array();
+                        if (std::filesystem::exists(log_file)) {
+                            std::ifstream lf(log_file);
+                            std::string line;
+                            std::vector<std::string> lines;
+                            while (std::getline(lf, line)) {
+                                if (!line.empty()) lines.push_back(line);
+                            }
+                            size_t start = lines.size() > 20 ? (lines.size() - 20) : 0;
+                            for (size_t li = lines.size(); li > start; --li) {
+                                log_arr.push_back(lines[li - 1]);
+                            }
+                        }
+                        // Load persistent ACL users from workspace's .slug/acl.db
+                        std::filesystem::path acl_file = w.path / ".slug" / "acl.db";
+                        nlohmann::json users_arr = nlohmann::json::array();
+                        if (std::filesystem::exists(acl_file)) {
+                            core::AclManager ws_acl(acl_file);
+                            auto u_list = ws_acl.list_users();
+                            uint64_t now_ts = core::Utils::current_timestamp();
+                            for (const auto& u : u_list) {
+                                nlohmann::json u_obj;
+                                u_obj["username"] = u.username;
+                                u_obj["role"] = core::role_to_string(u.role);
+                                u_obj["roleName"] = (u.role == core::Role::READ_WRITE) ? "[RW] Toàn Quyền (Đọc & Ghi)" : ((u.role == core::Role::READ_ONLY) ? "[R] Chỉ Đọc (Tải Về)" : "[W] GỬI LÊN (Chỉ Cho Tải Lên)");
+                                u_obj["ttl"] = (u.expires_at > now_ts) ? (u.expires_at - now_ts) : 0;
+                                u_obj["status"] = u.is_expired(now_ts) ? "Hết Hạn" : (u.expires_at > 0 ? ("Còn " + std::to_string((u.expires_at - now_ts) / 3600) + "h") : "Permanent (∞)");
+                                u_obj["createdAt"] = core::Utils::format_timestamp(u.created_at);
+                                u_obj["revoked"] = u.revoked;
+                                users_arr.push_back(u_obj);
+                            }
+                        }
+                        item["users"] = users_arr;
+                        item["logs"] = log_arr;
 
-                    // Read custom rules from canonical .slug/rules.conf
-                    std::filesystem::path rules_file = w.path / ".slug" / "rules.conf";
-                    if (std::filesystem::exists(rules_file)) {
-                        std::ifstream rf(rules_file);
-                        if (rf.is_open()) {
-                            std::string content((std::istreambuf_iterator<char>(rf)), std::istreambuf_iterator<char>());
-                            item["customRules"] = content;
-                        }
+                        arr.push_back(item);
                     }
-
-                    // Read audit log if exists
-                    std::filesystem::path log_file = w.path / ".slug" / "audit.log";
-                    nlohmann::json log_arr = nlohmann::json::array();
-                    if (std::filesystem::exists(log_file)) {
-                        std::ifstream lf(log_file);
-                        std::string line;
-                        std::vector<std::string> lines;
-                        while (std::getline(lf, line)) {
-                            if (!line.empty()) lines.push_back(line);
-                        }
-                        size_t start = lines.size() > 20 ? (lines.size() - 20) : 0;
-                        for (size_t li = lines.size(); li > start; --li) {
-                            log_arr.push_back(lines[li - 1]);
-                        }
-                    }
-                    // Load persistent ACL users from workspace's .slug/acl.db
-                    std::filesystem::path acl_file = w.path / ".slug" / "acl.db";
-                    nlohmann::json users_arr = nlohmann::json::array();
-                    if (std::filesystem::exists(acl_file)) {
-                        core::AclManager ws_acl(acl_file);
-                        auto u_list = ws_acl.list_users();
-                        uint64_t now_ts = core::Utils::current_timestamp();
-                        for (const auto& u : u_list) {
-                            nlohmann::json u_obj;
-                            u_obj["username"] = u.username;
-                            u_obj["role"] = core::role_to_string(u.role);
-                            u_obj["roleName"] = (u.role == core::Role::READ_WRITE) ? "[RW] Toàn Quyền (Đọc & Ghi)" : ((u.role == core::Role::READ_ONLY) ? "[R] Chỉ Đọc (Tải Về)" : "[W] GỬI LÊN (Chỉ Cho Tải Lên)");
-                            u_obj["ttl"] = (u.expires_at > now_ts) ? (u.expires_at - now_ts) : 0;
-                            u_obj["status"] = u.is_expired(now_ts) ? "Hết Hạn" : (u.expires_at > 0 ? ("Còn " + std::to_string((u.expires_at - now_ts) / 3600) + "h") : "Permanent (∞)");
-                            u_obj["createdAt"] = core::Utils::format_timestamp(u.created_at);
-                            u_obj["revoked"] = u.revoked;
-                            users_arr.push_back(u_obj);
-                        }
-                    }
-                    item["users"] = users_arr;
-                    item["logs"] = log_arr;
-
-                    arr.push_back(item);
+                    nlohmann::json res;
+                    res["status"] = "ok";
+                    res["workspaces"] = arr;
+                    send_portal_http(sock, 200, "OK", "application/json", res.dump());
+                } catch (const std::exception& e) {
+                    SLUG_LOG_ERROR("Exception in /api/host/workspaces: " << e.what());
+                    send_portal_http(sock, 500, "Internal Server Error", "application/json", "{\"status\":\"error\",\"message\":\"Internal error querying workspaces\"}");
                 }
-                nlohmann::json res;
-                res["status"] = "ok";
-                res["workspaces"] = arr;
-                send_portal_http(sock, 200, "OK", "application/json", res.dump());
                 return;
             }
 
@@ -5462,6 +5489,11 @@ int cmd_portal(int argc, char* argv[]) {
                 sock.send_all(tunnel_resp);
             } else {
                 send_portal_http(sock, 502, "Bad Gateway", "text/plain", "Error: Remote Post-Quantum workspace failed to respond.");
+            }
+            } catch (const std::exception& e) {
+                SLUG_LOG_ERROR("Unhandled exception in portal HTTP worker thread: " << e.what());
+            } catch (...) {
+                SLUG_LOG_ERROR("Unknown exception in portal HTTP worker thread");
             }
         }).detach();
     }
