@@ -204,7 +204,10 @@ WorkspaceManifest ManifestBuilder::build(
         uint64_t cur_sz = 0;
         try { cur_sz = fs::file_size(entry.path(), ec); } catch (...) {}
         uint64_t cur_mtime = 0;
-        try { cur_mtime = static_cast<uint64_t>(fs::last_write_time(entry.path(), ec).time_since_epoch().count()); } catch (...) {}
+        try {
+            auto sctp = std::chrono::file_clock::to_sys(fs::last_write_time(entry.path(), ec));
+            cur_mtime = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+        } catch (...) {}
 
         std::string current_hash;
         std::vector<ChunkInfo> cached_chunks;

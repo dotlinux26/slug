@@ -103,8 +103,7 @@ public:
         core::Role role,
         core::ScanPolicy scan_policy = core::ScanPolicy::INSTANT)
     {
-        auto manifest = sync::ManifestBuilder::build(workspace_root, 1, static_cast<uint8_t>(suite_id), false, core::FilterMode::PROTECTED, core::FilterLevel::LEVEL_3_ENTROPY, core::AiModelProvider::OLLAMA);
-        return render_directory_listing(workspace_root, port, suite_id, rel_subpath, identity, role, manifest, scan_policy);
+        return render_directory_listing(workspace_root, port, suite_id, rel_subpath, identity, role, std::vector<core::ExplorerItem>{}, scan_policy);
     }
 
     static std::string render_directory_listing(
@@ -121,42 +120,43 @@ public:
         while (!norm_sub.empty() && norm_sub.front() == '/') norm_sub.erase(0, 1);
         while (!norm_sub.empty() && norm_sub.back() == '/') norm_sub.pop_back();
 
-        uint64_t total_workspace_size = 0;
-        for (const auto& f : manifest.files) {
-            total_workspace_size += f.size;
-        }
-
-        struct ItemRow {
-            bool is_dir;
-            std::string name;
-            std::string full_rel_path;
-            uint64_t size;
-            std::string type_str;
-            std::string status;
-            std::string status_badge_class;
-            std::string status_detail;
-            std::string blake3;
-            bool selectable;
-            std::string scan_status;
-        };
-
-        std::vector<ItemRow> items;
+        std::vector<core::ExplorerItem> items;
         std::set<std::string> seen_dirs;
-        std::map<std::string, uint64_t> dir_sizes;
 
-        // Process available files
         for (const auto& f : manifest.files) {
             std::string p = f.relative_path;
             if (norm_sub.empty()) {
                 size_t slash = p.find('/');
                 if (slash != std::string::npos) {
                     std::string dname = p.substr(0, slash);
-                    dir_sizes[dname] += f.size;
                     if (seen_dirs.insert(dname).second) {
-                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
+                        core::ExplorerItem it;
+                        it.is_dir = true;
+                        it.name = dname;
+                        it.full_rel_path = dname;
+                        it.type_str = "folder";
+                        it.status = "DIR";
+                        it.status_badge_class = "badge-excluded";
+                        it.status_detail = "Directory";
+                        it.selectable = false;
+                        items.push_back(std::move(it));
                     }
                 } else {
-                    items.push_back({false, p, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true, f.scan_status});
+                    core::ExplorerItem it;
+                    it.is_dir = false;
+                    it.name = p;
+                    it.full_rel_path = p;
+                    it.size = f.size;
+                    it.mtime = f.mtime;
+                    it.mtime_str = (f.mtime > 0) ? core::Utils::format_timestamp(f.mtime) : "-";
+                    it.type_str = "file";
+                    it.status = "AVAILABLE";
+                    it.status_badge_class = "badge-available";
+                    it.status_detail = "Available for download";
+                    it.blake3 = f.file_blake3_hash;
+                    it.selectable = true;
+                    it.scan_status = f.scan_status;
+                    items.push_back(std::move(it));
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -165,25 +165,39 @@ public:
                     if (slash != std::string::npos) {
                         std::string dname = rem.substr(0, slash);
                         std::string full_d = norm_sub + "/" + dname;
-                        dir_sizes[full_d] += f.size;
                         if (seen_dirs.insert(full_d).second) {
-                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
+                            core::ExplorerItem it;
+                            it.is_dir = true;
+                            it.name = dname;
+                            it.full_rel_path = full_d;
+                            it.type_str = "folder";
+                            it.status = "DIR";
+                            it.status_badge_class = "badge-excluded";
+                            it.status_detail = "Directory";
+                            it.selectable = false;
+                            items.push_back(std::move(it));
                         }
                     } else {
-                        items.push_back({false, rem, p, f.size, "file", "AVAILABLE", "badge-available", "Available for download", f.file_blake3_hash, true, f.scan_status});
+                        core::ExplorerItem it;
+                        it.is_dir = false;
+                        it.name = rem;
+                        it.full_rel_path = p;
+                        it.size = f.size;
+                        it.mtime = f.mtime;
+                        it.mtime_str = (f.mtime > 0) ? core::Utils::format_timestamp(f.mtime) : "-";
+                        it.type_str = "file";
+                        it.status = "AVAILABLE";
+                        it.status_badge_class = "badge-available";
+                        it.status_detail = "Available for download";
+                        it.blake3 = f.file_blake3_hash;
+                        it.selectable = true;
+                        it.scan_status = f.scan_status;
+                        items.push_back(std::move(it));
                     }
                 }
             }
         }
 
-        // Update directory sizes
-        for (auto& item : items) {
-            if (item.is_dir) {
-                item.size = dir_sizes[item.full_rel_path];
-            }
-        }
-
-        // Process skipped / filtered / quarantined files (Standardized to BLOCKED)
         for (const auto& s : manifest.skipped) {
             std::string p = s.relative_path;
             std::string st_label = "BLOCKED";
@@ -195,10 +209,29 @@ public:
                 if (slash != std::string::npos) {
                     std::string dname = p.substr(0, slash);
                     if (seen_dirs.insert(dname).second) {
-                        items.push_back({true, dname, dname, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
+                        core::ExplorerItem it;
+                        it.is_dir = true;
+                        it.name = dname;
+                        it.full_rel_path = dname;
+                        it.type_str = "folder";
+                        it.status = "DIR";
+                        it.status_badge_class = "badge-excluded";
+                        it.status_detail = "Directory";
+                        it.selectable = false;
+                        items.push_back(std::move(it));
                     }
                 } else {
-                    items.push_back({false, p, p, 0, "file", st_label, badge_cls, detail, "", false, ""});
+                    core::ExplorerItem it;
+                    it.is_dir = false;
+                    it.name = p;
+                    it.full_rel_path = p;
+                    it.size = 0;
+                    it.type_str = "file";
+                    it.status = st_label;
+                    it.status_badge_class = badge_cls;
+                    it.status_detail = detail;
+                    it.selectable = false;
+                    items.push_back(std::move(it));
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -208,19 +241,60 @@ public:
                         std::string dname = rem.substr(0, slash);
                         std::string full_d = norm_sub + "/" + dname;
                         if (seen_dirs.insert(full_d).second) {
-                            items.push_back({true, dname, full_d, 0, "folder", "DIR", "badge-excluded", "Directory", "", false, ""});
+                            core::ExplorerItem it;
+                            it.is_dir = true;
+                            it.name = dname;
+                            it.full_rel_path = full_d;
+                            it.type_str = "folder";
+                            it.status = "DIR";
+                            it.status_badge_class = "badge-excluded";
+                            it.status_detail = "Directory";
+                            it.selectable = false;
+                            items.push_back(std::move(it));
                         }
                     } else {
-                        items.push_back({false, rem, p, 0, "file", st_label, badge_cls, detail, "", false, ""});
+                        core::ExplorerItem it;
+                        it.is_dir = false;
+                        it.name = rem;
+                        it.full_rel_path = p;
+                        it.size = 0;
+                        it.type_str = "file";
+                        it.status = st_label;
+                        it.status_badge_class = badge_cls;
+                        it.status_detail = detail;
+                        it.selectable = false;
+                        items.push_back(std::move(it));
                     }
                 }
             }
         }
 
-        std::sort(items.begin(), items.end(), [](const ItemRow& a, const ItemRow& b) {
+        std::sort(items.begin(), items.end(), [](const core::ExplorerItem& a, const core::ExplorerItem& b) {
             if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
             return a.name < b.name;
         });
+
+        return render_directory_listing(workspace_root, port, suite_id, rel_subpath, identity, role, items, scan_policy);
+    }
+
+    static std::string render_directory_listing(
+        const std::filesystem::path& workspace_root,
+        uint16_t port,
+        core::SuiteID suite_id,
+        const std::string& rel_subpath,
+        const std::string& identity,
+        core::Role role,
+        const std::vector<core::ExplorerItem>& items,
+        core::ScanPolicy scan_policy = core::ScanPolicy::INSTANT)
+    {
+        std::string norm_sub = rel_subpath;
+        while (!norm_sub.empty() && norm_sub.front() == '/') norm_sub.erase(0, 1);
+        while (!norm_sub.empty() && norm_sub.back() == '/') norm_sub.pop_back();
+
+        uint64_t total_workspace_size = 0;
+        for (const auto& it : items) {
+            total_workspace_size += it.size;
+        }
 
         std::string parent_dir = "";
         if (!norm_sub.empty()) {
@@ -805,7 +879,7 @@ public:
 
         h << "<div class='ws-summary-box'>"
           << "<div><strong>REMOTE WORKSPACE:</strong> " << html_escape(workspace_root.filename().string()) << " (Port " << port << ")</div>"
-          << "<div>Available: <strong>" << core::Utils::format_size(total_workspace_size) << "</strong> (" << manifest.files.size() << " files) &bull; Filtered: <strong>" << manifest.skipped.size() << "</strong> items (" << blocked_in_dir << " tệp bị chặn trong thư mục này)</div>"
+          << "<div>Available: <strong>" << core::Utils::format_size(total_workspace_size) << "</strong> (" << items.size() << " mục) &bull; Filtered: <strong>" << blocked_in_dir << "</strong> tệp bị chặn trong thư mục này</div>"
           << "</div>"
 
           << "<div class='dropzone' id='drop-container' style='margin-bottom:14px; margin-top:0; border:2px dashed var(--border-primary); border-radius:var(--radius-sharp); padding:16px; text-align:center; color:var(--text-muted); font-size:12px; font-family:\"JetBrains Mono\", monospace; background:#fdfefe;'>"
@@ -847,15 +921,16 @@ public:
             h << "<table><thead><tr>"
               << "<th style='width:32px;'><input type='checkbox' id='master-check' onchange='toggleSelectAll(this)' title='Select All Available'></th>"
               << "<th>NAME</th>"
-              << "<th style='width:80px;'>TYPE</th>"
-              << "<th style='width:100px;'>SIZE</th>"
-              << "<th style='width:150px;'>STATUS</th>"
+              << "<th style='width:70px;'>TYPE</th>"
+              << "<th style='width:90px;'>SIZE</th>"
+              << "<th style='width:160px;'>MODIFIED</th>"
+              << "<th style='width:140px;'>STATUS</th>"
               << "<th style='width:220px; text-align:right;'>HÀNH ĐỘNG</th>"
               << "</tr></thead><tbody>";
 
             if (!norm_sub.empty()) {
                 h << "<tr class='item-row'><td></td>"
-                  << "<td colspan='5'><a class='entry-name' href='/drop" << (parent_dir.empty() ? "" : "?dir=" + parent_dir) << "'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> .. (Parent Directory)</a></td>"
+                  << "<td colspan='6'><a class='entry-name' href='/drop" << (parent_dir.empty() ? "" : "?dir=" + parent_dir) << "'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> .. (Parent Directory)</a></td>"
                   << "</tr>";
             }
 
@@ -870,6 +945,7 @@ public:
                       << "<td><a class='entry-name' href='/drop?dir=" << html_escape(item.full_rel_path) << "'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> " << html_escape(item.name) << "/</a></td>"
                       << "<td style='color:var(--text-muted);'>folder</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
+                      << "<td style='color:var(--text-muted); font-size:11px;'><code style='font-size:11px; color:var(--text-muted);'>" << (item.mtime_str.empty() ? "-" : item.mtime_str) << "</code></td>"
                       << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
                       << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'><a class='act-btn' href='/drop?dir=" << html_escape(item.full_rel_path) << "'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duyệt</a><button type='button' class='act-btn' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>" << admin_dir_act << "</div></td>";
                 } else {
@@ -889,7 +965,7 @@ public:
                     if (!item.selectable) {
                         act = "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
                     } else if (block_download_secure) {
-                        act = "<button type='button' class='act-btn disabled' style='opacity:0.5; cursor:not-allowed;' disabled title='Chế độ Secure Share: Đang chờ kiểm toán bảo mật hoàn tất'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> ⏳ Chờ Quét</button><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>";
+                        act = "<button type='button' class='act-btn disabled' style='opacity:0.5; cursor:not-allowed;' disabled title='Chế độ Secure Share: Đang chờ kiểm toán bảo mật hoàn tất'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' style='vertical-align:middle; margin-right:3px;'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>Chờ Quét</button><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>";
                     } else {
                         act = "<button type='button' class='act-btn' onclick='downloadFileWithProgress(\"" + js_escape(item.full_rel_path) + "\", \"" + js_escape(item.name) + "\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> Tải Về</button><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>";
                     }
@@ -909,7 +985,7 @@ public:
                         } else if (item.scan_status == "SCANNED") {
                             scan_lbl = "<span class='badge' style='background:#dafbe1; color:#1a7f37; border:1px solid #aceebb; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='Nội dung đã được bộ lọc kiểm tra an toàn'>SCANNED</span>";
                         } else if (item.scan_status == "PENDING") {
-                            scan_lbl = "<span class='badge' style='background:#fff8c5; color:#9a6700; border:1px solid #d4a72c; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='Đang chờ tiến trình kiểm toán bảo mật nền'>⏳ PENDING</span>";
+                            scan_lbl = "<span class='badge' style='background:#fff8c5; color:#9a6700; border:1px solid #d4a72c; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap; display:inline-flex; align-items:center; gap:3px;' title='Đang chờ tiến trình kiểm toán bảo mật nền'><svg width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><polyline points='12 6 12 12 16 14'></polyline></svg>PENDING</span>";
                         }
                     }
 
@@ -927,6 +1003,7 @@ public:
                       << "<td><span style='display:inline-flex; align-items:center; gap:6px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'></path><polyline points='14 2 14 8 20 8'></polyline></svg> " << html_escape(item.name) << "</span></td>"
                       << "<td style='color:var(--text-muted);'>file</td>"
                       << "<td>" << (item.size > 0 ? core::Utils::format_size(item.size) : "-") << "</td>"
+                      << "<td style='color:var(--text-muted); font-size:11px;'><code style='font-size:11px; color:var(--text-muted);'>" << (item.mtime_str.empty() ? "-" : item.mtime_str) << "</code></td>"
                       << "<td>" << status_cell << "</td>"
                       << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'>" << act << "</div></td>";
                 }
@@ -934,7 +1011,7 @@ public:
             }
 
             if (items.empty() && norm_sub.empty()) {
-                h << "<tr><td colspan='6' style='text-align:center; color:var(--text-muted); padding:24px;'>No files or folders in this workspace scope.</td></tr>";
+                h << "<tr><td colspan='7' style='text-align:center; color:var(--text-muted); padding:24px;'>No files or folders in this workspace scope.</td></tr>";
             }
 
             h << "</tbody></table>";
@@ -2545,17 +2622,17 @@ public:
           << "<strong style='font-size:12px; font-family:\"JetBrains Mono\", monospace;'>Chế Độ Chia Sẻ:</strong>"
           << "<label style='display:inline-flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;'>"
           << "<input type='radio' name='admin-scan-policy' value='instant' onchange='changeAdminPolicy(this.value)' " << (scan_policy == core::ScanPolicy::INSTANT ? "checked" : "") << ">"
-          << "<span style='color:#0969da; font-weight:600;'>⚡ Instant Share</span>"
+          << "<span style='color:#0969da; font-weight:600; display:inline-flex; align-items:center; gap:4px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'></polygon></svg> Instant Share</span>"
           << "</label>"
           << "<label style='display:inline-flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;'>"
           << "<input type='radio' name='admin-scan-policy' value='secure' onchange='changeAdminPolicy(this.value)' " << (scan_policy == core::ScanPolicy::SECURE ? "checked" : "") << ">"
-          << "<span style='color:#1a7f37; font-weight:600;'>🔒 Secure Share</span>"
+          << "<span style='color:#1a7f37; font-weight:600; display:inline-flex; align-items:center; gap:4px;'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2' ry='2'></rect><path d='M7 11V7a5 5 0 0 1 10 0v4'></path></svg> Secure Share</span>"
           << "</label>"
           << "</div>"
           << "<div style='display:flex; gap:6px;'>"
-          << "<button type='button' id='btn-audit-pause' class='btn-sec btn-sm' onclick='pauseBgScan()'>⏸️ Tạm Dừng</button>"
-          << "<button type='button' id='btn-audit-resume' class='btn-sec btn-sm' onclick='resumeBgScan()'>▶️ Tiếp Tục</button>"
-          << "<button type='button' id='btn-audit-cancel' class='btn-danger btn-sm' onclick='cancelBgScan()'>⏹️ Hủy Quét</button>"
+          << "<button type='button' id='btn-audit-pause' class='btn-sec btn-sm' onclick='pauseBgScan()' style='display:inline-flex; align-items:center; gap:4px;'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='6' y='4' width='4' height='16'></rect><rect x='14' y='4' width='4' height='16'></rect></svg> Tạm Dừng</button>"
+          << "<button type='button' id='btn-audit-resume' class='btn-sec btn-sm' onclick='resumeBgScan()' style='display:inline-flex; align-items:center; gap:4px;'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polygon points='5 3 19 12 5 21 5 3'></polygon></svg> Tiếp Tục</button>"
+          << "<button type='button' id='btn-audit-cancel' class='btn-danger btn-sm' onclick='cancelBgScan()' style='display:inline-flex; align-items:center; gap:4px;'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'></circle><rect x='9' y='9' width='6' height='6'></rect></svg> Hủy Quét</button>"
           << "</div>"
           << "</div>"
           << "</div>"
@@ -3550,7 +3627,8 @@ const ICONS = {
   cpu: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>`,
   zap: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>`,
   database: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>`,
-  play: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`
+  play: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`,
+  pause: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`
 };
 
 function escapeHtml(str) {
@@ -6133,14 +6211,14 @@ window.onload = function() {
             <label style="display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid #d0d7de; border-radius:2px; cursor:pointer; font-size:12px; background:#f6f8fa;">
               <input type="radio" name="host-scan-policy" value="instant" checked style="cursor:pointer;">
               <div>
-                <strong style="color:#0969da;">⚡ Instant Share</strong>
+                <strong style="color:#0969da; display:inline-flex; align-items:center; gap:4px;">${ICONS.zap} Instant Share</strong>
                 <div style="font-size:10px; color:var(--text-muted);">Chia sẻ ngay, tải tệp lập tức. Tự động quét nền. [Mặc Định]</div>
               </div>
             </label>
             <label style="display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid #d0d7de; border-radius:2px; cursor:pointer; font-size:12px; background:#f6f8fa;">
               <input type="radio" name="host-scan-policy" value="secure" style="cursor:pointer;">
               <div>
-                <strong style="color:#1a7f37;">🔒 Secure Share</strong>
+                <strong style="color:#1a7f37; display:inline-flex; align-items:center; gap:4px;">${ICONS.lock} Secure Share</strong>
                 <div style="font-size:10px; color:var(--text-muted);">Chia sẻ ngay, nhưng chỉ tải tệp đã xác minh CLEAN.</div>
               </div>
             </label>

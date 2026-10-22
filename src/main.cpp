@@ -2217,23 +2217,26 @@ int cmd_list(int argc, char* argv[]) {
     std::cout << "Scope: " << (norm_sub.empty() ? "[root]" : norm_sub) << " | Role: " << core::role_to_string(conn.role) << " | Crypto: " << client.negotiated_suite_name() << "\n" << std::endl;
 
     std::cout << std::left
-              << std::setw(32) << "NAME"
+              << std::setw(34) << "NAME"
               << std::setw(10) << "TYPE"
               << std::setw(12) << "SIZE"
+              << std::setw(21) << "MODIFIED"
               << "STATUS"
               << std::endl;
-    std::cout << std::string(80, '-') << std::endl;
+    std::cout << std::string(95, '-') << std::endl;
 
     struct Row {
         bool is_dir;
         std::string name;
         uint64_t size{0};
+        uint64_t mtime{0};
         std::string type;
         std::string status;
     };
     std::vector<Row> rows;
     std::set<std::string> seen_dirs;
     std::map<std::string, uint64_t> dir_sizes;
+    std::map<std::string, uint64_t> dir_mtimes;
 
     auto format_skipped_status = [](const sync::ManifestSkippedEntry& s) -> std::string {
         if (s.status == "AI_FLAGGED") {
@@ -2251,12 +2254,12 @@ int cmd_list(int argc, char* argv[]) {
     if (recursive) {
         for (const auto& f : manifest.files) {
             if (norm_sub.empty() || f.relative_path.rfind(norm_sub + "/", 0) == 0 || f.relative_path == norm_sub) {
-                rows.push_back({false, f.relative_path, f.size, "file", "Available"});
+                rows.push_back({false, f.relative_path, f.size, f.mtime, "file", "Available"});
             }
         }
         for (const auto& s : manifest.skipped) {
             if (norm_sub.empty() || s.relative_path.rfind(norm_sub + "/", 0) == 0 || s.relative_path == norm_sub) {
-                rows.push_back({false, s.relative_path, 0, "file", format_skipped_status(s)});
+                rows.push_back({false, s.relative_path, 0, 0, "file", format_skipped_status(s)});
             }
         }
     } else {
@@ -2267,11 +2270,12 @@ int cmd_list(int argc, char* argv[]) {
                 if (slash != std::string::npos) {
                     std::string dname = p.substr(0, slash);
                     dir_sizes[dname] += f.size;
+                    if (f.mtime > dir_mtimes[dname]) dir_mtimes[dname] = f.mtime;
                     if (seen_dirs.insert(dname).second) {
-                        rows.push_back({true, dname + "/", 0, "folder", "Available"});
+                        rows.push_back({true, dname + "/", 0, 0, "folder", "Available"});
                     }
                 } else {
-                    rows.push_back({false, p, f.size, "file", "Available"});
+                    rows.push_back({false, p, f.size, f.mtime, "file", "Available"});
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -2281,11 +2285,12 @@ int cmd_list(int argc, char* argv[]) {
                         std::string dname = rem.substr(0, slash);
                         std::string full_d = norm_sub + "/" + dname;
                         dir_sizes[full_d] += f.size;
+                        if (f.mtime > dir_mtimes[full_d]) dir_mtimes[full_d] = f.mtime;
                         if (seen_dirs.insert(full_d).second) {
-                            rows.push_back({true, dname + "/", 0, "folder", "Available"});
+                            rows.push_back({true, dname + "/", 0, 0, "folder", "Available"});
                         }
                     } else {
-                        rows.push_back({false, rem, f.size, "file", "Available"});
+                        rows.push_back({false, rem, f.size, f.mtime, "file", "Available"});
                     }
                 }
             }
@@ -2295,6 +2300,7 @@ int cmd_list(int argc, char* argv[]) {
             if (r.is_dir) {
                 std::string full_d = norm_sub.empty() ? r.name.substr(0, r.name.size() - 1) : (norm_sub + "/" + r.name.substr(0, r.name.size() - 1));
                 r.size = dir_sizes[full_d];
+                r.mtime = dir_mtimes[full_d];
             }
         }
 
@@ -2306,10 +2312,10 @@ int cmd_list(int argc, char* argv[]) {
                 if (slash != std::string::npos) {
                     std::string dname = p.substr(0, slash);
                     if (seen_dirs.insert(dname).second) {
-                        rows.push_back({true, dname + "/", 0, "folder", st});
+                        rows.push_back({true, dname + "/", 0, 0, "folder", st});
                     }
                 } else {
-                    rows.push_back({false, p, 0, "file", st});
+                    rows.push_back({false, p, 0, 0, "file", st});
                 }
             } else {
                 if (p.rfind(norm_sub + "/", 0) == 0) {
@@ -2318,10 +2324,10 @@ int cmd_list(int argc, char* argv[]) {
                     if (slash != std::string::npos) {
                         std::string dname = rem.substr(0, slash);
                         if (seen_dirs.insert(dname).second) {
-                            rows.push_back({true, dname + "/", 0, "folder", st});
+                            rows.push_back({true, dname + "/", 0, 0, "folder", st});
                         }
                     } else {
-                        rows.push_back({false, rem, 0, "file", st});
+                        rows.push_back({false, rem, 0, 0, "file", st});
                     }
                 }
             }
@@ -2335,10 +2341,12 @@ int cmd_list(int argc, char* argv[]) {
 
     for (const auto& r : rows) {
         std::string sz = (r.size > 0) ? core::Utils::format_size(r.size) : "-";
+        std::string mtime_str = (r.mtime > 0) ? core::Utils::format_timestamp(r.mtime) : "-";
         std::cout << std::left
-                  << std::setw(32) << r.name
+                  << std::setw(34) << r.name
                   << std::setw(10) << r.type
                   << std::setw(12) << sz
+                  << std::setw(21) << mtime_str
                   << r.status
                   << std::endl;
     }
@@ -2346,7 +2354,7 @@ int cmd_list(int argc, char* argv[]) {
     uint64_t total_avail = 0;
     for (const auto& f : manifest.files) total_avail += f.size;
 
-    std::cout << std::string(80, '-') << std::endl;
+    std::cout << std::string(95, '-') << std::endl;
     std::cout << "Total: " << manifest.files.size() << " available file(s) (" << core::Utils::format_size(total_avail) << ") | "
               << manifest.skipped.size() << " excluded/quarantined item(s)\n" << std::endl;
 

@@ -147,6 +147,9 @@ public:
     std::string get_or_build_manifest_json();
     void invalidate_manifest_cache();
 
+    // Fast single-level Explorer listing without deep recursive tree traversal or eager chunking
+    std::vector<core::ExplorerItem> list_explorer_items(const std::string& rel_subpath);
+
 private:
     std::filesystem::path workspace_root_;
     uint16_t port_;

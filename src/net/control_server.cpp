@@ -983,8 +983,8 @@ void ControlServer::handle_client(platform::TcpSocket client) {
 sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
     std::lock_guard<std::mutex> lock(manifest_mutex_);
     uint64_t now = core::Utils::current_timestamp();
-    // Cache for at most 2 seconds (instead of 300s) so host filesystem changes are reflected immediately
-    if (!manifest_dirty_ && cached_manifest_.has_value() && (now - manifest_cached_at_ < 2)) {
+    // Cache until explicitly invalidated (e.g. upload, filter change, refresh)
+    if (!manifest_dirty_ && cached_manifest_.has_value()) {
         return *cached_manifest_;
     }
 
@@ -999,7 +999,7 @@ sync::WorkspaceManifest ControlServer::get_or_build_manifest() {
 std::string ControlServer::get_or_build_manifest_json() {
     std::lock_guard<std::mutex> lock(manifest_mutex_);
     uint64_t now = core::Utils::current_timestamp();
-    if (!manifest_dirty_ && !cached_manifest_json_.empty() && (now - manifest_cached_at_ < 5)) {
+    if (!manifest_dirty_ && !cached_manifest_json_.empty()) {
         return cached_manifest_json_;
     }
 
@@ -1018,6 +1018,162 @@ void ControlServer::invalidate_manifest_cache() {
     cached_manifest_json_.clear();
     vfs_.reload_policy();
 }
+
+std::vector<core::ExplorerItem> ControlServer::list_explorer_items(const std::string& rel_subpath) {
+    std::string norm_sub = rel_subpath;
+    while (!norm_sub.empty() && norm_sub.front() == '/') norm_sub.erase(0, 1);
+    while (!norm_sub.empty() && norm_sub.back() == '/') norm_sub.pop_back();
+
+    std::filesystem::path target_dir = workspace_root_;
+    if (!norm_sub.empty()) {
+        target_dir = workspace_root_ / platform::PathUtils::u8_to_path(norm_sub);
+    }
+
+    std::error_code ec;
+    // Security check: ensure target_dir stays strictly inside workspace_root_
+    auto rel_check = std::filesystem::relative(target_dir, workspace_root_, ec);
+    if (ec || rel_check.empty() || rel_check.string().find("..") != std::string::npos) {
+        target_dir = workspace_root_;
+        norm_sub = "";
+    }
+
+    if (!std::filesystem::exists(target_dir, ec) || !std::filesystem::is_directory(target_dir, ec)) {
+        return {};
+    }
+
+    std::filesystem::path rules_file = workspace_root_ / ".slug" / "rules.conf";
+    policy::PolicyEngine policy_engine(workspace_root_, rules_file);
+
+    std::filesystem::path index_file = workspace_root_ / ".slug" / "index.db";
+    ai::StatefulAuditIndex audit_index(index_file);
+
+    std::vector<core::ExplorerItem> items;
+
+    for (std::filesystem::directory_iterator it(target_dir, std::filesystem::directory_options::skip_permission_denied, ec), end;
+         it != end; ++it) {
+        if (ec) { ec.clear(); continue; }
+
+        std::filesystem::path p = it->path();
+        std::string filename = platform::PathUtils::path_to_u8(p.filename());
+        std::string lower = filename;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+        // Never expose internal slug or git metadata
+        if (lower == ".git" || lower == ".slug") continue;
+
+        std::string full_rel = norm_sub.empty() ? filename : (norm_sub + "/" + filename);
+        std::string proto_path = platform::PathUtils::to_protocol_path(p.lexically_relative(workspace_root_));
+
+        uint64_t file_mtime = 0;
+        std::string file_mtime_str = "-";
+        std::error_code ec_mtime;
+        auto ftime = it->last_write_time(ec_mtime);
+        if (!ec_mtime) {
+            try {
+                auto sctp = std::chrono::file_clock::to_sys(ftime);
+                file_mtime = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+                file_mtime_str = core::Utils::format_timestamp(file_mtime);
+            } catch (...) {
+                file_mtime_str = "-";
+            }
+        }
+
+        if (it->is_directory(ec)) {
+            core::ExplorerItem item;
+            item.is_dir = true;
+            item.name = filename;
+            item.full_rel_path = full_rel;
+            item.size = 0;
+            item.mtime = file_mtime;
+            item.mtime_str = file_mtime_str;
+            item.type_str = "folder";
+            item.status = "DIR";
+            item.status_badge_class = "badge-excluded";
+            item.status_detail = "Directory";
+            item.selectable = false;
+            items.push_back(std::move(item));
+            continue;
+        }
+
+        if (!it->is_regular_file(ec)) continue;
+
+        core::ExplorerItem item;
+        item.is_dir = false;
+        item.name = filename;
+        item.full_rel_path = full_rel;
+        item.size = it->file_size(ec);
+        item.mtime = file_mtime;
+        item.mtime_str = file_mtime_str;
+        item.type_str = "file";
+        item.status = "AVAILABLE";
+        item.status_badge_class = "badge-available";
+        item.status_detail = "Available for download";
+        item.selectable = true;
+
+        bool is_explicitly_allowed = false;
+        if (filter_level_ != core::FilterLevel::LEVEL_0_RAW && filter_mode_ != core::FilterMode::NONE) {
+            bool ignore_gi = (filter_mode_ == core::FilterMode::INCLUDE_IGNORED);
+            auto decision = policy_engine.evaluate(p.lexically_relative(workspace_root_), false, {}, ignore_gi);
+            if (!decision.is_allowed) {
+                if (audit_index.check_cached_status(proto_path, "") == core::AuditStatus::USER_ALLOWED) {
+                    is_explicitly_allowed = true;
+                } else {
+                    item.status = "BLOCKED";
+                    item.status_badge_class = "badge-quarantined";
+                    item.status_detail = decision.reason.empty() ? "Shielded by workspace policy" : decision.reason;
+                    item.selectable = false;
+                    items.push_back(std::move(item));
+                    continue;
+                }
+            }
+            if (!decision.rule_id.empty() && decision.rule_id != "gitignore") {
+                is_explicitly_allowed = true;
+            }
+        }
+
+        // Fast audit check without full disk read/hash/chunk
+        bool is_scannable = ai::AiScanner::is_scannable_file(p);
+        if (!is_scannable) {
+            core::AuditStatus cached = audit_index.check_cached_status(proto_path, "");
+            if (cached == core::AuditStatus::RULE_BLOCKED && !is_explicitly_allowed) {
+                item.status = "BLOCKED";
+                item.status_badge_class = "badge-quarantined";
+                item.status_detail = "Chặn thủ công (Manual Guard)";
+                item.selectable = false;
+            } else {
+                item.scan_status = "";
+            }
+        } else {
+            core::AuditStatus cached = audit_index.check_cached_status(proto_path, "");
+            if (cached == core::AuditStatus::AI_FLAGGED || cached == core::AuditStatus::SMART_FILTER_FLAGGED) {
+                item.status = "BLOCKED";
+                item.status_badge_class = "badge-quarantined";
+                auto e = audit_index.get_entry(proto_path);
+                item.status_detail = e ? e->reason : "Flagged by security guard";
+                item.selectable = false;
+            } else if (cached == core::AuditStatus::RULE_BLOCKED && !is_explicitly_allowed) {
+                item.status = "BLOCKED";
+                item.status_badge_class = "badge-quarantined";
+                item.status_detail = "Chặn thủ công (Manual Guard)";
+                item.selectable = false;
+            } else if (cached == core::AuditStatus::CLEAN || cached == core::AuditStatus::USER_ALLOWED) {
+                item.scan_status = "SCANNED";
+            } else {
+                item.scan_status = "PENDING";
+            }
+        }
+
+        items.push_back(std::move(item));
+    }
+
+    std::sort(items.begin(), items.end(), [](const core::ExplorerItem& a, const core::ExplorerItem& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        return a.name < b.name;
+    });
+
+    return items;
+}
+
 
 ControlServer::BackgroundScanStatus ControlServer::get_background_scan_status() const {
     std::lock_guard<std::mutex> lk(bg_scan_mutex_);
@@ -1186,7 +1342,6 @@ void ControlServer::start_background_scan() {
                             idx.line_number = finding.line_number;
                             idx.reason = finding.reason;
                             audit_idx.update_entry(idx);
-                            invalidate_manifest_cache();
 
                             std::lock_guard<std::mutex> lk(bg_scan_mutex_);
                             bg_scan_status_.scanned_files++;
@@ -1196,7 +1351,6 @@ void ControlServer::start_background_scan() {
                             idx.status = core::AuditStatus::CLEAN;
                             idx.reason = finding.reason.empty() ? "Clean" : finding.reason;
                             audit_idx.update_entry(idx);
-                            invalidate_manifest_cache();
 
                             std::lock_guard<std::mutex> lk(bg_scan_mutex_);
                             bg_scan_status_.scanned_files++;

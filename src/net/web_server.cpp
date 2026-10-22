@@ -281,7 +281,7 @@ void WebServer::revoke_sessions_by_identity(const std::string& identity) {
 }
 
 std::string WebServer::render_directory_listing(const std::string& rel_subpath, const WebSession& session) {
-    auto manifest = control_server_.get_or_build_manifest();
+    auto items = control_server_.list_explorer_items(rel_subpath);
     return WebAssets::render_directory_listing(
         control_server_.workspace_root(),
         control_server_.port(),
@@ -289,7 +289,7 @@ std::string WebServer::render_directory_listing(const std::string& rel_subpath, 
         rel_subpath,
         session.identity,
         session.role,
-        manifest,
+        items,
         control_server_.scan_policy()
     );
 }

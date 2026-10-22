@@ -195,7 +195,7 @@ core::AuditStatus StatefulAuditIndex::check_cached_status(const std::string& fil
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const char* h = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         int st = sqlite3_column_int(stmt, 1);
-        if (h && current_blake3_hash == h) {
+        if (current_blake3_hash.empty() || (h && current_blake3_hash == h)) {
             result = static_cast<core::AuditStatus>(st);
         }
     }

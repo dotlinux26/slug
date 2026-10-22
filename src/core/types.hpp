@@ -187,6 +187,23 @@ inline ScanPolicy scan_policy_from_string(std::string_view s) {
     return ScanPolicy::INSTANT;
 }
 
+// Lightweight file item for single-level Explorer directory listing without full hashing
+struct ExplorerItem {
+    bool is_dir{false};
+    std::string name;
+    std::string full_rel_path;
+    uint64_t size{0};
+    uint64_t mtime{0};
+    std::string mtime_str{""};
+    std::string type_str{"file"};
+    std::string status{"AVAILABLE"};
+    std::string status_badge_class{"badge-available"};
+    std::string status_detail{"Available for download"};
+    std::string blake3{""};
+    bool selectable{true};
+    std::string scan_status{""};
+};
+
 constexpr uint16_t kDefaultPort = 9443;
 constexpr size_t kDefaultChunkSize = 64 * 1024; // 64 KiB logic chunk
 constexpr size_t kXChaCha20Poly1305NonceSize = 24;
@@ -194,3 +211,4 @@ constexpr size_t kXChaCha20Poly1305TagSize = 16;
 constexpr size_t kKeySize = 32;
 
 } // namespace slug::core
+
