@@ -100,10 +100,11 @@ public:
         core::SuiteID suite_id,
         const std::string& rel_subpath,
         const std::string& identity,
-        core::Role role)
+        core::Role role,
+        core::ScanPolicy scan_policy = core::ScanPolicy::INSTANT)
     {
         auto manifest = sync::ManifestBuilder::build(workspace_root, 1, static_cast<uint8_t>(suite_id), false, core::FilterMode::PROTECTED, core::FilterLevel::LEVEL_3_ENTROPY, core::AiModelProvider::OLLAMA);
-        return render_directory_listing(workspace_root, port, suite_id, rel_subpath, identity, role, manifest);
+        return render_directory_listing(workspace_root, port, suite_id, rel_subpath, identity, role, manifest, scan_policy);
     }
 
     static std::string render_directory_listing(
@@ -113,7 +114,8 @@ public:
         const std::string& rel_subpath,
         const std::string& identity,
         core::Role role,
-        const sync::WorkspaceManifest& manifest)
+        const sync::WorkspaceManifest& manifest,
+        core::ScanPolicy scan_policy = core::ScanPolicy::INSTANT)
     {
         std::string norm_sub = rel_subpath;
         while (!norm_sub.empty() && norm_sub.front() == '/') norm_sub.erase(0, 1);
@@ -871,13 +873,26 @@ public:
                       << "<td><span class='badge " << item.status_badge_class << "' title='" << html_escape(item.status_detail) << "'>" << item.status << "</span></td>"
                       << "<td style='text-align:right;'><div style='display:inline-flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:nowrap;'><a class='act-btn' href='/drop?dir=" << html_escape(item.full_rel_path) << "'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'></path></svg> Duyệt</a><button type='button' class='act-btn' onclick='copyTextDirect(\"" << js_escape(item.full_rel_path) << "\", \"đường dẫn thư mục\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>" << admin_dir_act << "</div></td>";
                 } else {
-                    std::string chk = item.selectable
-                        ? ("<input type='checkbox' class='file-check' data-path='" + html_escape(item.full_rel_path) + "' data-size='" + std::to_string(item.size) + "' onchange='updateSelection()'>")
-                        : "<input type='checkbox' disabled title='File is shielded/quarantined'>";
+                    bool is_pending = (item.scan_status == "PENDING");
+                    bool block_download_secure = (scan_policy == core::ScanPolicy::SECURE && identity != "host_admin" && is_pending);
 
-                    std::string act = item.selectable
-                        ? ("<button type='button' class='act-btn' onclick='downloadFileWithProgress(\"" + js_escape(item.full_rel_path) + "\", \"" + js_escape(item.name) + "\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> Tải Về</button><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>")
-                        : "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
+                    std::string chk;
+                    if (!item.selectable) {
+                        chk = "<input type='checkbox' disabled title='File is shielded/quarantined'>";
+                    } else if (block_download_secure) {
+                        chk = "<input type='checkbox' disabled title='Chế độ Secure Share: Đang chờ kiểm toán bảo mật hoàn tất'>";
+                    } else {
+                        chk = "<input type='checkbox' class='file-check' data-path='" + html_escape(item.full_rel_path) + "' data-size='" + std::to_string(item.size) + "' onchange='updateSelection()'>";
+                    }
+
+                    std::string act;
+                    if (!item.selectable) {
+                        act = "<span style='color:var(--text-muted); font-size:11px;'>Shielded</span>";
+                    } else if (block_download_secure) {
+                        act = "<button type='button' class='act-btn disabled' style='opacity:0.5; cursor:not-allowed;' disabled title='Chế độ Secure Share: Đang chờ kiểm toán bảo mật hoàn tất'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> ⏳ Chờ Quét</button><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>";
+                    } else {
+                        act = "<button type='button' class='act-btn' onclick='downloadFileWithProgress(\"" + js_escape(item.full_rel_path) + "\", \"" + js_escape(item.name) + "\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'></path><polyline points='7 10 12 15 17 10'></polyline><line x1='12' y1='15' x2='12' y2='3'></line></svg> Tải Về</button><button type='button' class='act-btn' onclick='copyTextDirect(\"" + js_escape(item.full_rel_path) + "\", \"đường dẫn tệp\")'><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg> Copy</button>";
+                    }
 
                     if (identity == "host_admin") {
                         if (item.selectable) {
@@ -893,6 +908,8 @@ public:
                             scan_lbl = "<span class='badge' style='background:#f6f8fa; color:#57606a; border:1px solid #d0d7de; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='File mã nguồn/văn bản chưa qua kiểm tra nội dung (do vượt kích thước 10MB)'>NOT SCANNED</span>";
                         } else if (item.scan_status == "SCANNED") {
                             scan_lbl = "<span class='badge' style='background:#dafbe1; color:#1a7f37; border:1px solid #aceebb; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='Nội dung đã được bộ lọc kiểm tra an toàn'>SCANNED</span>";
+                        } else if (item.scan_status == "PENDING") {
+                            scan_lbl = "<span class='badge' style='background:#fff8c5; color:#9a6700; border:1px solid #d4a72c; font-size:9.5px; padding:1px 5px; font-weight:600; white-space:nowrap;' title='Đang chờ tiến trình kiểm toán bảo mật nền'>⏳ PENDING</span>";
                         }
                     }
 
@@ -1231,7 +1248,8 @@ public:
         core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX,
         core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA,
         uint64_t workspace_ttl = 86400,
-        uint64_t remaining_workspace_ttl = 86400)
+        uint64_t remaining_workspace_ttl = 86400,
+        core::ScanPolicy scan_policy = core::ScanPolicy::INSTANT)
     {
         double blake3_speed = 0.0, sha256_speed = 0.0;
         for (const auto& h_item : bench_rep.hashes) {
@@ -2384,6 +2402,57 @@ public:
           << "  const badge = document.getElementById('logs-badge');"
           << "  if (badge) badge.innerText = visibleCount;"
           << "}"
+          << "function pollBgScanStatus() {"
+          << "  fetch('/api/admin/scan/status')"
+          << "    .then(r => r.json())"
+          << "    .then(s => {"
+          << "      const bar = document.getElementById('audit-progress-bar');"
+          << "      const pctEl = document.getElementById('audit-progress-pct');"
+          << "      const curFileEl = document.getElementById('audit-current-file');"
+          << "      const badge = document.getElementById('audit-status-badge');"
+          << "      const totEl = document.getElementById('audit-total-files');"
+          << "      const scnEl = document.getElementById('audit-scanned-files');"
+          << "      const clnEl = document.getElementById('audit-clean-files');"
+          << "      const flgEl = document.getElementById('audit-flagged-files');"
+          << "      const pndEl = document.getElementById('audit-pending-files');"
+          << "      if (totEl) totEl.innerText = s.total_files || 0;"
+          << "      if (scnEl) scnEl.innerText = s.scanned_files || 0;"
+          << "      if (clnEl) clnEl.innerText = s.clean_files || 0;"
+          << "      if (flgEl) flgEl.innerText = s.flagged_files || 0;"
+          << "      if (pndEl) pndEl.innerText = s.pending_files || 0;"
+          << "      let pct = s.progress_pct || 0;"
+          << "      if (bar) bar.style.width = pct + '%';"
+          << "      if (pctEl) pctEl.innerText = pct + '%';"
+          << "      if (curFileEl) {"
+          << "        if (s.status === 'scanning') curFileEl.innerText = 'Đang quét: ' + (s.current_file || '...');"
+          << "        else if (s.status === 'paused') curFileEl.innerText = 'Tạm dừng: ' + (s.current_file || '...');"
+          << "        else if (s.status === 'completed') curFileEl.innerText = 'Hoàn tất kiểm toán bảo mật toàn bộ tệp!';"
+          << "        else if (s.status === 'cancelled') curFileEl.innerText = 'Tiến trình kiểm toán đã hủy';"
+          << "        else curFileEl.innerText = s.current_file || '';"
+          << "      }"
+          << "      if (badge) {"
+          << "        if (s.status === 'scanning') { badge.className = 'badge badge-ai'; badge.innerText = 'SCANNING (Đang quét)'; }"
+          << "        else if (s.status === 'paused') { badge.className = 'badge badge-entropy'; badge.innerText = 'PAUSED (Tạm dừng)'; }"
+          << "        else if (s.status === 'completed') { badge.className = 'badge badge-available'; badge.innerText = 'COMPLETED (Đã xong)'; }"
+          << "        else if (s.status === 'cancelled') { badge.className = 'badge badge-quarantined'; badge.innerText = 'CANCELLED (Đã hủy)'; }"
+          << "      }"
+          << "      const radio = document.querySelector('input[name=\"admin-scan-policy\"][value=\"' + s.policy + '\"]');"
+          << "      if (radio && !radio.checked) radio.checked = true;"
+          << "      const btnPause = document.getElementById('btn-audit-pause');"
+          << "      const btnResume = document.getElementById('btn-audit-resume');"
+          << "      const btnCancel = document.getElementById('btn-audit-cancel');"
+          << "      if (btnPause) btnPause.disabled = (s.status !== 'scanning');"
+          << "      if (btnResume) btnResume.disabled = (s.status !== 'paused');"
+          << "      if (btnCancel) btnCancel.disabled = (s.status === 'completed' || s.status === 'cancelled');"
+          << "    }).catch(e => {});"
+          << "}"
+          << "function pauseBgScan() { fetch('/api/admin/scan/pause', { method: 'POST' }).then(() => pollBgScanStatus()); }"
+          << "function resumeBgScan() { fetch('/api/admin/scan/resume', { method: 'POST' }).then(() => pollBgScanStatus()); }"
+          << "function cancelBgScan() { if (!confirm('Hủy bỏ kiểm toán bảo mật nền?')) return; fetch('/api/admin/scan/cancel', { method: 'POST' }).then(() => pollBgScanStatus()); }"
+          << "function changeAdminPolicy(pol) {"
+          << "  fetch('/api/admin/scan/policy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policy: pol }) })"
+          << "    .then(r => r.json()).then(res => { pollBgScanStatus(); });"
+          << "}"
           << "window.addEventListener('DOMContentLoaded', () => {"
           << "  onAdminFilterChanged();"
           << "  runLiveBenchmark();"
@@ -2392,6 +2461,8 @@ public:
           << "  setInterval(reloadSessions, 2500);"
           << "  loadAiConfig();"
           << "  queryAudit(true);"
+          << "  pollBgScanStatus();"
+          << "  setInterval(pollBgScanStatus, 1500);"
           << "  let adminRem = parseInt(document.getElementById('ws-admin-ttl-badge')?.getAttribute('data-rem') || '86400');"
           << "  const adminTot = parseInt(document.getElementById('ws-admin-ttl-badge')?.getAttribute('data-ttl') || '86400');"
           << "  if (adminTot > 0) {"
@@ -2445,6 +2516,49 @@ public:
             h << "<tr><td colspan='4' style='color:var(--text-muted);'>No user accounts configured</td></tr>";
         }
         h << "</tbody></table></div></div></div>"
+
+          // WORKSPACE SECURITY AUDIT & SCAN POLICY CARD
+          << "<div class='card' style='margin-bottom:16px;' id='admin-audit-card'>"
+          << "<h3>"
+          << "<span style='display:flex; align-items:center; gap:8px;'>"
+          << "<svg width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'></path></svg>"
+          << "Kiểm Toán Bảo Mật Nền (Workspace Security Audit &amp; Policy)"
+          << "</span>"
+          << "<span id='audit-status-badge' class='badge badge-available' style='font-size:11px;'>READY</span>"
+          << "</h3>"
+          << "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin:12px 0;'>"
+          << "<div class='metric-box'><div class='metric-lbl'>Tổng Số Tệp</div><div class='metric-val' id='audit-total-files' style='color:var(--text-main);'>0</div></div>"
+          << "<div class='metric-box'><div class='metric-lbl'>Đã Kiểm Toán</div><div class='metric-val' id='audit-scanned-files' style='color:#0969da;'>0</div></div>"
+          << "<div class='metric-box'><div class='metric-lbl'>Tệp Sạch (Clean)</div><div class='metric-val' id='audit-clean-files' style='color:#1a7f37;'>0</div></div>"
+          << "<div class='metric-box'><div class='metric-lbl'>Cảnh Báo (Flagged)</div><div class='metric-val' id='audit-flagged-files' style='color:#cf222e;'>0</div></div>"
+          << "<div class='metric-box'><div class='metric-lbl'>Chờ Quét (Pending)</div><div class='metric-val' id='audit-pending-files' style='color:#9a6700;'>0</div></div>"
+          << "</div>"
+          << "<div style='margin:12px 0;'>"
+          << "<div style='display:flex; justify-content:space-between; align-items:center; font-size:11px; margin-bottom:4px; font-family:\"JetBrains Mono\", monospace;'>"
+          << "<span id='audit-current-file' style='color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:70%;'>Đang chờ...</span>"
+          << "<span id='audit-progress-pct' style='font-weight:bold; color:var(--text-main);'>0%</span>"
+          << "</div>"
+          << "<div class='ai-progress-track'><div id='audit-progress-bar' class='ai-progress-bar' style='width:0%;'></div></div>"
+          << "</div>"
+          << "<div style='display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; padding-top:12px; border-top:1px solid var(--border-primary);'>"
+          << "<div style='display:flex; align-items:center; gap:12px;'>"
+          << "<strong style='font-size:12px; font-family:\"JetBrains Mono\", monospace;'>Chế Độ Chia Sẻ:</strong>"
+          << "<label style='display:inline-flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;'>"
+          << "<input type='radio' name='admin-scan-policy' value='instant' onchange='changeAdminPolicy(this.value)' " << (scan_policy == core::ScanPolicy::INSTANT ? "checked" : "") << ">"
+          << "<span style='color:#0969da; font-weight:600;'>⚡ Instant Share</span>"
+          << "</label>"
+          << "<label style='display:inline-flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;'>"
+          << "<input type='radio' name='admin-scan-policy' value='secure' onchange='changeAdminPolicy(this.value)' " << (scan_policy == core::ScanPolicy::SECURE ? "checked" : "") << ">"
+          << "<span style='color:#1a7f37; font-weight:600;'>🔒 Secure Share</span>"
+          << "</label>"
+          << "</div>"
+          << "<div style='display:flex; gap:6px;'>"
+          << "<button type='button' id='btn-audit-pause' class='btn-sec btn-sm' onclick='pauseBgScan()'>⏸️ Tạm Dừng</button>"
+          << "<button type='button' id='btn-audit-resume' class='btn-sec btn-sm' onclick='resumeBgScan()'>▶️ Tiếp Tục</button>"
+          << "<button type='button' id='btn-audit-cancel' class='btn-danger btn-sm' onclick='cancelBgScan()'>⏹️ Hủy Quét</button>"
+          << "</div>"
+          << "</div>"
+          << "</div>"
 
           // DYNAMIC FILTER LEVEL & RE-SCAN CARD
           << "<div class='card' style='margin-bottom:16px;'>"
@@ -4611,6 +4725,7 @@ function startHosting(e) {
   const otpTtl = parseInt(document.getElementById('host-otp-ttl')?.value) || 60;
   const wsTtl = parseInt(document.getElementById('host-ttl')?.value) || 86400;
   const aiModel = document.getElementById('host-ai-model')?.value || 'ollama';
+  const scanPolicy = document.querySelector('input[name="host-scan-policy"]:checked')?.value || 'instant';
 
   showToast(`Đang khởi động chia sẻ workspace trên cổng ${port}...`);
   fetch('/api/host/start', {
@@ -4623,7 +4738,8 @@ function startHosting(e) {
       filter: fSelect.value,
       ai_model: aiModel,
       otp_step: otpTtl,
-      ttl: wsTtl
+      ttl: wsTtl,
+      scan_policy: scanPolicy
     })
   })
   .then(r => r.json())
@@ -6008,6 +6124,26 @@ window.onload = function() {
               <option value="604800">7 ngày (7d)</option>
               <option value="0">Vĩnh viễn (Permanent ∞)</option>
             </select>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom:8px;">
+          <label style="font-size:11px; font-weight:700; color:var(--text-main); margin-bottom:4px; display:block;">Chính Sách Chia Sẻ &amp; Kiểm Toán (Scan Policy)</label>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            <label style="display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid #d0d7de; border-radius:2px; cursor:pointer; font-size:12px; background:#f6f8fa;">
+              <input type="radio" name="host-scan-policy" value="instant" checked style="cursor:pointer;">
+              <div>
+                <strong style="color:#0969da;">⚡ Instant Share</strong>
+                <div style="font-size:10px; color:var(--text-muted);">Chia sẻ ngay, tải tệp lập tức. Tự động quét nền. [Mặc Định]</div>
+              </div>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; padding:8px 10px; border:1px solid #d0d7de; border-radius:2px; cursor:pointer; font-size:12px; background:#f6f8fa;">
+              <input type="radio" name="host-scan-policy" value="secure" style="cursor:pointer;">
+              <div>
+                <strong style="color:#1a7f37;">🔒 Secure Share</strong>
+                <div style="font-size:10px; color:var(--text-muted);">Chia sẻ ngay, nhưng chỉ tải tệp đã xác minh CLEAN.</div>
+              </div>
+            </label>
           </div>
         </div>
 

@@ -20,6 +20,7 @@ struct WorkspaceInfo {
     FilterMode filter_mode{FilterMode::PROTECTED};
     FilterLevel filter_level{FilterLevel::LEVEL_2_REGEX};
     AiModelProvider ai_provider{AiModelProvider::OLLAMA};
+    ScanPolicy scan_policy{ScanPolicy::INSTANT};
     uint64_t ttl_seconds{86400}; // Client Cert TTL
     uint64_t workspace_ttl{86400}; // Workspace Lifetime (0 = Permanent)
     uint64_t started_at{0};
@@ -44,7 +45,8 @@ public:
                        FilterLevel filter_level = FilterLevel::LEVEL_2_REGEX,
                        AiModelProvider ai_provider = AiModelProvider::OLLAMA,
                        uint32_t otp_step = 60,
-                       uint64_t workspace_ttl = 86400);
+                       uint64_t workspace_ttl = 86400,
+                       ScanPolicy scan_policy = ScanPolicy::INSTANT);
 
     // Automatically finds the next available, free TCP port starting from starting_port
     uint16_t find_available_port(uint16_t starting_port = 9443);

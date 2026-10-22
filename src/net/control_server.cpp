@@ -9,6 +9,11 @@
 #include <iostream>
 #include <fstream>
 
+#include "src/policy/filter.hpp"
+#include "src/ai/stateful_audit.hpp"
+#include "src/crypto/blake3_wrapper.hpp"
+#include "src/core/logger.hpp"
+
 namespace slug::net {
 
 
@@ -23,7 +28,8 @@ ControlServer::ControlServer(std::filesystem::path workspace_root,
                              core::FilterLevel filter_level,
                              core::AiModelProvider ai_provider,
                              uint32_t totp_step,
-                             uint64_t workspace_ttl)
+                             uint64_t workspace_ttl,
+                             core::ScanPolicy scan_policy)
     : workspace_root_(std::move(workspace_root)),
       port_(port),
       suite_id_(suite_id),
@@ -32,6 +38,7 @@ ControlServer::ControlServer(std::filesystem::path workspace_root,
       filter_mode_(filter_mode),
       filter_level_(filter_level),
       ai_provider_(ai_provider),
+      scan_policy_(scan_policy),
       totp_step_(totp_step > 0 ? totp_step : 60),
       workspace_ttl_(workspace_ttl),
       started_at_(core::Utils::current_timestamp()),
@@ -66,15 +73,20 @@ bool ControlServer::start() {
         audit_logger_.log("host_admin", "HOST_SHARE_UNFILTERED", "",
                           "Workspace started with --filter-mode none (Content filtering disabled)", true);
     }
+    start_background_scan();
     return true;
 }
 
 void ControlServer::stop() {
     if (!running_) return;
     running_ = false;
+    cancel_background_scan();
     listener_.close();
     if (worker_thread_ && worker_thread_->joinable()) {
         worker_thread_->join();
+    }
+    if (bg_scan_thread_ && bg_scan_thread_->joinable()) {
+        bg_scan_thread_->join();
     }
     audit_logger_.log("system", "SERVER_STOP", workspace_root_.string(), "Server stopped");
 }
@@ -1005,6 +1017,218 @@ void ControlServer::invalidate_manifest_cache() {
     cached_manifest_.reset();
     cached_manifest_json_.clear();
     vfs_.reload_policy();
+}
+
+ControlServer::BackgroundScanStatus ControlServer::get_background_scan_status() const {
+    std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+    auto s = bg_scan_status_;
+    s.policy = scan_policy_;
+    return s;
+}
+
+void ControlServer::pause_background_scan() {
+    std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+    bg_scan_paused_ = true;
+    bg_scan_status_.status = "paused";
+}
+
+void ControlServer::resume_background_scan() {
+    {
+        std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+        bg_scan_paused_ = false;
+        bg_scan_status_.status = "scanning";
+    }
+    bg_scan_cv_.notify_all();
+}
+
+void ControlServer::cancel_background_scan() {
+    {
+        std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+        bg_scan_cancelled_ = true;
+        bg_scan_paused_ = false;
+        bg_scan_status_.status = "cancelled";
+    }
+    bg_scan_cv_.notify_all();
+}
+
+void ControlServer::start_background_scan() {
+    if (filter_level_ == core::FilterLevel::LEVEL_0_RAW || filter_mode_ == core::FilterMode::NONE) {
+        std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+        bg_scan_status_.status = "completed";
+        bg_scan_status_.policy = scan_policy_;
+        return;
+    }
+
+    if (bg_scan_thread_ && bg_scan_thread_->joinable()) {
+        if (bg_scan_active_) return;
+        bg_scan_thread_->join();
+    }
+
+    bg_scan_cancelled_ = false;
+    bg_scan_paused_ = false;
+    bg_scan_active_ = true;
+    {
+        std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+        bg_scan_status_.status = "scanning";
+        bg_scan_status_.policy = scan_policy_;
+        bg_scan_status_.current_file = "Đang lập danh mục tệp...";
+    }
+
+    bg_scan_thread_ = std::make_unique<std::thread>([this]() {
+        try {
+            std::vector<std::pair<std::filesystem::path, std::string>> files_to_scan;
+            std::error_code ec;
+            std::filesystem::path rules_file = workspace_root_ / ".slug" / "rules.conf";
+            policy::PolicyEngine policy_engine(workspace_root_, rules_file);
+
+            for (std::filesystem::recursive_directory_iterator it(workspace_root_, std::filesystem::directory_options::skip_permission_denied, ec), end;
+                 it != end; ++it) {
+                if (ec) { ec.clear(); continue; }
+                if (bg_scan_cancelled_) break;
+
+                std::filesystem::path p = it->path();
+                std::filesystem::path rel = p.lexically_relative(workspace_root_);
+                std::string filename = platform::PathUtils::path_to_u8(p.filename());
+                std::string lower = filename;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+                if (it->is_directory(ec)) {
+                    if (lower == ".git" || lower == ".slug" || platform::PathUtils::is_internal_slug_path(rel)) {
+                        it.disable_recursion_pending();
+                    }
+                    continue;
+                }
+                if (!it->is_regular_file(ec)) continue;
+                if (platform::PathUtils::is_internal_slug_path(rel)) continue;
+
+                std::string proto_path = platform::PathUtils::to_protocol_path(rel);
+                if (!ai::AiScanner::is_scannable_file(p)) continue;
+
+                if (filter_level_ != core::FilterLevel::LEVEL_0_RAW && filter_mode_ != core::FilterMode::NONE) {
+                    bool ignore_gi = (filter_mode_ == core::FilterMode::INCLUDE_IGNORED);
+                    auto decision = policy_engine.evaluate(rel, false, {}, ignore_gi);
+                    if (!decision.is_allowed) continue;
+                }
+
+                files_to_scan.push_back({p, proto_path});
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+                bg_scan_status_.total_files = files_to_scan.size();
+                bg_scan_status_.scanned_files = 0;
+                bg_scan_status_.clean_files = 0;
+                bg_scan_status_.flagged_files = 0;
+                bg_scan_status_.pending_files = files_to_scan.size();
+            }
+
+            std::filesystem::path index_file = workspace_root_ / ".slug" / "index.db";
+            ai::StatefulAuditIndex audit_idx(index_file);
+            ai::AiScanner scanner = ai::AiScanner::create_for_level(filter_level_, ai_provider_, workspace_root_);
+
+            for (const auto& [real_p, proto_p] : files_to_scan) {
+                if (bg_scan_cancelled_) break;
+
+                // Handle Pause
+                {
+                    std::unique_lock<std::mutex> lk(bg_scan_mutex_);
+                    while (bg_scan_paused_ && !bg_scan_cancelled_) {
+                        bg_scan_status_.status = "paused";
+                        bg_scan_cv_.wait(lk);
+                    }
+                    if (bg_scan_cancelled_) break;
+                    bg_scan_status_.status = "scanning";
+                    bg_scan_status_.current_file = proto_p;
+                }
+
+                auto h_opt = crypto::Blake3::hash_file(real_p);
+                if (!h_opt) continue;
+                std::string h = *h_opt;
+
+                core::AuditStatus cached = audit_idx.check_cached_status(proto_p, h);
+                if (cached == core::AuditStatus::CLEAN || cached == core::AuditStatus::USER_ALLOWED) {
+                    std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+                    bg_scan_status_.scanned_files++;
+                    bg_scan_status_.clean_files++;
+                    if (bg_scan_status_.pending_files > 0) bg_scan_status_.pending_files--;
+                    continue;
+                }
+                if (cached == core::AuditStatus::AI_FLAGGED || cached == core::AuditStatus::SMART_FILTER_FLAGGED) {
+                    std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+                    bg_scan_status_.scanned_files++;
+                    bg_scan_status_.flagged_files++;
+                    if (bg_scan_status_.pending_files > 0) bg_scan_status_.pending_files--;
+                    continue;
+                }
+
+                uint64_t sz = 0;
+                try { sz = std::filesystem::file_size(real_p, ec); } catch (...) {}
+                if (sz <= 10ULL * 1024 * 1024) {
+                    auto file_data = platform::PathUtils::read_binary_file(real_p, 10 * 1024 * 1024);
+                    if (file_data) {
+                        std::string text(file_data->begin(), file_data->end());
+                        core::FilterLevel eval_lvl = (filter_level_ == core::FilterLevel::LEVEL_4_AI)
+                            ? core::FilterLevel::LEVEL_3_ENTROPY
+                            : filter_level_;
+                        auto finding = scanner.scan_content(proto_p, text, false, eval_lvl);
+
+                        ai::AuditIndexEntry idx;
+                        idx.file_path = proto_p;
+                        idx.blake3_hash = h;
+                        idx.scanned_at = core::Utils::current_timestamp();
+                        idx.detector = finding.detector;
+                        idx.ai_input = finding.ai_input;
+                        idx.ai_output = finding.ai_output;
+
+                        if (finding.has_secret) {
+                            bool is_ai = (finding.detector.find("AI Guard") != std::string::npos);
+                            idx.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
+                            idx.line_number = finding.line_number;
+                            idx.reason = finding.reason;
+                            audit_idx.update_entry(idx);
+                            invalidate_manifest_cache();
+
+                            std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+                            bg_scan_status_.scanned_files++;
+                            bg_scan_status_.flagged_files++;
+                            if (bg_scan_status_.pending_files > 0) bg_scan_status_.pending_files--;
+                        } else {
+                            idx.status = core::AuditStatus::CLEAN;
+                            idx.reason = finding.reason.empty() ? "Clean" : finding.reason;
+                            audit_idx.update_entry(idx);
+                            invalidate_manifest_cache();
+
+                            std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+                            bg_scan_status_.scanned_files++;
+                            bg_scan_status_.clean_files++;
+                            if (bg_scan_status_.pending_files > 0) bg_scan_status_.pending_files--;
+                        }
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+                if (bg_scan_cancelled_) {
+                    bg_scan_status_.status = "cancelled";
+                } else {
+                    bg_scan_status_.status = "completed";
+                    bg_scan_status_.current_file = "";
+                }
+                bg_scan_active_ = false;
+            }
+        } catch (const std::exception& ex) {
+            SLUG_LOG_ERROR("Exception in background scanner thread: " << ex.what());
+            std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+            bg_scan_status_.status = "error";
+            bg_scan_active_ = false;
+        } catch (...) {
+            SLUG_LOG_ERROR("Unknown exception in background scanner thread");
+            std::lock_guard<std::mutex> lk(bg_scan_mutex_);
+            bg_scan_status_.status = "error";
+            bg_scan_active_ = false;
+        }
+    });
 }
 
 } // namespace slug::net

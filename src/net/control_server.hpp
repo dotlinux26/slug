@@ -17,6 +17,7 @@
 #include <map>
 #include <unordered_map>
 #include <mutex>
+#include <condition_variable>
 
 namespace slug::net {
 
@@ -48,6 +49,17 @@ struct SessionState {
 
 class ControlServer {
 public:
+    struct BackgroundScanStatus {
+        std::string status{"idle"}; // "idle", "scanning", "paused", "completed", "cancelled"
+        size_t total_files{0};
+        size_t scanned_files{0};
+        size_t clean_files{0};
+        size_t flagged_files{0};
+        size_t pending_files{0};
+        std::string current_file{""};
+        core::ScanPolicy policy{core::ScanPolicy::INSTANT};
+    };
+
     ControlServer(std::filesystem::path workspace_root,
                   uint16_t port = core::kDefaultPort,
                   core::SuiteID suite_id = core::SuiteID::SUITE_1_CLASSICAL,
@@ -57,7 +69,8 @@ public:
                   core::FilterLevel filter_level = core::FilterLevel::LEVEL_2_REGEX,
                   core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA,
                   uint32_t totp_step = 60,
-                  uint64_t workspace_ttl = 86400);
+                  uint64_t workspace_ttl = 86400,
+                  core::ScanPolicy scan_policy = core::ScanPolicy::INSTANT);
     ~ControlServer();
 
     bool start();
@@ -74,6 +87,15 @@ public:
     core::FilterMode filter_mode() const { return filter_mode_; }
     core::FilterLevel filter_level() const { return filter_level_; }
     core::AiModelProvider ai_provider() const { return ai_provider_; }
+    core::ScanPolicy scan_policy() const { return scan_policy_; }
+    void set_scan_policy(core::ScanPolicy p) { scan_policy_ = p; }
+
+    void start_background_scan();
+    void pause_background_scan();
+    void resume_background_scan();
+    void cancel_background_scan();
+    BackgroundScanStatus get_background_scan_status() const;
+
     void set_filter_level(core::FilterLevel lvl) {
         filter_level_ = lvl;
         enable_ai_ = (lvl == core::FilterLevel::LEVEL_4_AI);
@@ -134,10 +156,19 @@ private:
     core::FilterMode filter_mode_{core::FilterMode::PROTECTED};
     core::FilterLevel filter_level_{core::FilterLevel::LEVEL_2_REGEX};
     core::AiModelProvider ai_provider_{core::AiModelProvider::OLLAMA};
+    core::ScanPolicy scan_policy_{core::ScanPolicy::INSTANT};
     uint32_t totp_step_{60};
     uint64_t workspace_ttl_{86400};
     uint64_t started_at_{0};
     class WebServer* web_server_{nullptr};
+
+    std::atomic<bool> bg_scan_active_{false};
+    std::atomic<bool> bg_scan_paused_{false};
+    std::atomic<bool> bg_scan_cancelled_{false};
+    mutable std::mutex bg_scan_mutex_;
+    std::condition_variable bg_scan_cv_;
+    BackgroundScanStatus bg_scan_status_;
+    std::unique_ptr<std::thread> bg_scan_thread_;
 
     std::atomic<bool> running_{false};
     platform::TcpListener listener_;

@@ -51,6 +51,7 @@ static std::vector<WorkspaceInfo> load_registry_unlocked(const fs::path& p, bool
                 wi.suite = suite_from_string(item.value("suite", "3"));
                 wi.ai_enabled = item.value("ai_enabled", false);
                 wi.filter_mode = filter_mode_from_string(item.value("filter_mode", "protected"));
+                wi.scan_policy = scan_policy_from_string(item.value("scan_policy", "instant"));
                 wi.ttl_seconds = item.value("ttl_seconds", 86400ULL);
                 wi.pid = item.value("pid", 0U);
 
@@ -112,6 +113,7 @@ void WorkspaceManager::update_registry(const WorkspaceInfo& info, bool remove) {
         obj["suite"] = suite_to_short_name(item.suite);
         obj["ai_enabled"] = item.ai_enabled;
         obj["filter_mode"] = filter_mode_to_string(item.filter_mode);
+        obj["scan_policy"] = scan_policy_to_string(item.scan_policy);
         obj["ttl_seconds"] = item.ttl_seconds;
         obj["pid"] = item.pid;
         j.push_back(obj);
@@ -189,7 +191,8 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
                                     FilterLevel filter_level,
                                     AiModelProvider ai_provider,
                                     uint32_t otp_step,
-                                    uint64_t workspace_ttl) {
+                                    uint64_t workspace_ttl,
+                                    ScanPolicy scan_policy) {
 
     std::error_code ec;
     fs::path canonical_path = fs::canonical(folder_path, ec);
@@ -271,7 +274,7 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
         if (instances_.find(target_port) == instances_.end()) {
             ctrl = std::make_shared<net::ControlServer>(
                 canonical_path, target_port, suite, ttl_seconds, enable_ai, filter_mode,
-                filter_level, ai_provider, otp_step, workspace_ttl
+                filter_level, ai_provider, otp_step, workspace_ttl, scan_policy
             );
             if (ctrl->start()) {
                 break; // Successfully bound and started!
@@ -296,19 +299,6 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     ctrl->set_web_server(web.get());
     web->start();
 
-    if (filter_level != FilterLevel::LEVEL_0_RAW && filter_level != FilterLevel::LEVEL_1_RULES && filter_mode != FilterMode::NONE) {
-        // Run initial scan asynchronously in background thread so add_workspace returns in 0.01s
-        std::thread([canonical_path, suite, filter_mode, filter_level, ai_provider]() {
-            try {
-                sync::ManifestBuilder::build(canonical_path, 1, static_cast<uint8_t>(suite), true, filter_mode, filter_level, ai_provider);
-            } catch (const std::exception& ex) {
-                SLUG_LOG_ERROR("Exception in initial scan thread: " << ex.what());
-            } catch (...) {
-                SLUG_LOG_ERROR("Unknown exception in initial scan thread");
-            }
-        }).detach();
-    }
-
     WorkspaceInfo wi;
     wi.port = ctrl->port();
     wi.path = canonical_path;
@@ -317,6 +307,7 @@ bool WorkspaceManager::add_workspace(const fs::path& folder_path,
     wi.filter_mode = filter_mode;
     wi.filter_level = filter_level;
     wi.ai_provider = ai_provider;
+    wi.scan_policy = scan_policy;
     wi.ttl_seconds = ttl_seconds;
     wi.workspace_ttl = workspace_ttl;
     wi.started_at = ctrl->started_at();

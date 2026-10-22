@@ -289,7 +289,8 @@ std::string WebServer::render_directory_listing(const std::string& rel_subpath, 
         rel_subpath,
         session.identity,
         session.role,
-        manifest
+        manifest,
+        control_server_.scan_policy()
     );
 }
 
@@ -323,7 +324,8 @@ std::string WebServer::render_admin_dashboard(const WebSession& session) {
         control_server_.filter_level(),
         control_server_.ai_provider(),
         control_server_.workspace_ttl(),
-        control_server_.remaining_workspace_ttl()
+        control_server_.remaining_workspace_ttl(),
+        control_server_.scan_policy()
     );
 }
 
@@ -800,6 +802,73 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
             }
         } catch (...) {
             send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+        }
+        return;
+    }
+
+    if (path == "/api/admin/scan/status") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        auto s = control_server_.get_background_scan_status();
+        json j;
+        j["status"] = s.status;
+        j["policy"] = core::scan_policy_to_string(s.policy);
+        j["total_files"] = s.total_files;
+        j["scanned_files"] = s.scanned_files;
+        j["clean_files"] = s.clean_files;
+        j["flagged_files"] = s.flagged_files;
+        j["pending_files"] = s.pending_files;
+        j["current_file"] = s.current_file;
+        j["progress_pct"] = (s.total_files > 0) ? static_cast<int>((s.scanned_files * 100) / s.total_files) : 100;
+        send_resp(200, "OK", "application/json", j.dump());
+        return;
+    }
+
+    if (path == "/api/admin/scan/pause" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        control_server_.pause_background_scan();
+        send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"Quét bảo mật nền đã tạm dừng.\"}");
+        return;
+    }
+
+    if (path == "/api/admin/scan/resume" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        control_server_.resume_background_scan();
+        send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"Quét bảo mật nền đang tiếp tục.\"}");
+        return;
+    }
+
+    if (path == "/api/admin/scan/cancel" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        control_server_.cancel_background_scan();
+        send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"message\":\"Quét bảo mật nền đã hủy bỏ.\"}");
+        return;
+    }
+
+    if (path == "/api/admin/scan/policy" && method == "POST") {
+        if (current_session->identity != "host_admin" && !is_localhost) {
+            send_resp(403, "Forbidden", "application/json", "{\"status\":\"forbidden\"}");
+            return;
+        }
+        try {
+            auto j = json::parse(req.body);
+            std::string pol_str = j.value("policy", "instant");
+            core::ScanPolicy pol = core::scan_policy_from_string(pol_str);
+            control_server_.set_scan_policy(pol);
+            send_resp(200, "OK", "application/json", "{\"status\":\"ok\",\"policy\":\"" + core::scan_policy_to_string(pol) + "\"}");
+        } catch (...) {
+            send_resp(400, "Bad Request", "application/json", "{\"status\":\"error\",\"message\":\"Dữ liệu JSON không hợp lệ.\"}");
         }
         return;
     }
@@ -1820,6 +1889,26 @@ void WebServer::dispatch_http_core(const HttpRequest& req, std::function<void(co
         if (!vres.is_ok()) {
             send_resp(404, "Not Found", "text/plain", "404 Not Found.");
             return;
+        }
+
+        std::string proto_path = slug::platform::PathUtils::to_protocol_path(slug::platform::PathUtils::u8_to_path(rel_path));
+        fs::path idx_file = control_server_.workspace_root() / ".slug" / "index.db";
+        ai::StatefulAuditIndex audit_idx(idx_file);
+        auto h_opt = crypto::Blake3::hash_file(vres.real_path);
+        std::string cur_hash = h_opt ? *h_opt : "";
+
+        core::AuditStatus cached_status = audit_idx.check_cached_status(proto_path, cur_hash);
+        if (current_session->identity != "host_admin") {
+            if (cached_status == core::AuditStatus::AI_FLAGGED || cached_status == core::AuditStatus::SMART_FILTER_FLAGGED || cached_status == core::AuditStatus::RULE_BLOCKED) {
+                send_resp(403, "Forbidden", "text/plain", "403 Forbidden: File blocked by security audit policy (flagged secrets detected).");
+                return;
+            }
+            if (control_server_.scan_policy() == core::ScanPolicy::SECURE) {
+                if (cached_status != core::AuditStatus::CLEAN && cached_status != core::AuditStatus::USER_ALLOWED) {
+                    send_resp(403, "Forbidden", "text/plain", "403 Forbidden: File is pending security audit in Secure Share mode. Download will be available once audit is completed.");
+                    return;
+                }
+            }
         }
 
         std::error_code ec_sz;

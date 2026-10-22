@@ -1134,6 +1134,7 @@ int cmd_add(int argc, char* argv[]) {
     core::AiModelProvider ai_provider = core::AiModelProvider::OLLAMA;
     uint32_t otp_step = 60;
     uint64_t workspace_ttl = 86400;
+    core::ScanPolicy scan_policy = core::ScanPolicy::INSTANT;
     bool daemon = false;
     bool is_internal_worker = false;
 
@@ -1159,6 +1160,12 @@ int cmd_add(int argc, char* argv[]) {
             workspace_ttl = core::Utils::parse_ttl(argv[++i]);
         } else if (arg == "--filter-mode" && i + 1 < argc) {
             filter_mode = core::filter_mode_from_string(argv[++i]);
+        } else if (arg == "--scan-policy" && i + 1 < argc) {
+            scan_policy = core::scan_policy_from_string(argv[++i]);
+        } else if (arg == "--instant-share" || arg == "--instant") {
+            scan_policy = core::ScanPolicy::INSTANT;
+        } else if (arg == "--secure-share" || arg == "--secure") {
+            scan_policy = core::ScanPolicy::SECURE;
         } else if (arg == "--no-filter" || arg == "--raw") {
             filter_mode = core::FilterMode::NONE;
             filter_level = core::FilterLevel::LEVEL_0_RAW;
@@ -1217,6 +1224,7 @@ int cmd_add(int argc, char* argv[]) {
                               " -t " + std::to_string(ttl_sec) +
                               (enable_ai ? " -a" : "") +
                               " --filter-mode " + filter_arg +
+                              (scan_policy == core::ScanPolicy::SECURE ? " --scan-policy secure" : "") +
                               " --internal-worker";
         STARTUPINFOA si{};
         PROCESS_INFORMATION pi{};
@@ -1234,6 +1242,7 @@ int cmd_add(int argc, char* argv[]) {
             std::cout << "    Port:      " << port << std::endl;
             std::cout << "    Crypto:    " << core::suite_to_string(suite) << std::endl;
             std::cout << "    Filter:    " << filter_arg << std::endl;
+            std::cout << "    Policy:    " << core::scan_policy_to_string(scan_policy) << std::endl;
             return 0;
         } else {
             std::cerr << "[-] Failed to spawn background worker process (error " << GetLastError() << ")." << std::endl;
@@ -1259,7 +1268,7 @@ int cmd_add(int argc, char* argv[]) {
 
     if (!core::WorkspaceManager::instance().add_workspace(
             folder_path, port, suite, ttl_sec, enable_ai, filter_mode, nullptr,
-            filter_level, ai_provider, otp_step, workspace_ttl)) {
+            filter_level, ai_provider, otp_step, workspace_ttl, scan_policy)) {
 #if defined(SLUG_PLATFORM_POSIX)
         if (daemon && pipefd[1] >= 0) {
             char fail[] = "FAIL";
@@ -1286,6 +1295,7 @@ int cmd_add(int argc, char* argv[]) {
     std::cout << "  Crypto Suite:    " << core::suite_to_string(suite) << std::endl;
     std::cout << "  AI Secret Guard: " << (enable_ai ? "ENABLED (Stateful BLAKE3 Audit)" : "OFF") << std::endl;
     std::cout << "  Filter Mode:     " << core::filter_mode_to_string(filter_mode) << std::endl;
+    std::cout << "  Scan Policy:     " << core::scan_policy_to_string(scan_policy) << std::endl;
     std::cout << "  Session TTL:     " << core::Utils::format_duration(ttl_sec) << std::endl;
     auto print_dynamic_panel = [&](uint32_t current_rem, const std::string& crw, const std::string& cr, const std::string& cw, bool clear_trailing) {
         std::string clr = clear_trailing ? "\033[K\n" : "\n";
@@ -4173,11 +4183,13 @@ int cmd_portal(int argc, char* argv[]) {
                     if (flevel == core::FilterLevel::LEVEL_0_RAW || filter_str == "none" || filter_str == "raw") fmode = core::FilterMode::NONE;
                     else if (filter_str == "include_ignored" || filter_str == "all") fmode = core::FilterMode::INCLUDE_IGNORED;
                     bool enable_ai = (flevel == core::FilterLevel::LEVEL_4_AI || j.value("enable_ai", false));
+                    std::string scan_policy_str = j.value("scan_policy", "instant");
+                    core::ScanPolicy scan_policy = core::scan_policy_from_string(scan_policy_str);
 
                     uint16_t assigned_port = wport;
                     bool ok = core::WorkspaceManager::instance().add_workspace(
                         wpath, wport, suite, 86400, enable_ai, fmode, &assigned_port,
-                        flevel, ai_provider, otp_step, wttl
+                        flevel, ai_provider, otp_step, wttl, scan_policy
                     );
                     nlohmann::json res;
                     res["status"] = ok ? "ok" : "error";
@@ -6246,7 +6258,7 @@ int main(int argc, char* argv[]) {
             if (cmd == "portal" || cmd == "web" || cmd == "ui") exit_code = cmd_portal(argc, argv);
             else if (cmd == "config") exit_code = cmd_config(argc, argv);
             else if (cmd == "shortcut") exit_code = cmd_shortcut(argc, argv);
-            else if (cmd == "host" || cmd == "add") exit_code = cmd_add(argc, argv);
+            else if (cmd == "host" || cmd == "add" || cmd == "share") exit_code = cmd_add(argc, argv);
             else if (cmd == "status") exit_code = cmd_status(argc, argv);
             else if (cmd == "serve" || cmd == "server" || cmd == "inspect") exit_code = cmd_serve(argc, argv);
             else if (cmd == "totp") exit_code = cmd_totp(argc, argv);

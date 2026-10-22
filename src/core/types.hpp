@@ -168,6 +168,25 @@ inline AiModelProvider ai_model_from_string(std::string_view s) {
     return AiModelProvider::OLLAMA;
 }
 
+// Chế độ chia sẻ và kiểm toán bảo mật (Scan Policy)
+enum class ScanPolicy : uint8_t {
+    INSTANT = 0, // Mặc định: Chia sẻ ngay, cho phép tải trong khi quét nền, file FLAGGED bị chặn
+    SECURE  = 1  // Nghiêm ngặt: Chia sẻ ngay, nhưng chỉ cho tải file đã xác minh CLEAN hoặc WHITELISTED
+};
+
+inline std::string scan_policy_to_string(ScanPolicy p) {
+    switch (p) {
+        case ScanPolicy::INSTANT: return "instant";
+        case ScanPolicy::SECURE:  return "secure";
+    }
+    return "instant";
+}
+
+inline ScanPolicy scan_policy_from_string(std::string_view s) {
+    if (s == "secure" || s == "strict" || s == "safe" || s == "sec") return ScanPolicy::SECURE;
+    return ScanPolicy::INSTANT;
+}
+
 constexpr uint16_t kDefaultPort = 9443;
 constexpr size_t kDefaultChunkSize = 64 * 1024; // 64 KiB logic chunk
 constexpr size_t kXChaCha20Poly1305NonceSize = 24;

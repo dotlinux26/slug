@@ -150,7 +150,6 @@ WorkspaceManifest ManifestBuilder::build(
 
     policy::PolicyEngine policy_engine(workspace_root, rules_file);
     ai::StatefulAuditIndex audit_index(index_file);
-    ai::AiScanner scanner = ai::AiScanner::create_for_level(filter_level, ai_provider, workspace_root);
 
     std::error_code ec;
     for (auto it = fs::recursive_directory_iterator(workspace_root, fs::directory_options::skip_permission_denied, ec), end = fs::recursive_directory_iterator();
@@ -220,7 +219,6 @@ WorkspaceManifest ManifestBuilder::build(
             }
         }
 
-        std::optional<std::vector<uint8_t>> file_data;
         if (!cache_hit) {
             auto h_opt = crypto::Blake3::hash_file(entry.path());
             if (!h_opt) {
@@ -257,17 +255,10 @@ WorkspaceManifest ManifestBuilder::build(
                     audit_index.allow_file(proto_path, "Explicitly allowed by rule", "rule");
                 }
                 core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
-                if (cached_status == core::AuditStatus::CLEAN) {
+                if (cached_status == core::AuditStatus::CLEAN || cached_status == core::AuditStatus::USER_ALLOWED) {
                     scan_status = "SCANNED";
-                } else if (cur_sz <= 10ULL * 1024 * 1024) {
-                    file_data = platform::PathUtils::read_binary_file(entry.path(), 10 * 1024 * 1024);
-                    if (file_data) {
-                        std::string text(file_data->begin(), file_data->end());
-                        auto finding = scanner.scan_content(proto_path, text, false, filter_level);
-                        if (!finding.has_secret) {
-                            scan_status = "SCANNED";
-                        }
-                    }
+                } else {
+                    scan_status = (cur_sz <= 10ULL * 1024 * 1024) ? "PENDING" : "NOT_SCANNED";
                 }
             } else if (filter_level != core::FilterLevel::LEVEL_0_RAW && filter_level != core::FilterLevel::LEVEL_1_RULES && filter_mode != core::FilterMode::NONE) {
                 core::AuditStatus cached_status = audit_index.check_cached_status(proto_path, current_hash);
@@ -293,52 +284,13 @@ WorkspaceManifest ManifestBuilder::build(
                     continue;
                 }
 
-                if (cached_status == core::AuditStatus::USER_ALLOWED) {
-                    scan_status = (cur_sz <= 10ULL * 1024 * 1024) ? "SCANNED" : "NOT_SCANNED";
-                } else if (cached_status == core::AuditStatus::CLEAN) {
+                if (cached_status == core::AuditStatus::USER_ALLOWED || cached_status == core::AuditStatus::CLEAN) {
                     scan_status = "SCANNED";
                 } else if (cached_status == core::AuditStatus::UNKNOWN || cached_status == core::AuditStatus::STALE) {
-                    if (cur_sz <= 10ULL * 1024 * 1024) {
-                        file_data = platform::PathUtils::read_binary_file(entry.path(), 10 * 1024 * 1024);
-                        if (file_data) {
-                            std::string text(file_data->begin(), file_data->end());
-                            core::FilterLevel eval_level = (filter_level == core::FilterLevel::LEVEL_4_AI)
-                                ? core::FilterLevel::LEVEL_3_ENTROPY
-                                : filter_level;
-                            auto finding = scanner.scan_content(proto_path, text, false, eval_level);
-
-                            ai::AuditIndexEntry idx_entry;
-                            idx_entry.file_path = proto_path;
-                            idx_entry.blake3_hash = current_hash;
-                            idx_entry.scanned_at = core::Utils::current_timestamp();
-
-                            idx_entry.detector = finding.detector;
-                            idx_entry.ai_input = finding.ai_input;
-                            idx_entry.ai_output = finding.ai_output;
-
-                            if (finding.has_secret) {
-                                bool is_ai = (finding.detector.find("AI Guard") != std::string::npos);
-                                idx_entry.status = is_ai ? core::AuditStatus::AI_FLAGGED : core::AuditStatus::SMART_FILTER_FLAGGED;
-                                idx_entry.line_number = finding.line_number;
-                                idx_entry.reason = finding.reason;
-                                audit_index.update_entry(idx_entry);
-
-                                std::string tag = is_ai ? "AI_FLAGGED" : "SMART_FILTER_FLAGGED";
-                                manifest.skipped.push_back({proto_path, finding.reason + " (Line " + std::to_string(finding.line_number) + ")", tag});
-                                continue;
-                            } else {
-                                if (filter_level != core::FilterLevel::LEVEL_4_AI) {
-                                    idx_entry.status = core::AuditStatus::CLEAN;
-                                    idx_entry.reason = finding.reason.empty() ? "Clean" : finding.reason;
-                                    audit_index.update_entry(idx_entry);
-                                }
-                                scan_status = (filter_level == core::FilterLevel::LEVEL_4_AI) ? "NOT_SCANNED" : "SCANNED";
-                            }
-                        }
-                    } else {
-                        scan_status = "NOT_SCANNED";
-                    }
+                    scan_status = (cur_sz <= 10ULL * 1024 * 1024) ? "PENDING" : "NOT_SCANNED";
                 }
+            } else {
+                scan_status = "SCANNED";
             }
         }
 
