@@ -5,6 +5,7 @@
 #include <span>
 #include <cstdint>
 #include <chrono>
+#include <filesystem>
 
 namespace slug::core {
 
@@ -42,6 +43,9 @@ public:
 
     // Format timestamp as "YYYY-MM-DD HH:MM:SS"
     static std::string format_timestamp(uint64_t timestamp);
+
+    // Convert std::filesystem::file_time_type to Unix epoch timestamp in seconds
+    static uint64_t file_time_to_unix_seconds(std::filesystem::file_time_type ftime);
 
     // String utilities
     static std::string trim(std::string_view s);

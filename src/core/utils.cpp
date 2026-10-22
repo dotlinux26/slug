@@ -192,6 +192,29 @@ std::string Utils::format_timestamp(uint64_t timestamp) {
     return std::string(buf);
 }
 
+uint64_t Utils::file_time_to_unix_seconds(std::filesystem::file_time_type ftime) {
+    try {
+#if defined(_MSC_VER)
+        // MSVC _File_time_clock has epoch Jan 1, 1601 UTC with 100ns tick resolution.
+        // Difference between 1601 and 1970 is 11,644,473,600 seconds.
+        constexpr int64_t WINDOWS_TICK = 10000000LL;
+        constexpr int64_t SEC_TO_UNIX_EPOCH = 11644473600LL;
+        int64_t ticks = ftime.time_since_epoch().count();
+        int64_t sec = (ticks / WINDOWS_TICK) - SEC_TO_UNIX_EPOCH;
+        return (sec > 0) ? static_cast<uint64_t>(sec) : 0ULL;
+#else
+        auto now_file = std::filesystem::file_time_type::clock::now();
+        auto now_sys = std::chrono::system_clock::now();
+        auto dur = ftime - now_file;
+        auto sys_tp = now_sys + std::chrono::duration_cast<std::chrono::system_clock::duration>(dur);
+        auto sec = std::chrono::duration_cast<std::chrono::seconds>(sys_tp.time_since_epoch()).count();
+        return (sec > 0) ? static_cast<uint64_t>(sec) : 0ULL;
+#endif
+    } catch (...) {
+        return 0ULL;
+    }
+}
+
 std::string Utils::trim(std::string_view s) {
     size_t start = 0;
     while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) start++;

@@ -1069,12 +1069,9 @@ std::vector<core::ExplorerItem> ControlServer::list_explorer_items(const std::st
         std::error_code ec_mtime;
         auto ftime = it->last_write_time(ec_mtime);
         if (!ec_mtime) {
-            try {
-                auto sctp = std::chrono::file_clock::to_sys(ftime);
-                file_mtime = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(sctp.time_since_epoch()).count());
+            file_mtime = core::Utils::file_time_to_unix_seconds(ftime);
+            if (file_mtime > 0) {
                 file_mtime_str = core::Utils::format_timestamp(file_mtime);
-            } catch (...) {
-                file_mtime_str = "-";
             }
         }
 
